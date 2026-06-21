@@ -59,33 +59,30 @@ npm run preview &      # serve the built site
 
 Keep it under ~300 KB so WhatsApp shows the large preview.
 
-## Deploy to Cloudflare (Workers Static Assets)
+## Deploy to Cloudflare Pages
 
-The site is a static Astro build — no Worker script, just assets served from
-`./dist`. `wrangler.jsonc` declares the `assets` block; `wrangler deploy` uploads
-the directory.
+The site is a static Astro build published from `./dist`. This is a **Pages**
+project (not a Workers project).
 
-**Connect the Git repo (recommended).** In Workers & Pages → your project →
-Settings → Build, set:
+**Connect the Git repo.** In Workers & Pages → your project → Settings → Build:
 
 - **Root directory:** `website`
-- **Build command:** `npm run build`  ← required, this is what produces `./dist`
-- **Deploy command:** `npx wrangler deploy`
+- **Build command:** `npm run build`  ← produces `./dist`
+- **Deploy command:** `npx wrangler pages deploy`  ← the **Pages** command
 
-The most common failure is leaving the **build command empty**: `wrangler deploy`
-then runs with no `./dist` and fails with *"Missing entry-point … or assets
-directory."*
+The classic failure is a **Deploy command of `npx wrangler deploy`** (the Workers
+command). On a Pages project it fails with *"…run wrangler deploy on a Pages
+project, wrangler pages deploy should be used instead"* → *"Missing assets
+directory."* Use `wrangler pages deploy` (or, in classic Pages without a deploy
+command, just set the **build output directory** to `dist` and Pages publishes it
+automatically).
 
 **Direct upload from a laptop.**
 
 ```sh
 npm run build
-npx wrangler deploy            # uses wrangler.jsonc (assets.directory = ./dist)
+npx wrangler pages deploy        # uses wrangler.jsonc (name + pages_build_output_dir)
 ```
 
 Set the production URL in `astro.config.mjs` (`site:`) and attach the `beamhall.com`
 domain to the project in the dashboard.
-
-> Prefer classic **Cloudflare Pages** instead? Create a Pages project (not
-> Workers) with root `website`, build `npm run build`, output `dist` — and the
-> `assets` block in `wrangler.jsonc` is ignored by that flow.
