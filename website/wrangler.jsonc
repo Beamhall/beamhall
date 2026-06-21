@@ -12,6 +12,11 @@
   // `name` must match the Worker's name so `wrangler deploy` targets it.
   "name": "beamhall",
   "compatibility_date": "2026-06-21",
+  // Don't expose the site on *.workers.dev or per-version preview URLs — it's
+  // served only on the custom domain (beamhall.com). NOTE: with workers_dev off
+  // you MUST attach a custom domain/route or the site is unreachable.
+  "workers_dev": false,
+  "preview_urls": false,
   "assets": {
     "directory": "./dist"
   }
