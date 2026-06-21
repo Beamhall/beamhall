@@ -59,23 +59,33 @@ npm run preview &      # serve the built site
 
 Keep it under ~300 KB so WhatsApp shows the large preview.
 
-## Deploy to Cloudflare Pages
+## Deploy to Cloudflare (Workers Static Assets)
 
-Static assets — no adapter, no Worker runtime.
+The site is a static Astro build — no Worker script, just assets served from
+`./dist`. `wrangler.jsonc` declares the `assets` block; `wrangler deploy` uploads
+the directory.
 
-**Option A — connect the Git repo (recommended).** Create a Pages project from
-this repository with:
+**Connect the Git repo (recommended).** In Workers & Pages → your project →
+Settings → Build, set:
 
 - **Root directory:** `website`
-- **Build command:** `npm run build`
-- **Build output directory:** `dist`
+- **Build command:** `npm run build`  ← required, this is what produces `./dist`
+- **Deploy command:** `npx wrangler deploy`
 
-**Option B — direct upload with Wrangler.**
+The most common failure is leaving the **build command empty**: `wrangler deploy`
+then runs with no `./dist` and fails with *"Missing entry-point … or assets
+directory."*
+
+**Direct upload from a laptop.**
 
 ```sh
 npm run build
-npx wrangler pages deploy            # uses wrangler.jsonc (project "beamhall")
+npx wrangler deploy            # uses wrangler.jsonc (assets.directory = ./dist)
 ```
 
 Set the production URL in `astro.config.mjs` (`site:`) and attach the `beamhall.com`
-domain to the Pages project in the dashboard.
+domain to the project in the dashboard.
+
+> Prefer classic **Cloudflare Pages** instead? Create a Pages project (not
+> Workers) with root `website`, build `npm run build`, output `dist` — and the
+> `assets` block in `wrangler.jsonc` is ignored by that flow.
