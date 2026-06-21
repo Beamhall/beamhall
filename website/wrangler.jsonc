@@ -1,13 +1,18 @@
 {
-  // Cloudflare PAGES config for the Beamhall site (static Astro build).
+  // Cloudflare WORKER (Static Assets) for the Beamhall site.
+  // The project in the dashboard is a Worker named "beamhall" (.../workers/
+  // services/view/beamhall), serving the static Astro build from ./dist — no
+  // Worker script, just assets.
   //
-  // Project settings (Workers & Pages → your project → Settings → Build):
+  // Project settings (Workers & Pages → beamhall → Settings → Build):
   //   Root directory:   website
-  //   Build command:    npm run build               (produces ./dist)
-  //   Deploy command:   npx wrangler pages deploy    (NOT `wrangler deploy`)
+  //   Build command:    npm run build      (produces ./dist)
+  //   Deploy command:   npx wrangler deploy (NOT `wrangler pages deploy`)
   //
-  // `pages_build_output_dir` + `name` below let `wrangler pages deploy` run with
-  // no extra args. Local direct upload: npm run build && npx wrangler pages deploy
+  // `name` must match the Worker's name so `wrangler deploy` targets it.
   "name": "beamhall",
-  "pages_build_output_dir": "./dist"
+  "compatibility_date": "2026-06-21",
+  "assets": {
+    "directory": "./dist"
+  }
 }

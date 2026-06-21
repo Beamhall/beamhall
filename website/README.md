@@ -59,30 +59,29 @@ npm run preview &      # serve the built site
 
 Keep it under ~300 KB so WhatsApp shows the large preview.
 
-## Deploy to Cloudflare Pages
+## Deploy to Cloudflare (Worker, Static Assets)
 
-The site is a static Astro build published from `./dist`. This is a **Pages**
-project (not a Workers project).
+The project in the dashboard is a **Worker** named `beamhall` (`.../workers/
+services/view/beamhall`) serving the static Astro build from `./dist`. The
+`assets` block in `wrangler.jsonc` declares it; `wrangler deploy` uploads it.
 
-**Connect the Git repo.** In Workers & Pages → your project → Settings → Build:
+**Connect the Git repo.** In Workers & Pages → `beamhall` → Settings → Build:
 
 - **Root directory:** `website`
 - **Build command:** `npm run build`  ← produces `./dist`
-- **Deploy command:** `npx wrangler pages deploy`  ← the **Pages** command
+- **Deploy command:** `npx wrangler deploy`  ← the **Workers** command
 
-The classic failure is a **Deploy command of `npx wrangler deploy`** (the Workers
-command). On a Pages project it fails with *"…run wrangler deploy on a Pages
-project, wrangler pages deploy should be used instead"* → *"Missing assets
-directory."* Use `wrangler pages deploy` (or, in classic Pages without a deploy
-command, just set the **build output directory** to `dist` and Pages publishes it
-automatically).
+Because it's a Worker (not a Pages project), use `wrangler deploy` — **not**
+`wrangler pages deploy` (that looks for a Pages project named `beamhall` and fails
+with *"Project not found"*). `name` in `wrangler.jsonc` must equal the Worker's
+name so the deploy targets it.
 
 **Direct upload from a laptop.**
 
 ```sh
 npm run build
-npx wrangler pages deploy        # uses wrangler.jsonc (name + pages_build_output_dir)
+npx wrangler deploy              # uses wrangler.jsonc (name + assets.directory)
 ```
 
 Set the production URL in `astro.config.mjs` (`site:`) and attach the `beamhall.com`
-domain to the project in the dashboard.
+domain to the Worker in the dashboard.
