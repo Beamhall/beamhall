@@ -1,0 +1,84 @@
+{
+  "realm": "beamhall",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 3600,
+  "clientScopes": [
+    {
+      "name": "beamhall-audience",
+      "description": "Adds the Beamhall resource URI to aud (required by the backplane).",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "false", "display.on.consent.screen": "false" },
+      "protocolMappers": [
+        {
+          "name": "beamhall-aud",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.custom.audience": "${AUDIENCE}", "access.token.claim": "true", "id.token.claim": "false" }
+        },
+        {
+          "name": "beamhall-sub-from-username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": { "user.attribute": "username", "claim.name": "sub", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "introspection.token.claim": "true" }
+        }
+      ]
+    },
+    { "name": "beamhalls:read",  "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "beams:write",     "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "beams:deploy",    "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "beams:operate",   "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "beams:promote",   "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "secrets:write",   "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "resources:write", "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "logs:read",       "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "metrics:read",    "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "admin:it",        "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } }
+  ],
+  "clients": [
+    {
+      "clientId": "beamhall-admin",
+      "name": "Beamhall Admin console",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${ADMIN_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["${ADMIN_REDIRECT}"],
+      "defaultClientScopes": ["beamhall-audience", "admin:it"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "beamhall-agent",
+      "name": "Beamhall agent (Claude Code)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost/*", "http://127.0.0.1/*", "http://localhost:*/*", "http://127.0.0.1:*/*"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "defaultClientScopes": ["beamhall-audience"],
+      "optionalClientScopes": ["beamhalls:read", "beams:write", "beams:deploy", "beams:operate", "beams:promote", "secrets:write", "resources:write", "logs:read", "metrics:read", "admin:it", "offline_access"]
+    }
+  ],
+  "users": [
+    {
+      "username": "builder",
+      "enabled": true,
+      "email": "builder@beamhall.pilot",
+      "emailVerified": true,
+      "firstName": "Pilot", "lastName": "Builder",
+      "realmRoles": ["offline_access"],
+      "credentials": [{ "type": "password", "value": "${BUILDER_PASSWORD}", "temporary": false }]
+    },
+    {
+      "username": "it-admin",
+      "enabled": true,
+      "email": "it-admin@beamhall.pilot",
+      "emailVerified": true,
+      "firstName": "Pilot", "lastName": "IT",
+      "realmRoles": ["offline_access"],
+      "credentials": [{ "type": "password", "value": "${IT_PASSWORD}", "temporary": false }]
+    }
+  ]
+}

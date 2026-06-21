@@ -1,0 +1,67 @@
+---
+// Overview provisioning flow: agent --intent--> Beamhall --provisions--> beam,
+// with the inherited capabilities shown inside the backplane.
+---
+<figure class="diagram">
+  <svg viewBox="0 0 960 250" role="img" aria-label="An AI agent sends an intent to the Beamhall backplane, which provisions runtime, data, secrets, identity and connectors; the beam inherits them all, governed and audited.">
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" class="dg-arrowhead" />
+      </marker>
+    </defs>
+
+    <!-- AI agent -->
+    <g transform="translate(20,78)">
+      <rect width="178" height="94" rx="11" class="dg-untrust" />
+      <text x="89" y="40" text-anchor="middle" class="dg-title">AI agent</text>
+      <text x="89" y="63" text-anchor="middle" class="dg-sub">no infra access</text>
+    </g>
+
+    <!-- intent arrow -->
+    <line x1="204" y1="125" x2="312" y2="125" class="dg-arrow" />
+    <text x="258" y="113" text-anchor="middle" class="dg-edge">intent</text>
+
+    <!-- Beamhall backplane -->
+    <g transform="translate(320,24)">
+      <rect width="318" height="202" rx="13" class="dg-core" />
+      <text x="159" y="36" text-anchor="middle" class="dg-coretitle">Beamhall backplane</text>
+      <text x="159" y="57" text-anchor="middle" class="dg-sub">policy · build · audit · isolation</text>
+
+      <!-- capability pills -->
+      <g transform="translate(26,78)" class="dg-pills">
+        <g>
+          <rect width="80" height="28" rx="7" class="dg-pill" />
+          <text x="40" y="18" text-anchor="middle" class="dg-pilltext">runtime</text>
+        </g>
+        <g transform="translate(92,0)">
+          <rect width="62" height="28" rx="7" class="dg-pill" />
+          <text x="31" y="18" text-anchor="middle" class="dg-pilltext">data</text>
+        </g>
+        <g transform="translate(166,0)">
+          <rect width="78" height="28" rx="7" class="dg-pill" />
+          <text x="39" y="18" text-anchor="middle" class="dg-pilltext">secrets</text>
+        </g>
+        <g transform="translate(0,42)">
+          <rect width="118" height="28" rx="7" class="dg-pill-soon" />
+          <text x="59" y="18" text-anchor="middle" class="dg-pilltext">identity</text>
+        </g>
+        <g transform="translate(126,42)">
+          <rect width="118" height="28" rx="7" class="dg-pill-soon" />
+          <text x="59" y="18" text-anchor="middle" class="dg-pilltext">connectors</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- provisions arrow -->
+    <line x1="644" y1="125" x2="752" y2="125" class="dg-arrow" />
+    <text x="698" y="113" text-anchor="middle" class="dg-edge">provisions</text>
+
+    <!-- your beam -->
+    <g transform="translate(760,78)">
+      <rect width="180" height="94" rx="11" class="dg-beam" />
+      <text x="90" y="40" text-anchor="middle" class="dg-title">your beam</text>
+      <text x="90" y="63" text-anchor="middle" class="dg-sub">inherits it all</text>
+    </g>
+  </svg>
+  <figcaption class="dg-cap">Dashed = on the roadmap (identity, connectors). Every grant is policy-gated and audited.</figcaption>
+</figure>

@@ -1,0 +1,12 @@
+{
+  "name": "beamhall-demo-tracker",
+  "version": "1.0.0",
+  "description": "Beamhall canonical demo: a tiny internal request tracker that proves injected secrets and a managed Postgres database, deployed with no Dockerfile and no raw credentials.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

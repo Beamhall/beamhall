@@ -1,0 +1,72 @@
+# Beamhall appliance — systemd unit (hardened).
+#
+# Install: see packaging/install.sh. Runtime config lives in
+# /etc/beamhall/beamhall.env (see beamhalld.env.example). The age secret root
+# key is supplied out-of-band via LoadCredential — the appliance refuses to
+# start without it when BEAMHALL_SECRET_KEY_FILE points at the credential.
+#
+# beamhalld drives the local Docker daemons, so it runs as a member of the
+# docker group (effectively privileged); the sandbox directives below still
+# reduce its host footprint where they do not fight that requirement.
+
+[Unit]
+Description=Beamhall infrastructure backplane
+Documentation=https://github.com/Beamhall/beamhall
+After=network-online.target docker.service docker-build.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=beamhall
+Group=beamhall
+SupplementaryGroups=docker
+EnvironmentFile=/etc/beamhall/beamhall.env
+
+# Secret root key delivered as a systemd credential (not in the env, not in
+# the data dir). 0400 root-owned source, decrypted into a tmpfs per-service.
+LoadCredential=secret.key:/etc/beamhall/secret.key
+# Point beamhalld at the credential. %d is the credentials directory; it expands
+# HERE (a unit Environment= directive) but NOT inside an EnvironmentFile, so this
+# must live in the unit, not in beamhall.env. Set after EnvironmentFile so it wins.
+Environment=BEAMHALL_SECRET_KEY_FILE=%d/secret.key
+
+ExecStart=/usr/local/bin/beamhalld
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# State directory (creates and chowns /var/lib/beamhall to the service user).
+StateDirectory=beamhall
+StateDirectoryMode=0700
+
+# --- hardening (compatible with Docker-socket access) ---
+# Egress isolation (the BEAMHALL-EGRESS iptables/nf_tables chain hooked from
+# DOCKER-USER) runs in-process and needs CAP_NET_ADMIN. Running as the
+# unprivileged beamhall user, the service would otherwise fail closed with
+# "iptables ... Permission denied" and beams would lose network isolation.
+# This is not a real privilege gain — beamhalld already drives the Docker socket
+# (root-equivalent) — it just lets the security control function. Bound to only
+# this cap so nothing else leaks through.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RemoveIPC=true
+ReadWritePaths=/var/lib/beamhall
+# The Docker sockets beamhalld talks to (runtime + the non-remapped build daemon).
+ReadWritePaths=/run/docker.sock /run/docker-build.sock
+# Resource ceilings for the appliance process itself.
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

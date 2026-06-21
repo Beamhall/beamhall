@@ -1,0 +1,113 @@
+{{define "page-beamhall"}}
+{{template "header" .}}
+<div class="flex items-baseline gap-3 mb-1">
+  <h1 class="text-2xl font-semibold">{{.Beamhall.Slug}}</h1>
+  <span class="text-slate-400">{{.Beamhall.DisplayName}}</span>
+</div>
+<p class="text-sm text-slate-500 mb-6">{{.Beamhall.Department}} · {{.Beamhall.Status}} · {{.LiveCount}}/{{.Beamhall.LiveSlotLimit}} live slots · egress {{.Beamhall.NetworkPolicy.EgressMode}}</p>
+
+<section class="bg-white rounded shadow-sm mb-8">
+  <h2 class="font-semibold px-5 pt-4">Beams</h2>
+  <table class="w-full text-sm mt-2">
+    <thead class="text-left text-slate-500 border-b"><tr><th class="px-5 py-2">Slug</th><th class="px-4 py-2">Preview</th><th class="px-4 py-2">Live (production)</th><th class="px-4 py-2"></th></tr></thead>
+    <tbody>
+    {{range .Beams}}
+      <tr class="border-b last:border-0">
+        <td class="px-5 py-2 font-medium">{{.Beam.Slug}}</td>
+        <td class="px-4 py-2"><span class="text-slate-500">{{.Beam.State}}</span>{{if .PreviewURL}} · <a href="{{.PreviewURL}}" class="text-indigo-600 hover:underline">open</a>{{end}}</td>
+        <td class="px-4 py-2">{{if eq (printf "%s" .Beam.Mode) "live"}}<span class="text-emerald-700">{{if .Beam.LiveState}}{{.Beam.LiveState}}{{else}}live{{end}}</span>{{if .LiveURL}} · <a href="{{.LiveURL}}" class="text-indigo-600 hover:underline">open</a>{{end}}{{else}}<span class="text-slate-400">not promoted</span>{{end}}</td>
+        <td class="px-4 py-2 text-right whitespace-nowrap">
+          {{if not $.ApprovalGate}}{{if eq (printf "%s" .Beam.State) "running"}}<form method="post" action="/admin/beams/{{.Beam.ID}}/promote" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="slug" value="{{$.Beamhall.Slug}}"><button class="text-emerald-700 hover:underline">{{if eq (printf "%s" .Beam.Mode) "live"}}ship update{{else}}promote{{end}}</button></form>{{end}}{{end}}
+          {{if eq (printf "%s" .Beam.State) "paused"}}<form method="post" action="/admin/beams/{{.Beam.ID}}/resume" class="inline ml-2"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="slug" value="{{$.Beamhall.Slug}}"><button class="text-sky-700 hover:underline">resume</button></form>{{else}}<form method="post" action="/admin/beams/{{.Beam.ID}}/pause" class="inline ml-2"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="slug" value="{{$.Beamhall.Slug}}"><button class="text-slate-600 hover:underline">pause preview</button></form>{{end}}
+          <form method="post" action="/admin/beams/{{.Beam.ID}}/destroy" class="inline ml-2" onsubmit="return confirm('Destroy {{.Beam.Slug}}? This is permanent.')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="slug" value="{{$.Beamhall.Slug}}"><button class="text-rose-600 hover:underline">destroy</button></form>
+        </td>
+      </tr>
+    {{else}}<tr><td colspan="4" class="px-5 py-3 text-slate-400">No beams.</td></tr>{{end}}
+    </tbody>
+  </table>
+</section>
+
+{{if .HasProduction}}
+<section class="bg-white rounded shadow-sm mb-8">
+  <h2 class="font-semibold px-5 pt-4">Production history <span class="text-xs font-normal text-slate-400">— roll a beam's live channel back to a prior build; the preview channel is unaffected</span></h2>
+  {{range .Beams}}{{if .LiveLog}}
+  {{$beamID := .Beam.ID}}
+  <div class="px-5 py-3 border-t">
+    <div class="font-medium mb-2">{{.Beam.Slug}}{{if .LiveURL}} · <a href="{{.LiveURL}}" class="text-indigo-600 hover:underline">{{.LiveURL}}</a>{{end}}</div>
+    <table class="w-full text-sm">
+      <thead class="text-left text-slate-500 border-b"><tr><th class="py-1">Version</th><th class="py-1">Image</th><th class="py-1">Deployed</th><th class="py-1"></th></tr></thead>
+      <tbody>
+      {{range .LiveLog}}
+        <tr class="border-b last:border-0">
+          <td class="py-1.5 font-medium">{{.Label}}{{if .Current}} <span class="text-emerald-700 text-xs font-normal">(current)</span>{{end}}</td>
+          <td class="py-1.5 font-mono text-xs text-slate-500">{{.Image}}</td>
+          <td class="py-1.5 text-slate-500">{{.When}}</td>
+          <td class="py-1.5 text-right">{{if not .Current}}<form method="post" action="/admin/beams/{{$beamID}}/rollback" class="inline" onsubmit="return confirm('Roll production back to {{.Label}}? Live traffic moves to this build.')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="slug" value="{{$.Beamhall.Slug}}"><input type="hidden" name="release_id" value="{{.ID}}"><button class="text-amber-700 hover:underline">roll back</button></form>{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}{{end}}
+</section>
+{{end}}
+
+{{if .ApprovalGate}}
+<section class="bg-white rounded shadow-sm mb-8">
+  <h2 class="font-semibold px-5 pt-4">Pending promotions <span class="text-xs font-normal text-slate-400">— IT-approval gate on; an operator other than the requester must approve</span></h2>
+  <table class="w-full text-sm mt-2">
+    <thead class="text-left text-slate-500 border-b"><tr><th class="px-5 py-2">Beam</th><th class="px-4 py-2">Requested by</th><th class="px-4 py-2">When</th><th class="px-4 py-2"></th></tr></thead>
+    <tbody>
+    {{range .Pending}}
+      <tr class="border-b last:border-0">
+        <td class="px-5 py-2 font-medium">{{.Beam}}</td>
+        <td class="px-4 py-2">{{.Requester}}</td>
+        <td class="px-4 py-2 text-slate-500">{{.When}}</td>
+        <td class="px-4 py-2 text-right whitespace-nowrap">
+          <form method="post" action="/admin/promotions/{{.ID}}/approve" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="slug" value="{{$.Beamhall.Slug}}"><button class="text-emerald-700 hover:underline">approve</button></form>
+          <form method="post" action="/admin/promotions/{{.ID}}/reject" class="inline ml-2"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="slug" value="{{$.Beamhall.Slug}}"><button class="text-rose-600 hover:underline">reject</button></form>
+        </td>
+      </tr>
+    {{else}}<tr><td colspan="4" class="px-5 py-3 text-slate-400">No promotions awaiting approval.</td></tr>{{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+
+<div class="grid md:grid-cols-2 gap-6">
+  <section class="bg-white rounded shadow-sm p-5">
+    <h2 class="font-semibold mb-3">Members</h2>
+    <ul class="text-sm divide-y mb-4">
+      {{range .Members}}<li class="py-1.5 flex justify-between"><span>{{.Email}}</span><span class="text-slate-500">{{.Role}}</span></li>{{else}}<li class="py-1.5 text-slate-400">No members.</li>{{end}}
+    </ul>
+    <form method="post" action="/admin/memberships" class="space-y-3 text-sm border-t pt-4">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="slug" value="{{.Beamhall.Slug}}">
+      <input type="hidden" name="beamhall_id" value="{{.Beamhall.ID}}">
+      <div><label class="block text-slate-500">Identity</label>
+        <select name="identity_id" class="w-full border rounded px-2 py-1">{{range .Identities}}<option value="{{.ID}}">{{.Email}} ({{.ExternalSubject}})</option>{{end}}</select></div>
+      <div><label class="block text-slate-500">Role</label>
+        <select name="role" class="w-full border rounded px-2 py-1"><option value="viewer">viewer</option><option value="builder">builder</option><option value="beamhall_admin">beamhall_admin</option></select></div>
+      <button class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded">Grant membership</button>
+    </form>
+  </section>
+
+  <section class="bg-white rounded shadow-sm p-5">
+    <h2 class="font-semibold mb-3">Egress policy</h2>
+    <form method="post" action="/admin/beamhalls/{{.Beamhall.Slug}}/egress" class="space-y-3 text-sm">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <div><label class="block text-slate-500">Mode</label>
+        <select name="mode" class="w-full border rounded px-2 py-1">
+          <option value="deny_all" {{if eq (printf "%s" .Beamhall.NetworkPolicy.EgressMode) "deny_all"}}selected{{end}}>deny all (default)</option>
+          <option value="allow_set" {{if eq (printf "%s" .Beamhall.NetworkPolicy.EgressMode) "allow_set"}}selected{{end}}>allow listed</option>
+        </select></div>
+      <div><label class="block text-slate-500">Allowlist (one FQDN/CIDR:port per line)</label>
+        <textarea name="allowlist" rows="4" class="w-full border rounded px-2 py-1 font-mono text-xs">{{range .Beamhall.NetworkPolicy.EgressAllowlist}}{{.}}
+{{end}}</textarea></div>
+      <button class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded">Update egress</button>
+    </form>
+    <p class="text-xs text-slate-400 mt-2">Metadata, link-local, host, and management subnets are always denied regardless of this list.</p>
+  </section>
+</div>
+{{template "footer" .}}
+{{end}}

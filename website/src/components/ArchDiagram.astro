@@ -1,0 +1,103 @@
+---
+// Architecture trust boundary, top to bottom:
+//   IdP (your OIDC) issues the agent's token →
+//   untrusted agent →
+//   beamhalld trust base (control plane + the managed services it provisions) →
+//   untrusted workloads that consume those services.
+---
+<figure class="diagram">
+  <svg viewBox="0 0 760 642" role="img" aria-label="Your OIDC identity provider issues the agent's OAuth token. The untrusted agent calls beamhalld, the single-binary trust base, which validates the token against your IdP and authorizes in the policy point. Its orchestrator provisions managed services — git repo, build + registry, secret vault, database, gateway, and connectors — which the untrusted workloads consume behind a per-workspace bridge with default-deny egress.">
+    <defs>
+      <marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" class="dg-arrowhead" />
+      </marker>
+    </defs>
+
+    <!-- IdP (your OIDC) -->
+    <g transform="translate(255,12)">
+      <rect width="250" height="46" rx="10" class="dg-ext" />
+      <text x="125" y="20" text-anchor="middle" class="dg-svctitle">Identity Provider</text>
+      <text x="125" y="37" text-anchor="middle" class="dg-sub">OIDC · Okta / Entra / Keycloak</text>
+    </g>
+    <line x1="380" y1="58" x2="380" y2="86" class="dg-arrow2" />
+    <text x="392" y="76" class="dg-edge">issues the agent's OAuth token</text>
+
+    <!-- AI agent (untrusted) -->
+    <g transform="translate(230,90)">
+      <rect width="300" height="50" rx="11" class="dg-untrust" />
+      <text x="150" y="23" text-anchor="middle" class="dg-title">AI agent</text>
+      <text x="150" y="41" text-anchor="middle" class="dg-sub">untrusted</text>
+    </g>
+    <line x1="380" y1="140" x2="380" y2="168" class="dg-arrow2" />
+    <text x="392" y="158" class="dg-edge">Streamable HTTP + OAuth bearer token</text>
+
+    <!-- beamhalld trust base -->
+    <g transform="translate(30,176)">
+      <rect width="700" height="336" rx="14" class="dg-core" />
+      <text x="20" y="30" class="dg-coretitle">beamhalld</text>
+      <text x="132" y="30" class="dg-sub">single binary · the trust base</text>
+
+      <!-- control plane -->
+      <g transform="translate(24,46)">
+        <rect width="652" height="40" rx="9" class="dg-layer" />
+        <text x="16" y="25" class="dg-layertitle">MCP server</text>
+        <text x="150" y="25" class="dg-sub">validates the token against your IdP · iss / aud / exp</text>
+      </g>
+      <g transform="translate(24,94)">
+        <rect width="652" height="40" rx="9" class="dg-layer" />
+        <text x="16" y="25" class="dg-layertitle">Backplane / PEP</text>
+        <text x="186" y="25" class="dg-sub">single authz point + audit writer</text>
+      </g>
+      <g transform="translate(24,142)">
+        <rect width="652" height="40" rx="9" class="dg-layer" />
+        <text x="16" y="25" class="dg-layertitle">Orchestrator</text>
+        <text x="162" y="25" class="dg-sub">builds, provisions &amp; operates the services below</text>
+      </g>
+
+      <text x="24" y="206" class="dg-sub">managed services it provisions and operates:</text>
+
+      <!-- managed services grid (2 rows x 3) -->
+      <g transform="translate(24,216)">
+        <rect width="204" height="46" rx="9" class="dg-layer" />
+        <text x="14" y="20" class="dg-svctitle">Git repo</text>
+        <text x="14" y="38" class="dg-svcsub">per beam · push to deploy</text>
+      </g>
+      <g transform="translate(248,216)">
+        <rect width="204" height="46" rx="9" class="dg-layer" />
+        <text x="14" y="20" class="dg-svctitle">Build + registry</text>
+        <text x="14" y="38" class="dg-svcsub">buildpacks → pinned image</text>
+      </g>
+      <g transform="translate(472,216)">
+        <rect width="204" height="46" rx="9" class="dg-layer" />
+        <text x="14" y="20" class="dg-svctitle">Secret vault</text>
+        <text x="14" y="38" class="dg-svcsub">write-only · injected</text>
+      </g>
+      <g transform="translate(24,268)">
+        <rect width="204" height="46" rx="9" class="dg-layer" />
+        <text x="14" y="20" class="dg-svctitle">Database</text>
+        <text x="14" y="38" class="dg-svcsub">managed Postgres per beam</text>
+      </g>
+      <g transform="translate(248,268)">
+        <rect width="204" height="46" rx="9" class="dg-layer" />
+        <text x="14" y="20" class="dg-svctitle">Gateway</text>
+        <text x="14" y="38" class="dg-svcsub">single ingress · auto TLS</text>
+      </g>
+      <g transform="translate(472,268)">
+        <rect width="204" height="46" rx="9" class="dg-svc-soon" />
+        <text x="14" y="20" class="dg-svctitle">Connectors <tspan dx="3" class="dg-soon">SOON</tspan></text>
+        <text x="14" y="38" class="dg-svcsub">to internal systems (ERP)</text>
+      </g>
+    </g>
+
+    <line x1="380" y1="512" x2="380" y2="552" class="dg-arrow2" />
+    <text x="392" y="532" class="dg-edge">secrets → /run/secrets · database attached</text>
+    <text x="392" y="548" class="dg-edge">routed via gateway · egress default-deny</text>
+
+    <!-- workloads (untrusted) -->
+    <g transform="translate(190,558)">
+      <rect width="380" height="64" rx="11" class="dg-untrust" />
+      <text x="190" y="29" text-anchor="middle" class="dg-title">Workloads</text>
+      <text x="190" y="49" text-anchor="middle" class="dg-sub">untrusted: agent-authored code</text>
+    </g>
+  </svg>
+</figure>

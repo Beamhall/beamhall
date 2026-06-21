@@ -1,0 +1,18 @@
+{{define "page-login"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Beamhall</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center">
+<div class="text-center">
+  <h1 class="text-3xl font-semibold tracking-tight mb-2">Beamhall</h1>
+  <p class="text-slate-400 mb-6">IT administration console</p>
+  <a href="/admin/login?start=1" class="inline-block bg-indigo-500 hover:bg-indigo-400 text-white font-medium px-6 py-3 rounded">Sign in with your identity provider</a>
+  {{if .Error}}<p class="mt-4 text-rose-400 text-sm">{{.Error}}</p>{{end}}
+</div>
+</body>
+</html>
+{{end}}

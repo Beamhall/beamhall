@@ -1,0 +1,67 @@
+# GoReleaser config for Beamhall (https://goreleaser.com).
+# Reproducible release of the appliance binary + the lab dev IdP, with
+# checksums and the systemd packaging bundled into the archive.
+#
+#   goreleaser build --snapshot --clean      # local binaries, no publish
+#   goreleaser release --snapshot --clean     # local archives + checksums
+#   goreleaser release --clean                # tagged release (needs a git tag)
+version: 2
+
+project_name: beamhall
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - id: beamhalld
+    main: ./cmd/beamhalld
+    binary: beamhalld
+    env: [CGO_ENABLED=0] # modernc.org/sqlite is pure-Go: fully static, cross-compiles clean
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}" # reproducible builds
+
+  - id: bh-devidp
+    main: ./cmd/bh-devidp
+    binary: bh-devidp
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: beamhall
+    ids: [beamhalld, bh-devidp]
+    name_template: "beamhall_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README.md
+      - docs/threat-model.md
+      - packaging/beamhalld.service
+      - packaging/beamhalld.env.example
+      - packaging/install.sh
+      - packaging/README.md
+      - scripts/lab-bootstrap.sh
+      - scripts/preflight.sh
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev-{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]
+
+release:
+  draft: true # review before publishing

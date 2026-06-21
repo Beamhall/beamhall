@@ -1,0 +1,62 @@
+{{define "page-dashboard"}}
+{{template "header" .}}
+<h1 class="text-2xl font-semibold mb-6">Beamhalls</h1>
+
+<table class="w-full text-sm bg-white rounded shadow-sm mb-8">
+  <thead class="text-left text-slate-500 border-b">
+    <tr><th class="px-4 py-2">Slug</th><th class="px-4 py-2">Department</th><th class="px-4 py-2">Status</th><th class="px-4 py-2">Beams</th><th class="px-4 py-2">Live slots</th></tr>
+  </thead>
+  <tbody>
+  {{range .Beamhalls}}
+    <tr class="border-b last:border-0 hover:bg-slate-50">
+      <td class="px-4 py-2"><a class="text-indigo-600 hover:underline font-medium" href="/admin/beamhalls/{{.Slug}}">{{.Slug}}</a></td>
+      <td class="px-4 py-2">{{.Department}}</td>
+      <td class="px-4 py-2">{{.Status}}</td>
+      <td class="px-4 py-2">{{.BeamCount}}</td>
+      <td class="px-4 py-2">{{.LiveCount}} / {{.LiveSlotLimit}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="5" class="px-4 py-3 text-slate-400">No beamhalls yet — create one below.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+
+<div class="grid md:grid-cols-2 gap-6">
+  <section class="bg-white rounded shadow-sm p-5">
+    <h2 class="font-semibold mb-3">Create beamhall</h2>
+    <form method="post" action="/admin/beamhalls" class="space-y-3 text-sm">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <div><label class="block text-slate-500">Slug</label><input name="slug" required pattern="[a-z0-9-]+" class="w-full border rounded px-2 py-1"></div>
+      <div><label class="block text-slate-500">Display name</label><input name="display_name" class="w-full border rounded px-2 py-1"></div>
+      <div><label class="block text-slate-500">Department</label><input name="department" class="w-full border rounded px-2 py-1"></div>
+      <div class="flex gap-3">
+        <div class="flex-1"><label class="block text-slate-500">Runtime</label>
+          <select name="runtime_class" class="w-full border rounded px-2 py-1"><option value="runc">runc (hardened)</option><option value="runsc">runsc (gVisor)</option></select></div>
+        <div class="flex-1"><label class="block text-slate-500">Live slots</label><input name="live_slots" type="number" value="1" min="0" class="w-full border rounded px-2 py-1"></div>
+      </div>
+      <div class="flex gap-3">
+        <div class="flex-1"><label class="block text-slate-500">Max beams</label><input name="max_beams" type="number" value="5" min="1" class="w-full border rounded px-2 py-1"></div>
+        <div class="flex-1"><label class="block text-slate-500">Max databases</label><input name="max_db" type="number" value="2" min="0" class="w-full border rounded px-2 py-1"></div>
+      </div>
+      <button class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded">Create</button>
+    </form>
+  </section>
+
+  <section class="bg-white rounded shadow-sm p-5">
+    <h2 class="font-semibold mb-3">Register identity</h2>
+    <form method="post" action="/admin/identities" class="space-y-3 text-sm">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <div><label class="block text-slate-500">IdP issuer</label><input name="issuer" required class="w-full border rounded px-2 py-1" placeholder="https://idp.example.com"></div>
+      <div><label class="block text-slate-500">Subject (sub)</label><input name="subject" required class="w-full border rounded px-2 py-1"></div>
+      <div><label class="block text-slate-500">Email</label><input name="email" type="email" class="w-full border rounded px-2 py-1"></div>
+      <div><label class="block text-slate-500">Display name</label><input name="display_name" class="w-full border rounded px-2 py-1"></div>
+      <button class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded">Register</button>
+    </form>
+    <h3 class="font-medium mt-5 mb-2 text-slate-600">Registered identities</h3>
+    <ul class="text-sm divide-y">
+      {{range .Identities}}<li class="py-1.5 flex justify-between"><span>{{.Email}} <span class="text-slate-400">{{.ExternalSubject}}</span></span><span class="text-slate-400">{{.Status}}</span></li>{{else}}<li class="py-1.5 text-slate-400">None yet.</li>{{end}}
+    </ul>
+  </section>
+</div>
+{{template "footer" .}}
+{{end}}

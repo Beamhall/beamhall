@@ -1,0 +1,25 @@
+{{define "page-audit"}}
+{{template "header" .}}
+<div class="flex items-baseline gap-3 mb-4">
+  <h1 class="text-2xl font-semibold">Audit log</h1>
+  <span class="text-sm {{if .ChainOK}}text-emerald-600{{else}}text-rose-600{{end}}">{{if .ChainOK}}chain verified ✓{{else}}CHAIN INTEGRITY VIOLATION{{end}}</span>
+</div>
+{{if .PruneNote}}<p class="text-xs text-slate-500 mb-3">{{.PruneNote}}</p>{{end}}
+<table class="w-full text-sm bg-white rounded shadow-sm">
+  <thead class="text-left text-slate-500 border-b"><tr><th class="px-4 py-2">Seq</th><th class="px-4 py-2">When</th><th class="px-4 py-2">Actor</th><th class="px-4 py-2">Action</th><th class="px-4 py-2">Decision</th><th class="px-4 py-2">Result</th><th class="px-4 py-2">Reason</th></tr></thead>
+  <tbody>
+  {{range .Events}}
+    <tr class="border-b last:border-0 font-mono text-xs">
+      <td class="px-4 py-1.5">{{.Seq}}</td>
+      <td class="px-4 py-1.5 whitespace-nowrap">{{.When}}</td>
+      <td class="px-4 py-1.5">{{.Actor}}</td>
+      <td class="px-4 py-1.5">{{.Action}}</td>
+      <td class="px-4 py-1.5 {{if eq .Decision "deny"}}text-rose-600{{else}}text-slate-600{{end}}">{{.Decision}}</td>
+      <td class="px-4 py-1.5">{{.Result}}</td>
+      <td class="px-4 py-1.5 text-slate-500">{{.Reason}}</td>
+    </tr>
+  {{else}}<tr><td colspan="7" class="px-4 py-3 text-slate-400">No audit events.</td></tr>{{end}}
+  </tbody>
+</table>
+{{template "footer" .}}
+{{end}}

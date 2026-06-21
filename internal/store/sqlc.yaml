@@ -1,0 +1,12 @@
+# sqlc config for the control-plane store. Regenerate with:
+#   cd internal/store && go run github.com/sqlc-dev/sqlc/cmd/sqlc@<pinned> generate
+# (pinned version recorded in docs/STATUS.md; sqlc is not vendored)
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "migrations"
+    queries: "queries"
+    gen:
+      go:
+        package: "db"
+        out: "db"

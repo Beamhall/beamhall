@@ -1,0 +1,616 @@
+---
+import { Image } from "astro:assets";
+import logo from "../assets/beamhall-logo.png";
+import FlowDiagram from "../components/FlowDiagram.astro";
+import ArchDiagram from "../components/ArchDiagram.astro";
+import "../styles/terminal.css";
+
+const repo = "https://github.com/Beamhall/beamhall";
+
+const nav = [
+  { id: "overview", n: "01", label: "overview", cmd: "beamhall --about" },
+  { id: "walkthrough", n: "02", label: "walkthrough", cmd: "beamhall demo --replay" },
+  { id: "architecture", n: "03", label: "architecture", cmd: "beamhall architecture" },
+  { id: "features", n: "04", label: "features", cmd: "beamhall features --all" },
+  { id: "security", n: "05", label: "security", cmd: "beamhall security" },
+  { id: "roadmap", n: "06", label: "roadmap", cmd: "beamhall roadmap" },
+  { id: "install", n: "07", label: "get-started", cmd: "beamhall install" },
+];
+const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#010312" />
+    <title>Beamhall — agent-built apps, infrastructure included</title>
+    <meta
+      name="description"
+      content="Beamhall is a self-hosted application backplane for AI agents: they deploy internal apps one reliable, governed way — no improvised GitHub Actions, Fly.io or Neon — and the apps inherit data, secrets, identity, and secure connectivity. IT controls where each app runs: private VM, dedicated VPC, or on-prem."
+    />
+    <meta property="og:title" content="Beamhall" />
+    <meta
+      property="og:description"
+      content="AI agents build internal apps; the apps inherit data, identity, and secure connectivity from Beamhall — no infrastructure to wire, no credentials shared."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://beamhall.com" />
+    <meta property="og:image" content="https://beamhall.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="Beamhall — the self-hosted backplane for agent-built internal apps" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Beamhall" />
+    <meta name="twitter:description" content="AI agents build internal apps that inherit data, identity, and secure connectivity from Beamhall — no infrastructure to wire, no credentials shared." />
+    <meta name="twitter:image" content="https://beamhall.com/og.png" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- ───────────────────────── Sidebar ───────────────────────── -->
+      <aside class="sidebar">
+        <div class="brand">
+          <Image src={logo} alt="Beamhall" widths={[260, 520]} sizes="260px" />
+          <p class="tag">
+            <span class="tag-1">Agent-built apps</span>
+            <span class="tag-2">Infrastructure included.</span>
+          </p>
+        </div>
+
+        <nav class="nav" aria-label="Sections">
+          {
+            nav.map((item, i) => (
+              <button data-screen={item.id} class={i === 0 ? "active" : ""}>
+                <span class="n">{item.n}</span>
+                <span class="lbl">{item.label}</span>
+                <span class="arrow">›</span>
+              </button>
+            ))
+          }
+        </nav>
+
+        <div class="side-foot">
+          <a class="star-btn" href={repo} target="_blank" rel="noopener"><span class="s">★</span> Star on GitHub</a>
+        </div>
+      </aside>
+
+      <!-- ───────────────────────── Terminal ──────────────────────── -->
+      <main class="term">
+        <div class="term-bar">
+          <span class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></span>
+          <span class="term-path">beamhall — <b id="path">~/overview</b></span>
+          <span class="term-hint">nav: <kbd>↑</kbd><kbd>↓</kbd> · <kbd>1</kbd>–<kbd>7</kbd></span>
+        </div>
+
+        <div class="term-body">
+          <!-- ── 01 overview ────────────────────────────────────── -->
+          <section class="screen active" id="screen-overview">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/overview</span><span class="s">$</span> {byId.overview.cmd}<span class="cursor"></span>
+            </div>
+            <div class="out">
+              <p class="lede">
+                Beamhall is a self-hosted <span class="c-cyan">application
+                backplane</span>: AI coding agents build and deploy internal apps —
+                <span class="c-cyan">beams</span> — by intent alone. Each beam
+                <span class="c-strong">inherits everything it needs to run</span> —
+                compute, data, secrets, identity, and secure connectivity to your
+                internal systems — as managed capabilities from Beamhall. The agent
+                never provisions, configures, or holds credentials for any of it.
+              </p>
+              <p>
+                The agent asks for a capability — a database, a secret, user
+                authentication, a connection to the ERP — and Beamhall provisions it
+                behind policy, handing back a
+                <span class="c-strong">handle, never the wiring</span>.
+              </p>
+
+              <FlowDiagram />
+
+              <div class="box">
+                <div class="box-h">The core principle</div>
+                A beam <span class="c-strong">inherits its infrastructure</span>; the
+                agent never touches it. Runtime, database, secrets, end-user
+                identity, and a secure path to internal systems are each provisioned
+                by Beamhall under a policy the agent cannot influence — and every
+                grant is audited. The agent declares the need; it never sees a
+                credential, an endpoint, or a config file.
+              </div>
+
+              <h3>what a beam inherits</h3>
+              <ul class="list">
+                <li><b>Runtime</b> <span class="c-dim">— hardened, isolated compute (runc / gVisor runsc), built from source, no Dockerfile.</span></li>
+                <li><b>Data &amp; secrets</b> <span class="c-dim">— a managed Postgres database per beam and a write-only secret vault, injected at runtime.</span></li>
+                <li><b>Networking</b> <span class="c-dim">— routing + TLS at the gateway, default-deny egress, per-workspace isolation.</span></li>
+                <li><b>Identity</b> <span class="c-amber">(coming)</span> <span class="c-dim">— apps inherit Beamhall's IdP configuration; end-user authentication works with zero setup.</span></li>
+                <li><b>Connectors</b> <span class="c-amber">(coming)</span> <span class="c-dim">— a brokered, governed path to internal systems (ERP databases, integrations) — without the beam ever holding their credentials.</span></li>
+              </ul>
+
+              <h3>a reliable path — not improvised infrastructure</h3>
+              <p>
+                Ask a typical agent to deploy and it
+                <span class="c-strong">improvises</span>: GitHub Actions, Fly.io,
+                Neon, a guessed Dockerfile, a half-remembered cloud CLI — scattering
+                your app across third-party providers in a way no two runs repeat.
+                Beamhall gives the agent a single, documented tool surface and a
+                <span class="c-cyan">built-in knowledge base</span> that teaches it
+                how to ship <em>here</em> — so it follows a known-good, governed path
+                every time, instead of reinventing deployment from training data.
+                Nothing leaves your environment.
+              </p>
+
+              <h3>IT decides where apps run</h3>
+              <p>
+                You choose the substrate per workspace — a
+                <span class="c-strong">private VM, a dedicated VPC, or fully
+                on-prem</span> — for heavy-compliance or strictly-internal workloads.
+                The gateway is the single ingress and egress is default-deny, so
+                exposure is deliberate and policy-driven: there is
+                <span class="c-strong">no cloud security group or load balancer to
+                misconfigure</span> into accidental public access. Internal stays
+                internal.
+              </p>
+
+              <p class="meta-line">
+                single Go binary · <b>self-hosted</b> · no SaaS · no phone-home ·
+                air-gap-friendly · Apache-2.0
+              </p>
+            </div>
+          </section>
+
+          <!-- ── 02 walkthrough ─────────────────────────────────── -->
+          <section class="screen" id="screen-walkthrough">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/walkthrough</span><span class="s">$</span> {byId.walkthrough.cmd}<span class="cursor"></span>
+            </div>
+            <div class="out">
+              <p>
+                What shipping an internal app on Beamhall looks like — an actual
+                agent session against a running appliance, trimmed for length. The
+                <b>People-Ops</b> team needs an RSVP app for the company's 10th
+                anniversary party: who's free on which July dates, plus any dietary
+                needs, with a private admin view of the responses.
+              </p>
+
+              <div class="chat">
+                <div class="msg user">
+                  <div class="who"><span class="name">You</span><span class="role">People-Ops</span></div>
+                  <div class="body">
+                    Build a small internal RSVP app for our 10th anniversary party in
+                    July. People tick the dates they're free and add any dietary
+                    restrictions. I'll want a private, password-protected admin page to
+                    see the responses. Staff only — nothing public.
+                  </div>
+                </div>
+
+                <div class="msg agent">
+                  <div class="who"><span class="name">Agent</span><span class="role">AI coding tool</span></div>
+                  <div class="body">
+                    On it. I'll set this up in your <b>people-ops</b> workspace — a beam
+                    with a Postgres database and an admin page behind a password.
+                    <div class="trace">
+                      <div class="call"><b>create_beam</b> <span class="args">slug=anniversary-party · template=web-app</span></div>
+                      <div class="ok">created · mode preview</div>
+                      <div class="call"><b>create_database</b> <span class="args">name=main</span></div>
+                      <div class="ok">ready · injected as MAIN_URL at /run/secrets/MAIN_URL — the connection string is never returned to me</div>
+                      <div class="call"><b>set_secret</b> <span class="args">ADMIN_PASSWORD=violet-harbor-3471</span></div>
+                      <div class="ok">stored write-only at /run/secrets/ADMIN_PASSWORD</div>
+                    </div>
+                    I generated your admin login — <b>violet-harbor-3471</b> — so you
+                    can sign in at <span class="c-cyan">/admin</span>. Keep it somewhere
+                    safe: Beamhall stores secrets write-only, so it can't be read back
+                    from the platform afterward — if it's ever lost, I just set a new one.
+                    Now the app — a July calendar to tick available dates, a dietary
+                    field, and that password-gated <span class="c-cyan">/admin</span> list
+                    with CSV export — pushed to the beam's own repo to build &amp; deploy:
+                    <div class="trace">
+                      <div class="call"><b>deploy_beam</b> <span class="args">anniversary-party</span></div>
+                      <div class="ok">one-time git push remote returned</div>
+                      <div class="call"><b>git push</b> <span class="args">HEAD → main</span></div>
+                      <div class="ok">Paketo buildpacks · Node 20.20.2 · npm install (82 packages, 0 vulnerabilities)</div>
+                      <div class="ok">image published · deployed</div>
+                      <div class="ok">preview <span class="url">https://98702f82e012dc30.preview.beamhall.internal</span></div>
+                      <div class="call"><b>show_logs</b></div>
+                      <div class="ok">listening on 8080 — up and serving</div>
+                    </div>
+                    It's live on that preview URL; responses are at
+                    <span class="c-cyan">/admin</span>, behind the password you set.
+                  </div>
+                </div>
+
+                <div class="msg user">
+                  <div class="who"><span class="name">You</span><span class="role">People-Ops</span></div>
+                  <div class="body">Can anyone outside our team reach it? And the database — do you have its password?</div>
+                </div>
+
+                <div class="msg agent">
+                  <div class="who"><span class="name">Agent</span><span class="role">AI coding tool</span></div>
+                  <div class="body">
+                    No to both. It runs on people-ops' isolated network behind the
+                    gateway with default-deny egress — only that internal URL works. And
+                    the database credential I never see at all: Beamhall mints it and
+                    injects it straight into the app at <span class="c-cyan">/run/secrets/MAIN_URL</span>.
+                    The only secret I handled is the admin password we just set — and
+                    even that is write-only once stored, so it can't be read back from
+                    the platform.
+                  </div>
+                </div>
+
+                <div class="msg user">
+                  <div class="who"><span class="name">You</span><span class="role">People-Ops</span></div>
+                  <div class="body">Looks great. Let's make it the real one — promote it to production.</div>
+                </div>
+
+                <div class="msg agent">
+                  <div class="who"><span class="name">Agent</span><span class="role">AI coding tool</span></div>
+                  <div class="body">
+                    I can't do that part — promotion is gated to IT. My role can build
+                    and deploy previews, but not push to production:
+                    <div class="trace">
+                      <div class="call"><b>promote_to_live</b> <span class="args">anniversary-party</span></div>
+                      <div class="deny">denied "promote_to_live": role "builder" does not grant "promote_to_live"</div>
+                    </div>
+                    That's by design — I'll hand it to your IT admin, who decides what
+                    goes live.
+                  </div>
+                </div>
+
+                <div class="handoff">over in the Beamhall admin console — IT reviews and promotes</div>
+
+                <div class="msg admin">
+                  <div class="who"><span class="name">IT admin</span><span class="role">Beamhall admin console</span></div>
+                  <div class="body">
+                    anniversary-party in people-ops is ready for production. The build,
+                    the injected secrets, and the egress policy all check out — promoting
+                    it, and with our four-eyes policy a second admin co-signs before it's
+                    live.
+                    <div class="trace">
+                      <div class="call"><b>promote_to_live</b> <span class="args">anniversary-party · as IT</span></div>
+                      <div class="ok">promoted · zero-downtime · live <span class="url">https://anniversary-party.people-ops.beamhall.internal</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="box">
+                <div class="box-h">from a sentence to a live app</div>
+                Built, deployed, and shipped to production in minutes — a real,
+                internal, database-backed app. No infrastructure ticket, no pipeline
+                to wire, nothing public, and not one credential handed to the agent.
+                The agent could build and preview, but
+                <span class="c-strong">only IT could promote to production.</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── 03 architecture ────────────────────────────────── -->
+          <section class="screen" id="screen-architecture">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/architecture</span><span class="s">$</span> {byId.architecture.cmd}<span class="cursor"></span>
+            </div>
+            <div class="out">
+              <p>
+                Two populations are <span class="c-amber">untrusted</span>: the AI
+                agent, and the workload code it ships. Everything inside
+                <span class="c-cyan">beamhalld</span> is the trust base.
+              </p>
+
+              <ArchDiagram />
+
+              <h3>the request path</h3>
+              <ul class="list">
+                <li><b>Validate at the edge.</b> <span class="c-dim">JWT signature (JWKS), exact iss, aud = the Beamhall resource URI, exp/nbf, Origin. RS256/ES256 only — never none/HMAC.</span></li>
+                <li><b>Resolve identity.</b> <span class="c-dim">(issuer, subject) → a registered identity; an unknown-but-valid token cannot act.</span></li>
+                <li><b>Authorize at the single PEP.</b> <span class="c-dim">membership → role, quota, status. Which workspace is data-driven here, never in the token.</span></li>
+                <li><b>Effect + audit.</b> <span class="c-dim">the orchestrator carries it out; every decision and outcome is appended to the hash-chained log.</span></li>
+              </ul>
+
+              <h3>build, auth &amp; the gateway</h3>
+              <ul class="list">
+                <li><b>Authentication is bring-your-own OIDC.</b> <span class="c-dim">Your IdP — Okta, Entra, or Keycloak — issues the agent's token; beamhalld validates it against your IdP's keys (JWKS) at the edge, then authorizes in the policy point. It runs no user directory of its own.</span></li>
+                <li><b>Builds become pinned images.</b> <span class="c-dim">A git push runs Cloud Native Buildpacks on an isolated build daemon (no agent Dockerfile), publishes a digest-pinned image to the internal registry, and the runtime pulls by digest — so what runs is exactly what was built.</span></li>
+                <li><b>The gateway is the single ingress.</b> <span class="c-dim">One HTTPS entry point with automatic TLS routes each beam's stable and preview URLs to its workload; nothing else is exposed, and outbound traffic is default-deny per workspace.</span></li>
+              </ul>
+
+              <h3>what the agent never touches</h3>
+              <p class="c-dim">
+                Docker / registry / DB admin credentials · the secret <em>values</em>
+                it sets · any connection string · the security context of its
+                workloads · its workspace's egress policy · another team's
+                workspace. Not by convention — <span class="c-strong">there is no tool
+                that does these things</span>.
+              </p>
+            </div>
+          </section>
+
+          <!-- ── 03 features ────────────────────────────────────── -->
+          <section class="screen" id="screen-features">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/features</span><span class="s">$</span> {byId.features.cmd}<span class="cursor"></span>
+            </div>
+            <div class="out">
+              <p class="lede">
+                Letting agents build apps sounds like a governance nightmare — code
+                you didn't write, shipped by a tool that improvises. Beamhall turns it
+                into the opposite: your team goes from idea to running app in
+                <span class="c-strong">minutes</span>, and IT keeps
+                <span class="c-strong">complete control</span> — because the only way
+                an agent can deploy is the secure, governed path you set up once.
+              </p>
+
+              <h3>the time you get back</h3>
+              <p class="c-dim">
+                Everything you'd normally stand up and babysit to host one app is
+                already in the box. One binary, one workspace — no platform project.
+              </p>
+              <div class="gains-wrap">
+                <table class="gains">
+                  <thead>
+                    <tr><th>Built in</th><th class="h-skip">Replaces</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="get"><b>Integrated Git</b> — a private repo per app; <span class="c-cyan">git push</span> builds &amp; deploys, logs streaming back</td>
+                      <td class="skip">Git host · CI runners · pipeline YAML</td>
+                    </tr>
+                    <tr>
+                      <td class="get"><b>Buildpacks</b> — apps built from source into hardened images, nothing to maintain</td>
+                      <td class="skip">Container registry · build servers · Dockerfiles</td>
+                    </tr>
+                    <tr>
+                      <td class="get"><b>Built-in gateway</b> — automatic HTTPS and a stable URL the moment it's live</td>
+                      <td class="skip">TLS certs · DNS · reverse proxy · load balancer</td>
+                    </tr>
+                    <tr>
+                      <td class="get"><b>Managed Postgres</b> — a database per app, created on request and injected at runtime</td>
+                      <td class="skip">Database provisioning · connection-string wiring</td>
+                    </tr>
+                    <tr>
+                      <td class="get"><b>Secret vault</b> — write-only, delivered into the app, never printed or exposed</td>
+                      <td class="skip">Vault · CI secrets · rotation glue</td>
+                    </tr>
+                    <tr>
+                      <td class="get"><b>One IdP</b> — bring Okta / Entra / Keycloak, or use the bundled one</td>
+                      <td class="skip">Per-app SSO setup · service accounts</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>the control you keep</h3>
+              <ul class="list">
+                <li><b>Set the rules once, per workspace.</b> <span class="c-dim">Where it runs (private VM, dedicated VPC, or on-prem), how much it can use (CPU / memory / storage quotas), how isolated (hardened or gVisor), and what it can reach (default-deny network, allowlist only if you choose).</span></li>
+                <li><b>Decide who can do what.</b> <span class="c-dim">Deploy, promote to production, and destroy are role-based — and an agent can never exceed the role you granted it.</span></li>
+                <li><b>Require a human for production.</b> <span class="c-dim">Optional four-eyes approval: a different person signs off before anything goes live.</span></li>
+                <li><b>Govern every team from one console.</b> <span class="c-dim">All workspaces, apps, and deploys in one place — with idle previews pausing themselves to reclaim resources.</span></li>
+                <li><b>Prove what happened.</b> <span class="c-dim">Every action, and every denied attempt, on a tamper-evident, append-only record tied to an identity.</span></li>
+                <li><b>Recover from anything.</b> <span class="c-dim">Back up and restore the whole appliance — keys included — to a byte-identical state.</span></li>
+              </ul>
+
+              <h3>every deploy is the secure deploy</h3>
+              <p class="c-dim">
+                Security here isn't a checklist the agent has to remember — it's the
+                only path available. Each capability removes a way to get it wrong:
+              </p>
+              <ul class="list">
+                <li><b>Nothing to leak.</b> <span class="c-dim">The agent asks for a database or secret and gets back a handle, never a key — so there's no credential in its context to expose, log, or be tricked out of.</span></li>
+                <li><b>No improvised infrastructure.</b> <span class="c-dim">It deploys through Beamhall's tools and Git, built by trusted buildpacks — it can't hand-roll a Dockerfile, pull a random base image, or wire its own pipeline.</span></li>
+                <li><b>Locked down at birth.</b> <span class="c-dim">Every app starts least-privileged, read-only, and default-deny on the network. Secure is the starting state, not a setting someone forgets to flip.</span></li>
+                <li><b>It can't widen its own box.</b> <span class="c-dim">There's no tool to open the network, read a secret, raise a quota, or reach another team's app — the insecure options simply don't exist.</span></li>
+              </ul>
+
+              <p class="meta-line">
+                Built-in user authentication and secure connectors to internal
+                systems are next — see the <b>roadmap</b>.
+              </p>
+            </div>
+          </section>
+
+          <!-- ── 04 security ────────────────────────────────────── -->
+          <section class="screen" id="screen-security">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/security</span><span class="s">$</span> {byId.security.cmd}<span class="cursor"></span>
+            </div>
+            <div class="out">
+              <p>
+                You want your teams — and the AI agents helping them — to ship
+                internal tools quickly. You also can't open a door you won't be
+                able to close. Beamhall's job is to make
+                <span class="c-strong">yes</span> safe: the agent's power is bounded
+                by a policy it cannot change, every app is isolated and
+                least-privileged, and every action is recorded. Here are the risks
+                an IT or security owner actually weighs — and how each is handled
+                <span class="c-strong">by default</span>, not left to whoever clicks
+                deploy.
+              </p>
+
+              <div class="worry">
+                <div class="worry-q">What's the worst case if the agent is wrong, manipulated, or jailbroken?</div>
+                <div class="worry-a">
+                  The agent can only call a fixed set of high-level actions, and
+                  every one is checked against a policy it cannot change. It can't
+                  grant itself more access, read a secret, open a network path, or
+                  touch another team's workspace — those simply aren't things it's
+                  able to do. A prompt-injected or misbehaving agent stays bounded
+                  to exactly what you granted, and nothing more.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">Could an app leak our data to the internet?</div>
+                <div class="worry-a">
+                  Every app starts with <span class="c-strong">default-deny
+                  networking</span>: it cannot reach the public internet, your cloud
+                  metadata endpoints, or your management network unless IT explicitly
+                  allows a specific destination. Even if an app is compromised or the
+                  agent is tricked into trying, there is nowhere for the data to go
+                  that you didn't approve.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">If one app is breached, does it spread to everything else?</div>
+                <div class="worry-a">
+                  No. Each team gets an isolated workspace, and each app gets its own
+                  network, its own database, and its own credentials. A compromised
+                  app can't see another team's apps, can't reach their data, and
+                  can't pivot across your environment. A problem stays the size of
+                  one app.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">Will our database passwords and API keys end up inside the AI?</div>
+                <div class="worry-a">
+                  The agent never receives a credential. It can ask Beamhall to
+                  create a database or store a secret, but it only gets back a
+                  reference — never the password or connection string. Secrets are
+                  injected straight into the running app and stripped out of any logs
+                  the agent sees. Nothing sensitive passes through the model or its
+                  chat history.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">It's AI-written code on our hardware — can it break out and reach the host?</div>
+                <div class="worry-a">
+                  Every app runs locked down: least privilege, read-only filesystem,
+                  no access to the host or the build system. The code is built from a
+                  trusted, pinned toolchain — the agent can't supply its own container
+                  definition or build steps — so you run a known-good image, not
+                  whatever the model improvised. For regulated or sensitive workloads,
+                  one setting switches on a stronger kernel-level isolation tier, with
+                  no special hardware required.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">Could something get exposed to the internet by accident?</div>
+                <div class="worry-a">
+                  There's no sprawl of cloud security groups or load-balancer rules
+                  for someone to misconfigure. Beamhall has a single, controlled
+                  entry point; internal apps stay internal, and making one reachable
+                  is a deliberate, recorded action. You also choose
+                  <span class="c-strong">where apps run</span> — a private VM, an
+                  isolated VPC, or fully on-prem — so strictly internal really means
+                  internal.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">Could a runaway app exhaust our resources or rack up surprise bills?</div>
+                <div class="worry-a">
+                  Every app runs under the CPU, memory, and storage ceilings you set,
+                  and idle preview apps pause themselves automatically. One team can't
+                  starve another, runaway builds are capped — and because it's your
+                  own infrastructure, there are no metered cloud surprises.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">When something goes wrong, can we prove who did what?</div>
+                <div class="worry-a">
+                  Every action — each deploy, secret, promotion, and denied attempt —
+                  is written to a tamper-evident, append-only record, tied to the
+                  person behind it. You get a complete, verifiable trail for incident
+                  response and compliance, and any attempt to rewrite history is
+                  detectable.
+                </div>
+              </div>
+
+              <div class="box note">
+                <div class="box-h">How we keep this honest</div>
+                Beamhall ships with an adversarial test suite that continuously
+                plays the attacker — a fully-privileged agent trying to read
+                secrets, escape its workspace, widen its network, and tamper with
+                the record; every one of those attempts must fail for a release to
+                ship. And because no isolation is absolute, the security model
+                states its residual risks plainly rather than hiding them — the
+                document your security team signs off on. Read the full, unvarnished
+                treatment in the
+                <a href={`${repo}/blob/main/docs/threat-model.md`} target="_blank" rel="noopener">threat model</a>.
+              </div>
+            </div>
+          </section>
+
+          <!-- ── 06 roadmap ─────────────────────────────────────── -->
+          <section class="screen" id="screen-roadmap">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/roadmap</span><span class="s">$</span> {byId.roadmap.cmd}<span class="cursor"></span>
+            </div>
+            <div class="out">
+              <h3>built &amp; validated end-to-end</h3>
+              <ul class="list">
+                <li>Single-binary appliance; runc + gVisor runsc tiers <span class="c-dim">(validated on real hardware)</span></li>
+                <li>MCP server + OAuth + single PEP + negative-security suite</li>
+                <li>Buildpacks pipeline; dual-channel beams; promote / rollback</li>
+                <li>age vault, hash-chained audit + retention, managed Postgres</li>
+                <li>backup/restore (with DR proof), admin console, BYO-OIDC + bundled IdP</li>
+                <li>four-eyes promote gate, air-gapped builds, one-command installer</li>
+              </ul>
+
+              <h3>planned — expanding what a beam inherits</h3>
+              <ul class="list todo">
+                <li><b>Built-in authentication (identity inheritance)</b> <span class="c-dim">— agent-built apps inherit Beamhall's IdP configuration; end-user auth with zero setup.</span></li>
+                <li><b>Secure connectors</b> <span class="c-dim">— brokered, governed paths from a beam to internal systems (ERP databases, integrations) with no credential held by the app.</span></li>
+                <li><b>Firecracker / microVM driver</b> <span class="c-dim">— behind the existing RuntimeDriver interface, if a review demands hardware-virt isolation.</span></li>
+                <li><b>L7 egress proxy</b> <span class="c-dim">with content inspection.</span></li>
+                <li><b>SBOM + CVE gate before promote;</b> <span class="c-dim">SLSA provenance.</span></li>
+                <li><b>Lease-based short-lived secrets</b> <span class="c-dim">(HSM-backed).</span></li>
+                <li><b>WORM / remote-attested log sink;</b> <span class="c-dim">SIEM cold-store before prune.</span></li>
+                <li><b>Object-store and queue provisioners.</b></li>
+              </ul>
+
+              <h3>planned — platform</h3>
+              <ul class="list todo">
+                <li><b>RHEL support</b> <span class="c-dim">— first-class install on Red Hat Enterprise Linux, alongside today's Ubuntu / Debian.</span></li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── 07 get-started ─────────────────────────────────── -->
+          <section class="screen" id="screen-install">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/get-started</span><span class="s">$</span> {byId.install.cmd}<span class="cursor"></span>
+            </div>
+            <div class="out">
+              <p>
+                Beamhall installs on a Linux host you own (Ubuntu 24.04 / Debian 12)
+                as a single hardened service. <span class="c-strong">One script sets
+                up the whole appliance</span> — the container runtime, the build
+                pipeline, the gateway with automatic TLS, an internal registry, and a
+                managed database — and starts it.
+              </p>
+
+              <pre class="code">{`# on a fresh Linux host, download and run the installer`}<br /><span class="c-green">curl</span> -fsSLO https://raw.githubusercontent.com/Beamhall/beamhall/main/packaging/install.sh<br /><span class="c-green">sudo</span> bash install.sh</pre>
+
+              <p>
+                When it finishes, Beamhall is running as a systemd service. Point it
+                at your IdP — Okta, Entra, or Keycloak, or use the bundled one —
+                create a workspace, and your team can ship with
+                <span class="c-cyan">git push</span>.
+              </p>
+
+              <p class="c-dim">
+                Prefer to build from source, or need the full options — air-gapped
+                installs, a Packer appliance image, an out-of-band secret key? It's
+                all in the
+                <a href={repo} target="_blank" rel="noopener">repository</a> and the
+                <a href={`${repo}/blob/main/docs/PLAN.md`} target="_blank" rel="noopener">docs</a>.
+              </p>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="/nav.js"></script>
+  </body>
+</html>

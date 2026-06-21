@@ -1,0 +1,15 @@
+# build output
+dist/
+# generated types
+.astro/
+# dependencies
+node_modules/
+# environment
+.env
+.env.production
+# cloudflare / wrangler
+.wrangler/
+# macOS
+.DS_Store
+# logs
+npm-debug.log*

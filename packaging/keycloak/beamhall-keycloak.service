@@ -1,0 +1,40 @@
+# Bundled Keycloak IdP for a Beamhall pilot (systemd-managed container).
+# Fronted by the Beamhall gateway at idp.<base-domain> (set
+# BEAMHALL_BUNDLED_IDP_UPSTREAM=127.0.0.1:8090 in beamhall.env). For evaluation
+# /pilots — swap to your corporate IdP for production (docs/idp-setup.md).
+#
+# Rendered/installed by packaging/keycloak/setup-bundled-idp.sh, which fills the
+# KC_HOSTNAME and import path. Requires Docker (the appliance baseline).
+
+[Unit]
+Description=Beamhall bundled Keycloak (pilot IdP)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+Before=beamhalld.service
+
+[Service]
+Type=exec
+TimeoutStartSec=300
+Restart=on-failure
+RestartSec=5
+# Published on loopback only; the Beamhall gateway terminates TLS and proxies it.
+# Run on a dedicated network (like beamhall-postgres/registry), never the default
+# docker0 bridge — Beamhall's design doesn't use docker0 and it can drift away.
+ExecStartPre=-/usr/bin/docker rm -f beamhall-keycloak
+ExecStartPre=-/usr/bin/docker network create beamhall-idp-net
+ExecStart=/usr/bin/docker run --rm --name beamhall-keycloak \
+  --network beamhall-idp-net \
+  -p 127.0.0.1:8090:8080 \
+  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+  -e KC_BOOTSTRAP_ADMIN_PASSWORD=${KC_ADMIN_PASSWORD} \
+  -e KC_HOSTNAME=${KC_HOSTNAME} \
+  -e KC_HTTP_ENABLED=true \
+  -e KC_PROXY_HEADERS=xforwarded \
+  -e JAVA_OPTS_KC_HEAP=-Xmx640m \
+  -v /etc/beamhall/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro \
+  quay.io/keycloak/keycloak:26.0 start-dev --import-realm
+ExecStop=/usr/bin/docker stop beamhall-keycloak
+
+[Install]
+WantedBy=multi-user.target

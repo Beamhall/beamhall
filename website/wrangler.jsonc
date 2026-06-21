@@ -1,0 +1,15 @@
+{
+  // Cloudflare Pages project config for the Beamhall site.
+  // Static Astro/Starlight output — no Worker code, just assets.
+  //
+  //   npm run build          # produces ./dist
+  //   npx wrangler pages deploy   # uploads ./dist to the Pages project
+  //
+  // Or connect this repo in the Cloudflare dashboard with:
+  //   Root directory:  website
+  //   Build command:   npm run build
+  //   Output dir:      dist
+  "name": "beamhall",
+  "compatibility_date": "2026-06-17",
+  "pages_build_output_dir": "./dist"
+}

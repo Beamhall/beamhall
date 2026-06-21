@@ -1,0 +1,29 @@
+# Binaries
+/beamhalld
+/bin/
+*.exe
+*.test
+*.out
+
+# Go
+/vendor/
+go.work
+go.work.sum
+
+# Local data / secrets (appliance runtime state)
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.age
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+dist/
+/bh-devidp
+beamhall_business_idea_mvp.md

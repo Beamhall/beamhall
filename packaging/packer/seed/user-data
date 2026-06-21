@@ -1,0 +1,8 @@
+#cloud-config
+# NoCloud seed: lets Packer SSH into the Ubuntu cloud image during the bake.
+# Ephemeral build-time only — the build VM is discarded and the final
+# provisioner locks this account and wipes cloud-init state before export.
+ssh_pwauth: true
+password: packer
+chpasswd:
+  expire: false

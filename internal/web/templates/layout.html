@@ -1,0 +1,26 @@
+{{define "header"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — Beamhall</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/htmx.org@2.0.3"></script>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<nav class="bg-slate-900 text-slate-100 px-6 py-3 flex items-center gap-6">
+  <a href="/admin" class="font-semibold tracking-tight">Beamhall <span class="text-slate-400 font-normal">admin</span></a>
+  <a href="/admin" class="text-sm hover:text-white text-slate-300">Beamhalls</a>
+  <a href="/admin/audit" class="text-sm hover:text-white text-slate-300">Audit log</a>
+  <span class="ml-auto text-sm text-slate-400">{{.Operator}}</span>
+  <form method="post" action="/admin/logout" class="inline"><button class="text-sm text-slate-300 hover:text-white">Log out</button></form>
+</nav>
+<main class="max-w-5xl mx-auto px-6 py-8">
+{{if .Flash}}<div class="mb-4 rounded bg-amber-100 border border-amber-300 text-amber-900 px-4 py-2 text-sm">{{.Flash}}</div>{{end}}
+{{end}}
+
+{{define "footer"}}
+</main>
+</body>
+</html>
+{{end}}
