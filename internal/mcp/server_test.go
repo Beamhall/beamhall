@@ -570,12 +570,35 @@ func TestDeployBeamFromTarballWithProgress(t *testing.T) {
 		t.Errorf("deploy text has no preview URL: %s", text)
 	}
 
+	// Progress notifications are delivered asynchronously over the connection,
+	// so they can still be in flight when CallTool returns. Wait for the build
+	// phases to arrive before asserting (deterministic; a genuine miss still
+	// fails after the deadline).
+	want := []string{"DETECTING", "BUILDING", "EXPORTING"}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		joined := strings.Join(progress, "\n")
+		mu.Unlock()
+		missing := false
+		for _, w := range want {
+			if !strings.Contains(joined, w) {
+				missing = true
+				break
+			}
+		}
+		if !missing || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 	joined := strings.Join(progress, "\n")
-	for _, want := range []string{"DETECTING", "BUILDING", "EXPORTING"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("progress stream missing %q: %v", want, progress)
+	for _, w := range want {
+		if !strings.Contains(joined, w) {
+			t.Errorf("progress stream missing %q: %v", w, progress)
 		}
 	}
 }
