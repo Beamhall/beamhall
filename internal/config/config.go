@@ -42,6 +42,11 @@ type Config struct {
 	// OAuthAudience is the Beamhall resource URI tokens must carry in `aud`.
 	// Defaults to https://<base-domain>/mcp.
 	OAuthAudience string
+	// OAuthAdminRole is the IdP realm role that elevates a caller to IT admin
+	// (in addition to the admin:it scope). Defaults to "beamhall-it"
+	// (auth.DefaultAdminRole). Lets a public admin-agent client grant admin via
+	// role assignment without requesting the hidden admin:it scope.
+	OAuthAdminRole string
 	// OAuthJWKSURL is the IdP's JWKS endpoint. Optional: when empty it is
 	// resolved from the issuer's OIDC discovery document.
 	OAuthJWKSURL string
@@ -161,6 +166,7 @@ func Load() (Config, error) {
 		PGBeamHost: envOr("BEAMHALL_PG_BEAM_HOST", "bh-postgres"),
 	}
 	c.OAuthAudience = envOr("BEAMHALL_OAUTH_AUDIENCE", "https://"+c.BaseDomain+"/mcp")
+	c.OAuthAdminRole = envOr("BEAMHALL_OAUTH_ADMIN_ROLE", "beamhall-it") // = auth.DefaultAdminRole
 	for _, sc := range strings.Fields(envOr("BEAMHALL_ADMIN_SCOPES", "openid admin:it")) {
 		c.AdminScopes = append(c.AdminScopes, sc)
 	}

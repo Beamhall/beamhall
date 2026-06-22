@@ -435,7 +435,8 @@ func run() error {
 		mux.Handle("/git/", gitSvc.Handler())
 
 		mcpServer := mcp.New(orchestrator, st, version,
-			mcp.WithLogger(logger), mcp.WithGitTransport(tokens, gitBaseURL))
+			mcp.WithLogger(logger), mcp.WithGitTransport(tokens, gitBaseURL),
+			mcp.WithAdminRole(cfg.OAuthAdminRole))
 		metadataURL := "https://" + cfg.BaseDomain + metadataPath
 		mux.Handle("/mcp", mcpServer.Handler(verifier.Verify, metadataURL, allowedOrigins(cfg)))
 		mux.Handle(metadataPath, mcp.MetadataHandler(cfg.OAuthAudience, []string{cfg.OAuthIssuer}))

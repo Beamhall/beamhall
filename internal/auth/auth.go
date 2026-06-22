@@ -53,7 +53,36 @@ const (
 	ExtraSubject = "sub"
 	ExtraJTI     = "jti"
 	ExtraEmail   = "email"
+	ExtraRoles   = "roles"
 )
+
+// DefaultAdminRole is the realm role that elevates a caller to IT admin when the
+// token carries no admin:it scope (the role-gated admin path: a public client
+// can't request the hidden admin:it scope, but IdP role assignment is naturally
+// user-gated). Override via BEAMHALL_OAUTH_ADMIN_ROLE.
+const DefaultAdminRole = "beamhall-it"
+
+// RolesOf returns the realm roles the verifier copied into the token info.
+func RolesOf(info *sdkauth.TokenInfo) []string {
+	if info == nil || info.Extra == nil {
+		return nil
+	}
+	r, _ := info.Extra[ExtraRoles].([]string)
+	return r
+}
+
+// HasRole reports whether the token carries the given realm role (empty role => false).
+func HasRole(info *sdkauth.TokenInfo, role string) bool {
+	if role == "" {
+		return false
+	}
+	for _, r := range RolesOf(info) {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
 
 // Verifier validates bearer tokens. Its Verify method satisfies the MCP
 // SDK's auth.TokenVerifier, so it plugs straight into RequireBearerToken.
@@ -146,7 +175,33 @@ func (v *Verifier) Verify(ctx context.Context, token string, _ *http.Request) (*
 	if email, _ := claims["email"].(string); email != "" {
 		info.Extra[ExtraEmail] = email
 	}
+	if roles := rolesOf(claims); len(roles) > 0 {
+		info.Extra[ExtraRoles] = roles
+	}
 	return info, nil
+}
+
+// rolesOf reads realm roles IdP-agnostically: Keycloak's nested
+// `realm_access.roles` array and/or a flat top-level `roles` array.
+func rolesOf(claims jwt.MapClaims) []string {
+	var out []string
+	if ra, ok := claims["realm_access"].(map[string]any); ok {
+		if arr, ok := ra["roles"].([]any); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					out = append(out, s)
+				}
+			}
+		}
+	}
+	if arr, ok := claims["roles"].([]any); ok {
+		for _, v := range arr {
+			if s, ok := v.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 // scopesOf reads granted scopes IdP-agnostically: the RFC 8693 `scope`

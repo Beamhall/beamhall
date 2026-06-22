@@ -104,6 +104,7 @@ type Server struct {
 	srv        *sdkmcp.Server
 	gitMinter  DeployTokenMinter
 	gitBaseURL string
+	adminRole  string // realm role that elevates to IT admin (in addition to the admin:it scope)
 }
 
 // DeployTokenMinter issues beam-scoped git tokens (*gitserver.TokenStore
@@ -127,9 +128,14 @@ func WithGitTransport(minter DeployTokenMinter, gitBaseURL string) Option {
 	return func(s *Server) { s.gitMinter = minter; s.gitBaseURL = strings.TrimRight(gitBaseURL, "/") }
 }
 
+// WithAdminRole sets the IdP realm role that elevates a caller to IT admin even
+// when the token carries no admin:it scope (the role-gated admin-agent path).
+// Empty keeps the scope-only behaviour. Defaults to auth.DefaultAdminRole.
+func WithAdminRole(role string) Option { return func(s *Server) { s.adminRole = role } }
+
 // New assembles the MCP server and registers the tool contract.
 func New(bp Backplane, dir Directory, version string, opts ...Option) *Server {
-	s := &Server{bp: bp, dir: dir, log: slog.Default()}
+	s := &Server{bp: bp, dir: dir, log: slog.Default(), adminRole: auth.DefaultAdminRole}
 	for _, opt := range opts {
 		opt(s)
 	}

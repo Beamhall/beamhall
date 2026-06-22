@@ -342,12 +342,19 @@ func stubVerifier(ctx context.Context, token string, _ *http.Request) (*sdkauth.
 	if token == "invalid" {
 		return nil, sdkauth.ErrInvalidToken
 	}
-	// Token format: "<scopes-csv>" for user-1, or "as=<subject>;<scopes-csv>".
+	// Token format: "<scopes-csv>" for user-1, optionally prefixed with
+	// "as=<subject>;" and/or "roles=<r1+r2>;" (realm roles).
 	subject := "user-1"
 	if rest, ok := strings.CutPrefix(token, "as="); ok {
 		subject, token, _ = strings.Cut(rest, ";")
 	}
-	return &sdkauth.TokenInfo{
+	var roles []string
+	if rest, ok := strings.CutPrefix(token, "roles="); ok {
+		var rstr string
+		rstr, token, _ = strings.Cut(rest, ";")
+		roles = strings.Split(rstr, "+")
+	}
+	info := &sdkauth.TokenInfo{
 		Scopes:     strings.Split(token, ","),
 		Expiration: time.Now().Add(time.Hour),
 		UserID:     "https://idp.test|" + subject,
@@ -356,7 +363,11 @@ func stubVerifier(ctx context.Context, token string, _ *http.Request) (*sdkauth.
 			auth.ExtraSubject: subject,
 			auth.ExtraJTI:     "jti-42",
 		},
-	}, nil
+	}
+	if len(roles) > 0 {
+		info.Extra[auth.ExtraRoles] = roles
+	}
+	return info, nil
 }
 
 // --- harness ---------------------------------------------------------------
@@ -614,6 +625,41 @@ func TestITAdminScopeMapsToActor(t *testing.T) {
 	}
 	if !h.bp.lastActor.ITAdmin {
 		t.Error("admin:it scope did not set Actor.ITAdmin")
+	}
+}
+
+func TestITAdminViaRealmRole(t *testing.T) {
+	// A token with the beamhall-it realm role but NO admin:it scope still gets
+	// IT-admin — the role-gated admin-agent path (a public client can't request
+	// the hidden admin:it scope, but role assignment in the IdP is user-gated).
+	h := newHarness(t)
+	cs := h.connect(t, "roles=beamhall-it;"+auth.ScopeBeamsPromote, nil)
+	// The admin_* gate passes via the realm role alone.
+	_, txt := h.call(t, cs, "admin_register_identity", map[string]any{
+		"issuer": "https://idp.test", "subject": "newbie",
+	}, false)
+	if !strings.Contains(txt, "ident-new") {
+		t.Fatalf("beamhall-it role did not grant admin_register_identity: %q", txt)
+	}
+	// And the role flows through to the PEP bypass (Actor.ITAdmin).
+	if _, err := cs.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name: "promote_to_live", Arguments: map[string]any{"beamhall": "ops", "beam": "tracker"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !h.bp.lastActor.ITAdmin {
+		t.Error("beamhall-it role did not set Actor.ITAdmin")
+	}
+}
+
+func TestNonAdminRoleDoesNotElevate(t *testing.T) {
+	// A different realm role must NOT grant admin.
+	h := newHarness(t)
+	cs := h.connect(t, "roles=some-other-role;"+auth.ScopeBeamsWrite, nil)
+	_, txt := h.call(t, cs, "admin_register_identity", map[string]any{
+		"issuer": "https://idp.test", "subject": "x",
+	}, true)
+	if !strings.Contains(txt, "insufficient_scope") {
+		t.Fatalf("non-admin role: want insufficient_scope, got %q", txt)
 	}
 }
 

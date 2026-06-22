@@ -23,7 +23,15 @@ func (s *Server) resolveActor(ctx context.Context, req *sdkmcp.CallToolRequest, 
 		return orch.Actor{}, fmt.Errorf("unauthenticated: no bearer token on this session")
 	}
 	info := req.Extra.TokenInfo
-	if !auth.HasScope(info.Scopes, requiredScope) {
+	// IT-admin elevation comes from the admin:it scope OR a configured realm role
+	// (the role-gated admin-agent path: a public client can't request the hidden
+	// admin:it scope, but IdP role assignment is naturally user-gated).
+	itAdmin := auth.HasScope(info.Scopes, auth.ScopeAdminIT) || auth.HasRole(info, s.adminRole)
+	if requiredScope == auth.ScopeAdminIT {
+		if !itAdmin {
+			return orch.Actor{}, fmt.Errorf("insufficient_scope: this tool requires IT-admin (the %q scope or the %q role)", auth.ScopeAdminIT, s.adminRole)
+		}
+	} else if !auth.HasScope(info.Scopes, requiredScope) {
 		// The agent surfaces this verbatim; "insufficient_scope" is the cue
 		// for the client's OAuth step-up flow (PLAN §6).
 		return orch.Actor{}, fmt.Errorf("insufficient_scope: this tool requires the %q scope", requiredScope)
@@ -41,7 +49,7 @@ func (s *Server) resolveActor(ctx context.Context, req *sdkmcp.CallToolRequest, 
 	return orch.Actor{
 		ID:       ident.ID,
 		TokenJTI: jti,
-		ITAdmin:  auth.HasScope(info.Scopes, auth.ScopeAdminIT),
+		ITAdmin:  itAdmin,
 		SourceIP: req.Extra.Header.Get("X-Forwarded-For"),
 	}, nil
 }
