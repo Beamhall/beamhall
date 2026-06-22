@@ -1,131 +1,138 @@
 #!/usr/bin/env bash
-# Turnkey bundled-IdP setup for a Beamhall PILOT: brings up a pre-configured
-# Keycloak (fronted by the Beamhall gateway), wires beamhalld to trust it, and
-# registers the seed identities — so an evaluator gets a working Admin console +
-# agent flow without touching their corporate IdP. Swap to a real IdP for
-# production (docs/idp-setup.md).
+# Bundled-IdP wizard for a Beamhall PILOT: brings up a pre-configured Keycloak
+# (fronted by the Beamhall gateway), wires beamhalld to trust it, seeds users and
+# the admin client/role, and registers the seed identities — a working Admin
+# console + agent flow without touching a corporate IdP. For production, point
+# Beamhall at your own IdP (https://github.com/Beamhall/beamhall/blob/main/docs/idp-setup.md).
 #
-#   # from a checkout:
-#   sudo BASE_DOMAIN=beamhall.acme.internal bash packaging/keycloak/setup-bundled-idp.sh
-#   # or streamlined (no checkout) — the script self-fetches its sibling files
-#   # from the latest release (set BEAMHALL_REF=<tag|branch> to pin):
 #   curl -fsSL https://github.com/Beamhall/beamhall/releases/latest/download/setup-bundled-idp.sh \
 #     | sudo BASE_DOMAIN=beamhall.acme.internal bash
 #
-# Persistent: Keycloak state lives in the named volume beamhall-keycloak-data, so
-# users/groups/config created at runtime in the console survive reboots. The realm
-# is seeded ONCE on first install; a re-run preserves the persistent state (it does
-# NOT regenerate secrets or re-import the realm — the printed values wouldn't match
-# what's persisted). To wipe and re-seed from scratch, re-run with RESET=1.
+# Interactive by default (prompts read /dev/tty); BEAMHALL_YES=1 / no tty auto-
+# confirms. Persistent: Keycloak state lives in the named volume
+# beamhall-keycloak-data; the realm is seeded once and survives reboots. RESET=1
+# wipes and re-seeds.
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)"; exit 1; }
 
 BASE_DOMAIN="${BASE_DOMAIN:?set BASE_DOMAIN to the appliance base domain}"
-SCHEME="${SCHEME:-https}"                       # http for an internal pilot (gateway TLS-off); https with real DNS
+SCHEME="${SCHEME:-https}"
 KC_PORT="${KC_PORT:-8090}"
 HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
 ENVFILE="${ENVFILE:-/etc/beamhall/beamhall.env}"
 BEAMHALLD="${BEAMHALLD:-/usr/local/bin/beamhalld}"
-
-# Sibling files this script reads. When run via `curl | bash` (no checkout),
-# fetch them so the bundled IdP is a true one-liner. Default: the latest RELEASE
-# assets (version-independent, matches `releases/latest/download/...`). Set
-# BEAMHALL_REF=<tag|branch> to pin to a git ref instead.
 REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
 BEAMHALL_REF="${BEAMHALL_REF:-}"
-_need_fetch=0
-for _f in realm-template.json beamhall-keycloak.service; do
-  [ -f "$HERE/$_f" ] || _need_fetch=1
-done
-if [ "$_need_fetch" = 1 ]; then
+VOLUME="beamhall-keycloak-data"
+
+# ---- wizard UI (matches install.sh) ----------------------------------------
+if [ -t 1 ]; then
+  C_RST=$'\033[0m'; C_B=$'\033[1m'; C_DIM=$'\033[2m'
+  C_R=$'\033[31m'; C_G=$'\033[32m'; C_Y=$'\033[33m'; C_C=$'\033[36m'; C_BLU=$'\033[34m'; C_TTY=1
+else C_RST=; C_B=; C_DIM=; C_R=; C_G=; C_Y=; C_C=; C_BLU=; C_TTY=0; fi
+if [ -e /dev/tty ] && { : >/dev/tty; } 2>/dev/null; then TTY=/dev/tty; else TTY=; BEAMHALL_YES=1; fi
+ASSUME_YES="${BEAMHALL_YES:-0}"
+_rule() { local n="${1:-72}" i=0; while [ "$i" -lt "$n" ]; do printf '─'; i=$((i+1)); done; }
+box() { local col="$1" title="$2"; shift 2
+  printf '\n%s┌─ %s%s %s\n' "$col" "$C_B" "$title" "$(printf '%s' "$col")$(_rule $((68 - ${#title})))$C_RST"
+  local line; for line in "$@"; do printf '%s│%s %b\n' "$col" "$C_RST" "$line"; done
+  printf '%s└%s%s\n' "$col" "$(_rule 70)" "$C_RST"; }
+phase() { printf '\n%s%s━━ %s%s\n' "$C_C" "$C_B" "$1" "$C_RST"; }
+ok()   { printf '   %s✓%s %s\n' "$C_G" "$C_RST" "$1"; }
+note() { printf '   %s•%s %s\n' "$C_Y" "$C_RST" "$1"; }
+die()  { printf '\n%s  ✗ %s%s\n' "$C_R$C_B" "$1" "$C_RST" >&2; exit 1; }
+run_step() { local label="$1"; shift; local log; log="$(mktemp)"
+  if [ "$C_TTY" = 0 ]; then if "$@" </dev/null >"$log" 2>&1; then ok "$label"; rm -f "$log"; return 0
+    else printf '   %s✗ %s%s\n' "$C_R" "$label" "$C_RST"; sed 's/^/      /' "$log"; rm -f "$log"; exit 1; fi; fi
+  ( "$@" ) </dev/null >"$log" 2>&1 & local pid=$! i=0 sp='|/-\'
+  while kill -0 "$pid" 2>/dev/null; do printf '\r   %s%s%s %s ' "$C_C" "${sp:$((i%4)):1}" "$C_RST" "$label"; i=$((i+1)); sleep 0.12; done
+  if wait "$pid"; then printf '\r   %s✓%s %s\033[K\n' "$C_G" "$C_RST" "$label"
+  else printf '\r   %s✗%s %s\033[K\n' "$C_R" "$C_RST" "$label"; sed 's/^/      /' "$log" | tail -n 25; rm -f "$log"; exit 1; fi; rm -f "$log"; }
+spinner_wait() { local label="$1" timeout="$2"; shift 2; local t=0 i=0 sp='|/-\'
+  while [ "$t" -lt "$timeout" ]; do
+    if "$@" >/dev/null 2>&1; then [ "$C_TTY" = 1 ] && printf '\r'; ok "$label (${t}s)"; return 0; fi
+    [ "$C_TTY" = 1 ] && printf '\r   %s%s%s %s … %ss\033[K' "$C_C" "${sp:$((i%4)):1}" "$C_RST" "$label" "$t"
+    i=$((i+1)); sleep 1; t=$((t+1)); done
+  [ "$C_TTY" = 1 ] && printf '\r'; note "$label — not ready after ${timeout}s"; return 1; }
+press_enter() { [ "$ASSUME_YES" = 1 ] && return 0; printf '   %s↵ Press Enter to continue…%s ' "$C_B" "$C_RST"; read -r _ <"$TTY" || true; }
+confirm() { [ "$ASSUME_YES" = 1 ] && return 0; local a; printf '   %s%s%s [y/N] ' "$C_B" "$1" "$C_RST"; read -r a <"$TTY" || a=; case "$a" in [Yy]*) return 0;; *) return 1;; esac; }
+
+# ---- self-fetch sibling assets (quiet) -------------------------------------
+_fetch_assets() {
   HERE="$(mktemp -d)"
-  for _f in realm-template.json beamhall-keycloak.service; do
-    if [ -n "$BEAMHALL_REF" ]; then
-      _url="https://raw.githubusercontent.com/${REPO_SLUG}/${BEAMHALL_REF}/packaging/keycloak/${_f}"
-    else
-      _url="https://github.com/${REPO_SLUG}/releases/latest/download/${_f}"
-    fi
-    curl -fsSL "$_url" -o "$HERE/$_f" || { echo "could not fetch ${_f} from ${_url}"; exit 1; }
+  local f url
+  for f in realm-template.json beamhall-keycloak.service; do
+    if [ -n "$BEAMHALL_REF" ]; then url="https://raw.githubusercontent.com/${REPO_SLUG}/${BEAMHALL_REF}/packaging/keycloak/${f}"
+    else url="https://github.com/${REPO_SLUG}/releases/latest/download/${f}"; fi
+    curl -fsSL "$url" -o "$HERE/$f" || return 1
   done
-  echo "fetched bundled-IdP assets (${BEAMHALL_REF:-latest release})"
-fi
+}
+_need_fetch=0
+for _f in realm-template.json beamhall-keycloak.service; do [ -f "$HERE/$_f" ] || _need_fetch=1; done
 
 IDP_HOST="idp.${BASE_DOMAIN}"
 ISSUER="${SCHEME}://${IDP_HOST}/realms/beamhall"
 AUDIENCE="${SCHEME}://${BASE_DOMAIN}/mcp"
 ADMIN_REDIRECT="${SCHEME}://${BASE_DOMAIN}/admin/callback"
-
-# openssl rand: no pipe, so safe under `set -o pipefail` (a tr|head -c gen trips
-# SIGPIPE and aborts the script). hex output is fine for secrets/passwords.
-command -v envsubst >/dev/null 2>&1 || { echo "== install envsubst (gettext-base) =="; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gettext-base >/dev/null; }
-
 gen() { openssl rand -hex "${1:-16}"; }
 
-VOLUME="beamhall-keycloak-data"
+# ============================================================================
+box "$C_BLU" "Bundled Identity Provider (pilot)" \
+  "This sets up a ready-to-use Keycloak so you can evaluate Beamhall without a" \
+  "corporate IdP. It seeds an ${C_B}it-admin${C_RST} and a ${C_B}builder${C_RST} account, wires this" \
+  "appliance to trust it, and registers their access — fronted by your gateway" \
+  "at ${C_B}${SCHEME}://${IDP_HOST}${C_RST}." \
+  "" \
+  "${C_DIM}Pilot-grade (single-host, embedded DB). For production, point Beamhall at${C_RST}" \
+  "${C_DIM}your own IdP. State is persistent across reboots.${C_RST}"
+press_enter
 
-# RESET=1: destroy all persistent runtime identity state, then proceed as a fresh
-# first install (regenerate secrets + re-seed the realm).
+command -v envsubst >/dev/null 2>&1 || run_step "Installing envsubst (gettext-base)" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gettext-base'
+[ "$_need_fetch" = 1 ] && run_step "Fetching bundled-IdP assets (${BEAMHALL_REF:-latest release})" _fetch_assets
+
 if [ "${RESET:-0}" = "1" ]; then
-  echo "!! RESET=1 — destroying the Keycloak container and the persistent volume"
-  echo "!! ${VOLUME}. ALL runtime identity state (users/groups/config created in"
-  echo "!! the console) will be LOST and the realm re-seeded from scratch."
-  docker rm -f beamhall-keycloak >/dev/null 2>&1 || true
-  docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+  box "$C_Y" "⚠  RESET — wiping all runtime identity state" \
+    "This destroys the Keycloak container and the persistent volume ${C_B}${VOLUME}${C_RST}." \
+    "ALL users/groups/config you created will be LOST and the realm re-seeded."
+  confirm "Really wipe and re-seed?" || die "aborted."
+  run_step "Removing Keycloak container + volume" bash -c "docker rm -f beamhall-keycloak >/dev/null 2>&1 || true; docker volume rm '$VOLUME' >/dev/null 2>&1 || true"
 fi
 
-# First install vs re-run over existing persistent state. The named volume is the
-# signal: if it exists, the realm + admin password already live inside it and must
-# NOT be regenerated/re-imported (the printed values would silently desync).
-if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
-  FIRST_INSTALL=0
-else
-  FIRST_INSTALL=1
-fi
+if docker volume inspect "$VOLUME" >/dev/null 2>&1; then FIRST_INSTALL=0; else FIRST_INSTALL=1; fi
 
+phase "Realm + credentials"
 if [ "$FIRST_INSTALL" = "1" ]; then
   ADMIN_SECRET="$(gen 24)"; BUILDER_PASSWORD="$(gen 10)"; IT_PASSWORD="$(gen 10)"
-  KC_ADMIN_PASSWORD="$(gen 12)"
-  # Service-account secret the backplane uses to administer the realm (admin_* IdP
-  # tools). Beamhall holds it; agents never do.
-  IDP_ADMIN_SECRET="$(gen 24)"
-
-  echo "== render realm (first install — seeding) =="
-  install -d -m 0750 -o root -g beamhall /etc/beamhall/keycloak
-  export AUDIENCE ADMIN_REDIRECT ADMIN_SECRET BUILDER_PASSWORD IT_PASSWORD IDP_ADMIN_SECRET
-  envsubst '${AUDIENCE} ${ADMIN_REDIRECT} ${ADMIN_SECRET} ${BUILDER_PASSWORD} ${IT_PASSWORD} ${IDP_ADMIN_SECRET}' \
-    < "$HERE/realm-template.json" > /etc/beamhall/keycloak/realm.json
-  # 0644: the Keycloak container runs as a non-root (userns-remapped) uid and must
-  # read this bind-mounted import file. These are regenerated pilot-grade creds on
-  # a single-tenant appliance; production uses a real IdP (no bundled realm).
-  chmod 0644 /etc/beamhall/keycloak/realm.json
+  KC_ADMIN_PASSWORD="$(gen 12)"; IDP_ADMIN_SECRET="$(gen 24)"
+  _render_realm() {
+    install -d -m 0750 -o root -g beamhall /etc/beamhall/keycloak
+    export AUDIENCE ADMIN_REDIRECT ADMIN_SECRET BUILDER_PASSWORD IT_PASSWORD IDP_ADMIN_SECRET
+    envsubst '${AUDIENCE} ${ADMIN_REDIRECT} ${ADMIN_SECRET} ${BUILDER_PASSWORD} ${IT_PASSWORD} ${IDP_ADMIN_SECRET}' \
+      < "$HERE/realm-template.json" > /etc/beamhall/keycloak/realm.json
+    chmod 0644 /etc/beamhall/keycloak/realm.json
+  }
+  run_step "Generating credentials + rendering the realm (first install)" _render_realm
 else
-  echo "== existing persistent state detected — preserving realm + secrets =="
-  # Reuse the beamhall-admin OIDC client secret already persisted in the realm
-  # (and recorded in beamhall.env). Regenerating it here would desync from the
-  # persisted realm. KC_ADMIN_PASSWORD is only used to render the unit's bootstrap
-  # vars on first boot; Keycloak ignores it once the admin user exists, so a
-  # rendered placeholder is harmless on a re-run.
   ADMIN_SECRET="$(sed -n 's/^BEAMHALL_ADMIN_CLIENT_SECRET=//p' "$ENVFILE" 2>/dev/null | tail -n1)"
-  [ -n "$ADMIN_SECRET" ] || { echo "no BEAMHALL_ADMIN_CLIENT_SECRET in $ENVFILE — run RESET=1 to re-seed"; exit 1; }
+  [ -n "$ADMIN_SECRET" ] || die "no BEAMHALL_ADMIN_CLIENT_SECRET in $ENVFILE — run RESET=1 to re-seed"
   IDP_ADMIN_SECRET="$(sed -n 's/^BEAMHALL_IDP_ADMIN_CLIENT_SECRET=//p' "$ENVFILE" 2>/dev/null | tail -n1)"
-  [ -n "$IDP_ADMIN_SECRET" ] || { echo "no BEAMHALL_IDP_ADMIN_CLIENT_SECRET in $ENVFILE — run RESET=1 to re-seed"; exit 1; }
+  [ -n "$IDP_ADMIN_SECRET" ] || die "no BEAMHALL_IDP_ADMIN_CLIENT_SECRET in $ENVFILE — run RESET=1 to re-seed"
   KC_ADMIN_PASSWORD="$(gen 12)"
+  ok "existing persistent state detected — preserving realm + secrets"
 fi
 
-echo "== install + start the bundled Keycloak unit =="
-sed -e "s#\${KC_HOSTNAME}#${SCHEME}://${IDP_HOST}#" -e "s#\${KC_ADMIN_PASSWORD}#${KC_ADMIN_PASSWORD}#" \
-  "$HERE/beamhall-keycloak.service" > /etc/systemd/system/beamhall-keycloak.service
-systemctl daemon-reload
-systemctl enable beamhall-keycloak >/dev/null 2>&1 || true
-# restart (not just enable --now): re-render the unit and pick up changes. State
-# is persistent (named volume), so the realm is seeded once on first boot and NOT
-# re-imported on restart — a re-run preserves runtime identity state.
-systemctl restart beamhall-keycloak
+phase "Bring up Keycloak + wire the appliance"
+_start_kc() {
+  sed -e "s#\${KC_HOSTNAME}#${SCHEME}://${IDP_HOST}#" -e "s#\${KC_ADMIN_PASSWORD}#${KC_ADMIN_PASSWORD}#" \
+    "$HERE/beamhall-keycloak.service" > /etc/systemd/system/beamhall-keycloak.service
+  systemctl daemon-reload; systemctl enable beamhall-keycloak >/dev/null 2>&1 || true
+  systemctl restart beamhall-keycloak
+}
+run_step "Installing + starting the Keycloak service" _start_kc
 
-echo "== wire beamhalld to the bundled IdP =="
-# strip prior OAuth/admin/bundled/idp-admin lines, then append
-sed -i '/^BEAMHALL_OAUTH_/d;/^BEAMHALL_ADMIN_CLIENT/d;/^BEAMHALL_BUNDLED_IDP_/d;/^BEAMHALL_IDP_ADMIN_/d' "$ENVFILE"
-cat >>"$ENVFILE" <<EOF
+_wire_env() {
+  sed -i '/^BEAMHALL_OAUTH_/d;/^BEAMHALL_ADMIN_CLIENT/d;/^BEAMHALL_BUNDLED_IDP_/d;/^BEAMHALL_IDP_ADMIN_/d' "$ENVFILE"
+  cat >>"$ENVFILE" <<EOF
 BEAMHALL_OAUTH_ISSUER=${ISSUER}
 BEAMHALL_OAUTH_AUDIENCE=${AUDIENCE}
 BEAMHALL_ADMIN_CLIENT_ID=beamhall-admin
@@ -136,69 +143,58 @@ BEAMHALL_IDP_ADMIN_REALM=beamhall
 BEAMHALL_IDP_ADMIN_CLIENT_ID=beamhall-idp-admin
 BEAMHALL_IDP_ADMIN_CLIENT_SECRET=${IDP_ADMIN_SECRET}
 EOF
+  grep -q "$IDP_HOST" /etc/hosts || echo "127.0.0.1 ${IDP_HOST}" >>/etc/hosts
+  systemctl restart beamhalld
+}
+run_step "Wiring beamhalld to trust the IdP" _wire_env
 
-echo "== wait for the IdP to answer through the gateway =="
-# beamhalld must resolve ${IDP_HOST} to the gateway; for a single-host pilot, a
-# hosts entry is the simplest (real DNS in production).
-grep -q "$IDP_HOST" /etc/hosts || echo "127.0.0.1 ${IDP_HOST}" >>/etc/hosts
-systemctl restart beamhalld
-for i in $(seq 1 40); do
-  curl -fsS "${ISSUER}/.well-known/openid-configuration" >/dev/null 2>&1 && break || sleep 3
-done
+phase "Wait for the identity provider"
+note "Keycloak's first boot imports the realm — this can take up to ~90s."
+spinner_wait "Keycloak answering through the gateway" 120 \
+  curl -fsS "${ISSUER}/.well-known/openid-configuration" \
+  || die "Keycloak did not come up in time — check: journalctl -u beamhall-keycloak -n 80"
 
-echo "== register the seed identities in Beamhall =="
+phase "Register the seed identities"
 export BEAMHALL_DATA_DIR="${BEAMHALL_DATA_DIR:-/var/lib/beamhall}" BEAMHALL_BASE_DOMAIN="$BASE_DOMAIN"
-"$BEAMHALLD" admin register-identity -issuer "$ISSUER" -subject it-admin   -email it-admin@beamhall.pilot   || true
-"$BEAMHALLD" admin bootstrap -beamhall pilot -display "Pilot workspace" \
-  -issuer "$ISSUER" -subject builder -email builder@beamhall.pilot -role builder -runtime runc || true
+run_step "Registering it-admin + creating the pilot workspace" bash -c "
+  '$BEAMHALLD' admin register-identity -issuer '$ISSUER' -subject it-admin -email it-admin@beamhall.pilot || true
+  '$BEAMHALLD' admin bootstrap -beamhall pilot -display 'Pilot workspace' -issuer '$ISSUER' -subject builder -email builder@beamhall.pilot -role builder -runtime runc || true"
 
+# ============================================================================
 if [ "$FIRST_INSTALL" = "1" ]; then
-cat <<EOF
+  box "$C_Y" "🔐  SAVE THESE — generated once, shown only now" \
+    "Admin console : ${C_B}${SCHEME}://${BASE_DOMAIN}/admin${C_RST}" \
+    "   it-admin   : ${C_B}${IT_PASSWORD}${C_RST}" \
+    "Builder login : ${C_B}${BUILDER_PASSWORD}${C_RST}  (user: builder)" \
+    "Keycloak admin: ${SCHEME}://${IDP_HOST}   admin / ${C_B}${KC_ADMIN_PASSWORD}${C_RST}" \
+    "" \
+    "${C_DIM}Also written to ${ENVFILE}. The appliance never shows them again.${C_RST}"
+  confirm "I've saved these credentials — continue?" || note "Find the client secrets in ${ENVFILE}; reset passwords in the Keycloak console."
 
-================ bundled IdP ready (PILOT) ================
-Admin console : ${SCHEME}://${BASE_DOMAIN}/admin   (log in as it-admin / ${IT_PASSWORD})
-IdP issuer    : ${ISSUER}
-Agent client  : beamhall-agent (public, PKCE)   user: builder / ${BUILDER_PASSWORD}
-Keycloak admin: ${SCHEME}://${IDP_HOST}  (admin / ${KC_ADMIN_PASSWORD})
+  box "$C_C" "Connect an agent over MCP" \
+    "${C_B}Engineer (builder):${C_RST}" \
+    "   claude mcp add --transport http --client-id beamhall-agent \\\\" \
+    "      beamhall ${SCHEME}://${BASE_DOMAIN}/mcp" \
+    "   (sign in as builder)" \
+    "" \
+    "${C_B}IT operator (admin over MCP — gated by the beamhall-it role):${C_RST}" \
+    "   claude mcp add --transport http --client-id beamhall-admin-agent \\\\" \
+    "      beamhall-admin ${SCHEME}://${BASE_DOMAIN}/mcp" \
+    "   (sign in as it-admin)"
 
-Give an employee this command to connect their agent (uses the pre-registered
-agent client — no dynamic client registration needed):
-  claude mcp add --transport http --client-id beamhall-agent beamhall ${SCHEME}://${BASE_DOMAIN}/mcp
-  (then authenticate and sign in as builder / ${BUILDER_PASSWORD})
-
-For an IT operator to administer over MCP (the admin_* tools), use the admin
-client — IT-admin is gated by the 'beamhall-it' realm role (it-admin has it):
-  claude mcp add --transport http --client-id beamhall-admin-agent beamhall-admin ${SCHEME}://${BASE_DOMAIN}/mcp
-  (sign in as it-admin / ${IT_PASSWORD})
-
-Secrets were generated and written to ${ENVFILE}. SAVE the passwords above.
-Identity state is PERSISTENT (named volume ${VOLUME}): users/groups/config you
-create in the console survive restarts and reboots.
-
-IdP administration over MCP is ENABLED: an it-admin agent can run the admin_*
-tools (create users/groups, onboard people, list identities) without opening the
-Keycloak console. Directory federation (admin_federate_directory) is the
-SENSITIVE tier: it files a request a DIFFERENT it-admin must approve (four-eyes)
-before it takes effect, and is OFF by default — set BEAMHALL_IDP_SENSITIVE_ADMIN=on
-in ${ENVFILE} to permit it (it changes who can sign in to the whole appliance).
-This is an evaluation IdP — for production, point Beamhall at your own IdP
-(docs/idp-setup.md) and disable beamhall-keycloak.service.
-===========================================================
-EOF
+  box "$C_G" "✅  Bundled IdP ready" \
+    "MCP + the Admin console are now live. Next: create a workspace and onboard" \
+    "an engineer. Walkthrough:" \
+    "   ${C_B}https://github.com/Beamhall/beamhall/blob/main/docs/getting-started.md${C_RST}" \
+    "${C_DIM}Directory federation (LDAP/AD) is the sensitive tier — four-eyes, off by${C_RST}" \
+    "${C_DIM}default (BEAMHALL_IDP_SENSITIVE_ADMIN=on to permit). Admin guide:${C_RST}" \
+    "${C_DIM}   https://github.com/Beamhall/beamhall/blob/main/docs/admin-over-mcp.md${C_RST}"
 else
-cat <<EOF
-
-================ bundled IdP re-wired (PILOT) ================
-IdP issuer    : ${ISSUER}
-Existing persistent state was PRESERVED — the realm and the seed passwords were
-NOT regenerated (they live in the named volume ${VOLUME} and the values printed
-on first install still apply). The systemd unit and ${ENVFILE} were re-rendered.
-
-Manage users/groups/config via the Keycloak admin console
-(${SCHEME}://${IDP_HOST}) or the Beamhall admin tools.
-
-To WIPE all runtime identity state and re-seed from scratch, re-run with RESET=1:
-  sudo RESET=1 BASE_DOMAIN=${BASE_DOMAIN} bash packaging/keycloak/setup-bundled-idp.sh
-=============================================================
-EOF
+  box "$C_G" "✅  Bundled IdP re-wired (state preserved)" \
+    "IdP issuer: ${C_B}${ISSUER}${C_RST}" \
+    "The realm and seed passwords were NOT regenerated (they live in the volume" \
+    "${VOLUME}; the values printed on first install still apply). The unit and" \
+    "${ENVFILE} were re-rendered." \
+    "" \
+    "Wipe + re-seed with: ${C_B}sudo RESET=1 BASE_DOMAIN=${BASE_DOMAIN} …${C_RST}"
 fi

@@ -68,7 +68,7 @@
     {
       "clientId": "beamhall-admin-agent",
       "name": "Beamhall admin agent (IT operators)",
-      "description": "Public PKCE client for IT operators' agents. Grants the full capability scope set by default and emits realm roles; IT-admin elevation is gated by the 'beamhall-it' realm role (assigned per user), not by a scope, so a non-IT user authenticating here gets no admin.",
+      "description": "Public PKCE client for IT operators' agents. IT-admin elevation is gated by the beamhall-it realm role (per user), not a scope, so a non-IT user here gets no admin.",
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
