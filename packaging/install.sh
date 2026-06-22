@@ -114,13 +114,20 @@ spinner_wait() {
   [ "$C_TTY" = 1 ] && printf '\r'; note "$label — not ready after ${timeout}s"; return 1
 }
 
-press_enter() { [ "$ASSUME_YES" = 1 ] && return 0; printf '   %s↵ Press Enter to continue…%s ' "$C_B" "$C_RST"; read -r _ <"$TTY" || true; }
+press_enter() { [ "$ASSUME_YES" = 1 ] && return 0; printf '   %s↵  Press Enter to continue…%s ' "$C_B" "$C_RST"; read -r _ <"$TTY" || true; }
 confirm()     { [ "$ASSUME_YES" = 1 ] && return 0; local a; printf '   %s%s%s [y/N] ' "$C_B" "$1" "$C_RST"; read -r a <"$TTY" || a=; case "$a" in [Yy]*) return 0;; *) return 1;; esac; }
 ask() { # ask "prompt" "default" -> echoes answer (default when --yes/no tty)
   local def="${2:-}" a
   if [ "$ASSUME_YES" = 1 ]; then echo "$def"; return; fi
   printf '   %s%s%s ' "$C_B" "$1" "$C_RST" >&2; read -r a <"$TTY" || a=; echo "${a:-$def}"
 }
+
+# Setup checklist: action items are accumulated to a file during the run and
+# presented together at the very END (so they don't scroll off mid-install). The
+# chained bundled-IdP wizard appends to the SAME file via BEAMHALL_SETUP_SUMMARY.
+SUMMARY="${BEAMHALL_SETUP_SUMMARY:-/root/beamhall-setup.txt}"
+export BEAMHALL_SETUP_SUMMARY="$SUMMARY"
+chk() { printf '%s\n' "$@" >> "$SUMMARY"; }
 
 # ============================================================================
 ARCH="$(uname -m)"
@@ -203,28 +210,17 @@ ask_config() {
 
 # ============================================================================
 step_dns() {
-  phase "Networking — wildcard DNS (you own this)"
-  box "$C_C" "Point *.${BASE_DOMAIN} at this host" \
-    "Beamhall serves every beam and the IdP under ${C_B}*.${BASE_DOMAIN}${C_RST}, all on" \
-    "this one host. Your DNS must resolve these to ${C_B}${HOST_IP:-the host IP}${C_RST}:" \
-    "" \
-    "   ${C_B}${BASE_DOMAIN}${C_RST}            (the appliance: MCP + Admin console)" \
-    "   ${C_B}idp.${BASE_DOMAIN}${C_RST}        (the bundled identity provider)" \
-    "   ${C_B}*.${BASE_DOMAIN}${C_RST}          (preview + live beam URLs)" \
-    "" \
-    "A single ${C_B}wildcard A record${C_RST} (*.${BASE_DOMAIN} → ${HOST_IP:-IP}) covers all three." \
-    "${C_DIM}Engineer workstations must resolve these too (corporate DNS). Beamhall${C_RST}" \
-    "${C_DIM}does not run DNS for you.${C_RST}"
-  local r=""
+  local r="" ip="${HOST_IP:-the host IP}"
   r="$(getent hosts "probe-$$.${BASE_DOMAIN}" 2>/dev/null | awk 'NR==1{print $1}')"
   if [ -z "$r" ]; then r="$(getent hosts "${BASE_DOMAIN}" 2>/dev/null | awk 'NR==1{print $1}')"; fi
   if [ -n "$r" ] && { [ -z "$HOST_IP" ] || [ "$r" = "$HOST_IP" ]; }; then
-    ok "wildcard resolves to ${r} — DNS looks good"
+    ok "wildcard DNS resolves: *.${BASE_DOMAIN} → ${r}"
   else
-    note "could not confirm *.${BASE_DOMAIN} resolves to ${HOST_IP:-this host} (got '${r:-nothing}')."
-    note "Set the wildcard record before engineers connect; the install can proceed now."
-    confirm "I understand the DNS requirement — continue?" || die "set up DNS, then re-run."
+    note "wildcard *.${BASE_DOMAIN} does not resolve to ${ip} yet — added to your checklist"
   fi
+  chk "" "[ ] DNS — point *.${BASE_DOMAIN} at ${ip} (single wildcard A record)" \
+       "      Covers ${BASE_DOMAIN}, idp.${BASE_DOMAIN}, and all beam URLs." \
+       "      Engineer workstations must resolve these too — Beamhall runs no DNS."
 }
 
 # ============================================================================
@@ -495,32 +491,20 @@ EOF
 
 # ============================================================================
 gate_post_install() {
-  box "$C_G" "✅  Appliance installed and running" \
-    "beamhalld is up and ${C_B}/healthz${C_RST} is green on this host." \
-    "Admin console (after identity is on): ${C_B}https://${BASE_DOMAIN}/admin${C_RST}"
-
+  ok "appliance is up — /healthz is green"
   if [ "${KEY_GENERATED:-0}" = "1" ]; then
-    box "$C_Y" "🔑  ACTION REQUIRED — back up the secret root key" \
-      "A new age root key was generated at ${C_B}/etc/beamhall/secret.key${C_RST} (0400)." \
-      "It seals ${C_B}every${C_RST} secret Beamhall stores — and it travels inside backups." \
-      "" \
-      "${C_B}Copy it to your KMS / vault now and keep it offline.${C_RST}" \
-      "If this key is lost, every stored secret (and every backup) is unrecoverable."
-    confirm "I have backed up (or will immediately back up) the secret key — continue?" \
-      || note "Remember: /etc/beamhall/secret.key — back it up before going further."
+    note "${C_B}a new secret root key was generated${C_RST} — back-up steps are in your checklist"
+    chk "" "[ ] BACK UP THE SECRET ROOT KEY  (critical)" \
+         "      /etc/beamhall/secret.key  →  copy to your KMS / vault, keep it offline." \
+         "      It seals every secret and rides inside backups. Lose it = lose everything."
   fi
-
   if [ "$TLS_MODE" = "internal" ] && [ -s "${CA_OUT:-/nonexistent}" ]; then
-    box "$C_C" "🔒  Distribute the gateway CA to client machines" \
-      "Internal TLS uses a private CA. This host already trusts it; your" \
-      "engineers' workstations must too, so HTTPS to *.${BASE_DOMAIN} validates" \
-      "(browser OAuth + beam URLs). The root cert is at:" \
-      "   ${C_B}${CA_OUT}${C_RST}" \
-      "" \
-      "macOS: add to login keychain & trust · Linux: drop in" \
-      "/usr/local/share/ca-certificates/ then run update-ca-certificates." \
-      "${C_DIM}Or point a single tool at it: curl --cacert <file>, NODE_EXTRA_CA_CERTS=<file>.${C_RST}"
-    press_enter
+    note "gateway CA installed on this host — distribute it to client machines (in checklist)"
+    chk "" "[ ] DISTRIBUTE THE GATEWAY CA to client machines" \
+         "      ${CA_OUT}" \
+         "      macOS: add to Keychain & trust · Linux: copy to" \
+         "      /usr/local/share/ca-certificates/ then run update-ca-certificates." \
+         "      Per-tool: curl --cacert <file> ; NODE_EXTRA_CA_CERTS=<file>"
   fi
 }
 
@@ -552,8 +536,8 @@ choose_idp() {
       ;;
     *)
       local scheme=https; [ "$TLS_MODE" = "off" ] && scheme=http
-      local idp; idp="$(mktemp)"
-      run_step "Downloading the bundled-IdP wizard" curl -fsSL "https://github.com/${REPO_SLUG}/releases/latest/download/setup-bundled-idp.sh" -o "$idp"
+      local idp="${BEAMHALL_IDP_SCRIPT:-}"   # override for testing; else fetch the release asset
+      if [ -z "$idp" ]; then idp="$(mktemp)"; run_step "Downloading the bundled-IdP wizard" curl -fsSL "https://github.com/${REPO_SLUG}/releases/latest/download/setup-bundled-idp.sh" -o "$idp"; fi
       printf '\n%s%s  Handing off to the bundled-IdP wizard…%s\n' "$C_C" "$C_B" "$C_RST"
       BASE_DOMAIN="$BASE_DOMAIN" SCHEME="$scheme" BEAMHALL_YES="$ASSUME_YES" bash "$idp" </dev/null
       ;;
@@ -561,13 +545,16 @@ choose_idp() {
 }
 
 final_summary() {
-  box "$C_G" "🎉  Beamhall is ready" \
+  chk "" "[ ] CREATE A WORKSPACE + ONBOARD AN ENGINEER" \
+       "      Admin console: https://${BASE_DOMAIN}/admin   (or the admin_* MCP tools)" \
+       "      Walkthrough:   https://github.com/Beamhall/beamhall/blob/main/docs/getting-started.md" \
+       "============================================================"
+  box "$C_G" "🎉  Beamhall is installed and running" \
     "Admin console : ${C_B}https://${BASE_DOMAIN}/admin${C_RST}" \
-    "MCP endpoint  : ${C_B}https://${BASE_DOMAIN}/mcp${C_RST}" \
-    "" \
-    "Next: create a workspace and onboard an engineer (Admin console, or the" \
-    "admin_* MCP tools). Full walkthrough:" \
-    "   ${C_B}https://github.com/Beamhall/beamhall/blob/main/docs/getting-started.md${C_RST}"
+    "MCP endpoint  : ${C_B}https://${BASE_DOMAIN}/mcp${C_RST}"
+  printf '\n%s%s📋  YOUR TURN — do these now%s %s(saved to %s — re-read any time)%s\n' \
+    "$C_Y" "$C_B" "$C_RST" "$C_DIM" "$SUMMARY" "$C_RST"
+  cat "$SUMMARY"
 }
 
 # ============================================================================
@@ -582,8 +569,14 @@ if want baseline || want substrate || want appliance; then
   press_enter
 fi
 
-want appliance && ask_config
-want appliance && step_dns
+if want appliance; then
+  ask_config
+  : > "$SUMMARY"; chmod 600 "$SUMMARY" 2>/dev/null || true
+  chk "============================================================" \
+      " Beamhall — setup checklist  ·  host ${BASE_DOMAIN} (${HOST_IP:-?})" \
+      "============================================================"
+  step_dns
+fi
 want baseline  && group_baseline  </dev/null
 want substrate && group_substrate </dev/null
 want appliance && group_appliance </dev/null

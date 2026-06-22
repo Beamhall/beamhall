@@ -54,12 +54,19 @@ spinner_wait() { local label="$1" timeout="$2"; shift 2; local t=0 i=0 sp='|/-\'
     [ "$C_TTY" = 1 ] && printf '\r   %s%s%s %s … %ss\033[K' "$C_C" "${sp:$((i%4)):1}" "$C_RST" "$label" "$t"
     i=$((i+1)); sleep 1; t=$((t+1)); done
   [ "$C_TTY" = 1 ] && printf '\r'; note "$label — not ready after ${timeout}s"; return 1; }
-press_enter() { [ "$ASSUME_YES" = 1 ] && return 0; printf '   %s↵ Press Enter to continue…%s ' "$C_B" "$C_RST"; read -r _ <"$TTY" || true; }
+press_enter() { [ "$ASSUME_YES" = 1 ] && return 0; printf '   %s↵  Press Enter to continue…%s ' "$C_B" "$C_RST"; read -r _ <"$TTY" || true; }
 confirm() { [ "$ASSUME_YES" = 1 ] && return 0; local a; printf '   %s%s%s [y/N] ' "$C_B" "$1" "$C_RST"; read -r a <"$TTY" || a=; case "$a" in [Yy]*) return 0;; *) return 1;; esac; }
+# Setup checklist: shared with install.sh when chained (BEAMHALL_SETUP_SUMMARY);
+# standalone we own + print it ourselves at the end.
+SUMMARY="${BEAMHALL_SETUP_SUMMARY:-}"; _OWN_SUMMARY=0
+if [ -z "$SUMMARY" ]; then SUMMARY=/root/beamhall-setup.txt; : > "$SUMMARY"; chmod 600 "$SUMMARY" 2>/dev/null || true; _OWN_SUMMARY=1; fi
+chk() { printf '%s\n' "$@" >> "$SUMMARY"; }
 
 # ---- self-fetch sibling assets (quiet) -------------------------------------
+# NOTE: HERE is set by the caller (in the PARENT shell) before this runs, because
+# run_step executes it in a subshell — a HERE assignment here would be lost and
+# the later realm render would look in the wrong directory.
 _fetch_assets() {
-  HERE="$(mktemp -d)"
   local f url
   for f in realm-template.json beamhall-keycloak.service; do
     if [ -n "$BEAMHALL_REF" ]; then url="https://raw.githubusercontent.com/${REPO_SLUG}/${BEAMHALL_REF}/packaging/keycloak/${f}"
@@ -88,7 +95,10 @@ box "$C_BLU" "Bundled Identity Provider (pilot)" \
 press_enter
 
 command -v envsubst >/dev/null 2>&1 || run_step "Installing envsubst (gettext-base)" bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gettext-base'
-[ "$_need_fetch" = 1 ] && run_step "Fetching bundled-IdP assets (${BEAMHALL_REF:-latest release})" _fetch_assets
+if [ "$_need_fetch" = 1 ]; then
+  HERE="$(mktemp -d)"   # set in the PARENT so _fetch_assets (run in a subshell) and the realm render agree
+  run_step "Fetching bundled-IdP assets (${BEAMHALL_REF:-latest release})" _fetch_assets
+fi
 
 if [ "${RESET:-0}" = "1" ]; then
   box "$C_Y" "⚠  RESET — wiping all runtime identity state" \
@@ -162,39 +172,32 @@ run_step "Registering it-admin + creating the pilot workspace" bash -c "
 
 # ============================================================================
 if [ "$FIRST_INSTALL" = "1" ]; then
-  box "$C_Y" "🔐  SAVE THESE — generated once, shown only now" \
-    "Admin console : ${C_B}${SCHEME}://${BASE_DOMAIN}/admin${C_RST}" \
-    "   it-admin   : ${C_B}${IT_PASSWORD}${C_RST}" \
-    "Builder login : ${C_B}${BUILDER_PASSWORD}${C_RST}  (user: builder)" \
-    "Keycloak admin: ${SCHEME}://${IDP_HOST}   admin / ${C_B}${KC_ADMIN_PASSWORD}${C_RST}" \
-    "" \
-    "${C_DIM}Also written to ${ENVFILE}. The appliance never shows them again.${C_RST}"
-  confirm "I've saved these credentials — continue?" || note "Find the client secrets in ${ENVFILE}; reset passwords in the Keycloak console."
-
-  box "$C_C" "Connect an agent over MCP" \
-    "${C_B}Engineer (builder):${C_RST}" \
-    "   claude mcp add --transport http --client-id beamhall-agent \\\\" \
-    "      beamhall ${SCHEME}://${BASE_DOMAIN}/mcp" \
-    "   (sign in as builder)" \
-    "" \
-    "${C_B}IT operator (admin over MCP — gated by the beamhall-it role):${C_RST}" \
-    "   claude mcp add --transport http --client-id beamhall-admin-agent \\\\" \
-    "      beamhall-admin ${SCHEME}://${BASE_DOMAIN}/mcp" \
-    "   (sign in as it-admin)"
-
-  box "$C_G" "✅  Bundled IdP ready" \
-    "MCP + the Admin console are now live. Next: create a workspace and onboard" \
-    "an engineer. Walkthrough:" \
-    "   ${C_B}https://github.com/Beamhall/beamhall/blob/main/docs/getting-started.md${C_RST}" \
-    "${C_DIM}Directory federation (LDAP/AD) is the sensitive tier — four-eyes, off by${C_RST}" \
-    "${C_DIM}default (BEAMHALL_IDP_SENSITIVE_ADMIN=on to permit). Admin guide:${C_RST}" \
-    "${C_DIM}   https://github.com/Beamhall/beamhall/blob/main/docs/admin-over-mcp.md${C_RST}"
+  note "credentials generated — they're in your setup checklist (shown once, at the end)"
+  chk "" "[ ] SAVE THESE CREDENTIALS  (generated once)" \
+       "      Admin console : ${SCHEME}://${BASE_DOMAIN}/admin" \
+       "        it-admin    : ${IT_PASSWORD}" \
+       "      Builder login : ${BUILDER_PASSWORD}   (user: builder)" \
+       "      Keycloak admin: ${SCHEME}://${IDP_HOST}   admin / ${KC_ADMIN_PASSWORD}" \
+       "      (client secrets are in ${ENVFILE})" \
+       "" \
+       "[ ] CONNECT AN AGENT OVER MCP" \
+       "      Engineer (builder):" \
+       "        claude mcp add --transport http --client-id beamhall-agent beamhall ${SCHEME}://${BASE_DOMAIN}/mcp" \
+       "      IT operator (admin — gated by the beamhall-it realm role):" \
+       "        claude mcp add --transport http --client-id beamhall-admin-agent beamhall-admin ${SCHEME}://${BASE_DOMAIN}/mcp"
 else
-  box "$C_G" "✅  Bundled IdP re-wired (state preserved)" \
-    "IdP issuer: ${C_B}${ISSUER}${C_RST}" \
-    "The realm and seed passwords were NOT regenerated (they live in the volume" \
-    "${VOLUME}; the values printed on first install still apply). The unit and" \
-    "${ENVFILE} were re-rendered." \
-    "" \
-    "Wipe + re-seed with: ${C_B}sudo RESET=1 BASE_DOMAIN=${BASE_DOMAIN} …${C_RST}"
+  ok "bundled IdP re-wired — existing state preserved (passwords unchanged)"
+  chk "" "Bundled IdP re-wired. Passwords are unchanged from first install;" \
+       "client secrets live in ${ENVFILE}. Wipe + re-seed: sudo RESET=1 BASE_DOMAIN=${BASE_DOMAIN} bash …"
+fi
+
+# Standalone: print the checklist here. Chained (install.sh set the summary
+# path): just append — install.sh prints the consolidated checklist at the end.
+if [ "$_OWN_SUMMARY" = 1 ]; then
+  box "$C_G" "✅  Bundled IdP ready" \
+    "MCP + the Admin console are live at ${C_B}${SCHEME}://${BASE_DOMAIN}${C_RST}."
+  printf '\n%s%s📋  YOUR TURN — do these now%s %s(saved to %s)%s\n' "$C_Y" "$C_B" "$C_RST" "$C_DIM" "$SUMMARY" "$C_RST"
+  cat "$SUMMARY"
+else
+  ok "bundled IdP ready — credentials are in the final checklist below"
 fi
