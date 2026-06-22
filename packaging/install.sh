@@ -484,7 +484,12 @@ EOF
 }
 
 # ===========================================================================
-want baseline  && group_baseline
-want substrate && group_substrate
-want appliance && group_appliance
+# Redirect each phase's stdin from /dev/null. Under `curl | bash` the script
+# itself is on stdin, and child processes that drain stdin (notably the docker
+# CLI, e.g. `docker exec`) would otherwise swallow the rest of the script and
+# silently skip later phases. The redirect isolates child stdin without
+# disturbing bash's own reading of the remaining script lines.
+want baseline  && group_baseline  </dev/null
+want substrate && group_substrate </dev/null
+want appliance && group_appliance </dev/null
 log "install.sh: group '${GROUP}' complete"
