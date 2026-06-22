@@ -183,7 +183,10 @@ EOF
     && ok "userns-remap enabled on the runtime daemon" || die "userns-remap NOT enabled"
   docker info --format '{{range $k,$v := .Runtimes}}{{println $k}}{{end}}' | grep -qx runsc \
     && ok "runsc registered as a Docker runtime" || die "runsc not registered"
-  rver="$(runc --version 2>/dev/null | sed -nE 's/^runc version ([0-9.]+).*/\1/p' | head -1)"
+  # No `| head -1`: an early-closing reader SIGPIPEs runc, and pipefail+set -e
+  # would abort the install. sed reads to EOF; take the first line in bash.
+  rver="$(runc --version 2>/dev/null | sed -nE 's/^runc version ([0-9.]+).*/\1/p')"
+  rver="${rver%%$'\n'*}"
   if [ -n "$rver" ] && version_ge "$rver" "$MIN_RUNC"; then ok "runc $rver >= $MIN_RUNC (CVE floor)"
   else die "runc ${rver:-unknown} < $MIN_RUNC — refusing to continue on a vulnerable runtime"; fi
   docker -H unix://${BUILD_SOCK} info >/dev/null 2>&1 \
@@ -269,7 +272,7 @@ EOF
 # Fetch the published beamhalld for this host's arch from GitHub Releases and
 # verify it against checksums.txt. Sets BIN_SRC to the extracted binary.
 fetch_release_binary() {
-  local arch tag ver base ar tmp
+  local arch tag ver base ar tmp resp
   case "$DPKG_ARCH" in
     amd64) arch=amd64 ;;
     arm64) arch=arm64 ;;
@@ -278,8 +281,14 @@ fetch_release_binary() {
   command -v curl >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq curl ca-certificates >/dev/null; }
   tag="$RELEASE_VERSION"
   if [ -z "$tag" ]; then
-    tag="$(curl -fsSL "https://api.github.com/repos/${REPO_SLUG}/releases/latest" 2>/dev/null \
-            | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+    # Capture the API response fully, then parse with a pure-bash regex. Piping
+    # curl into `grep -m1` makes grep close the pipe early, curl take SIGPIPE
+    # (exit 23), and pipefail+set -e abort the whole install (a race that bit the
+    # latest-release path reliably — tag_name sits near the top of the JSON).
+    resp="$(curl -fsSL "https://api.github.com/repos/${REPO_SLUG}/releases/latest" 2>/dev/null || true)"
+    if [[ "$resp" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+      tag="${BASH_REMATCH[1]}"
+    fi
     [ -n "$tag" ] || die "could not resolve the latest ${REPO_SLUG} release; pin one with --version vX.Y.Z"
   fi
   case "$tag" in v*) ver="${tag#v}" ;; *) ver="$tag" ;; esac
@@ -484,11 +493,10 @@ EOF
 }
 
 # ===========================================================================
-# Redirect each phase's stdin from /dev/null. Under `curl | bash` the script
-# itself is on stdin, and child processes that drain stdin (notably the docker
-# CLI, e.g. `docker exec`) would otherwise swallow the rest of the script and
-# silently skip later phases. The redirect isolates child stdin without
-# disturbing bash's own reading of the remaining script lines.
+# Defense in depth for the `curl | bash` form (script delivered on stdin):
+# redirect each phase's stdin from /dev/null so a child that drains stdin can't
+# consume the script. (The actual install-truncation bug was a SIGPIPE/pipefail
+# race in the version/tag command-subs above, fixed there — not stdin draining.)
 want baseline  && group_baseline  </dev/null
 want substrate && group_substrate </dev/null
 want appliance && group_appliance </dev/null
