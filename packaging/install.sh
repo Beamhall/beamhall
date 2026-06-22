@@ -2,7 +2,16 @@
 # Beamhall turnkey installer — takes a bare Linux host to a running appliance in
 # one command. Run as root:
 #
-#   sudo bash install.sh ./beamhalld [--base-domain beamhall.example.com]
+#   sudo bash install.sh [./beamhalld] [--base-domain beamhall.example.com]
+#
+# With no binary path it fetches the latest published beamhalld from GitHub
+# Releases for this host's arch and verifies it against checksums.txt:
+#
+#   curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/<tag>/packaging/install.sh \
+#     | sudo bash -s -- --base-domain beamhall.example.com --tls internal
+#
+# Pin a specific release with --version vX.Y.Z; pass a local path to install a
+# dev build instead.
 #
 # It lays the whole stack so an admin never hand-assembles a runtime:
 #   - Docker Engine (official repo) + runc, hard-verified >= 1.2.8 (CVE floor)
@@ -29,12 +38,16 @@ BIN_SRC=""
 SECRET_KEY_SRC=""           # supply your own age key instead of generating one
 AUTO_START=1
 TLS_MODE="on"               # on=public ACME | internal=Caddy local CA | off=plain HTTP
+RELEASE_VERSION=""          # --version vX.Y.Z (empty => latest published release)
+REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --group)       GROUP="$2"; shift 2 ;;
     --base-domain) BASE_DOMAIN="$2"; shift 2 ;;
     --secret-key)  SECRET_KEY_SRC="$2"; shift 2 ;;
     --tls)         TLS_MODE="$2"; shift 2 ;;
+    --version)     RELEASE_VERSION="$2"; shift 2 ;;
+    --repo)        REPO_SLUG="$2"; shift 2 ;;
     --no-start)    AUTO_START=0; shift ;;
     -*)            echo "unknown flag: $1" >&2; exit 2 ;;
     *)             BIN_SRC="$1"; shift ;;
@@ -252,10 +265,53 @@ EOF
     || note "postgres not ready yet"
 }
 
+# Fetch the published beamhalld for this host's arch from GitHub Releases and
+# verify it against checksums.txt. Sets BIN_SRC to the extracted binary.
+fetch_release_binary() {
+  local arch tag ver base ar tmp
+  case "$DPKG_ARCH" in
+    amd64) arch=amd64 ;;
+    arm64) arch=arm64 ;;
+    *) die "no released binary for arch '$DPKG_ARCH'; build from source and pass the path" ;;
+  esac
+  command -v curl >/dev/null 2>&1 || { apt-get update -qq; apt-get install -y -qq curl ca-certificates >/dev/null; }
+  tag="$RELEASE_VERSION"
+  if [ -z "$tag" ]; then
+    tag="$(curl -fsSL "https://api.github.com/repos/${REPO_SLUG}/releases/latest" 2>/dev/null \
+            | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+    [ -n "$tag" ] || die "could not resolve the latest ${REPO_SLUG} release; pin one with --version vX.Y.Z"
+  fi
+  case "$tag" in v*) ver="${tag#v}" ;; *) ver="$tag" ;; esac
+  base="https://github.com/${REPO_SLUG}/releases/download/${tag}"
+  ar="beamhall_${ver}_linux_${arch}.tar.gz"
+  tmp="$(mktemp -d)"
+  log "APPLIANCE 0/6  Fetch beamhalld ${ver} (${arch}) from ${REPO_SLUG}"
+  curl -fsSL "${base}/${ar}" -o "${tmp}/${ar}" || die "download failed: ${base}/${ar}"
+  if curl -fsSL "${base}/checksums.txt" -o "${tmp}/checksums.txt" 2>/dev/null; then
+    ( cd "$tmp" && grep " ${ar}\$" checksums.txt | sha256sum -c - >/dev/null 2>&1 ) \
+      && ok "checksum verified (${ar})" \
+      || die "checksum verification FAILED for ${ar} — refusing to install"
+  else
+    note "checksums.txt not found in the release; skipping verification"
+  fi
+  tar -xzf "${tmp}/${ar}" -C "$tmp" beamhalld || die "release archive did not contain beamhalld"
+  chmod +x "${tmp}/beamhalld"
+  BIN_SRC="${tmp}/beamhalld"
+  ok "release binary ready: beamhalld ${ver}"
+}
+
 # ===========================================================================
 group_appliance() {
-  [ -x "$BIN_SRC" ] || BIN_SRC="$(command -v beamhalld || true)"
-  [ -n "$BIN_SRC" ] && [ -x "$BIN_SRC" ] || die "beamhalld binary not found; pass its path as the first argument"
+  if [ -n "$BIN_SRC" ] && [ -x "$BIN_SRC" ]; then
+    ok "using provided binary: $BIN_SRC"
+  elif [ -n "$RELEASE_VERSION" ]; then
+    fetch_release_binary
+  elif command -v beamhalld >/dev/null 2>&1; then
+    BIN_SRC="$(command -v beamhalld)"; ok "using beamhalld already on PATH: $BIN_SRC"
+  else
+    fetch_release_binary
+  fi
+  [ -n "$BIN_SRC" ] && [ -x "$BIN_SRC" ] || die "no beamhalld binary (pass a local path, or use --version vX.Y.Z)"
   [ -n "$BASE_DOMAIN" ] || BASE_DOMAIN="$(hostname -f 2>/dev/null || hostname)"
 
   log "APPLIANCE 1/6  Service user"

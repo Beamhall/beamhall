@@ -64,4 +64,8 @@ changelog:
     exclude: ["^docs:", "^test:", "^chore:"]
 
 release:
-  draft: true # review before publishing
+  # Publish on tag so `install.sh` can resolve the latest release and fetch the
+  # arch binary unauthenticated. Pre-1.0 tags (e.g. v0.x via -rc) mark prerelease.
+  draft: false
+  prerelease: auto
+  make_latest: true
