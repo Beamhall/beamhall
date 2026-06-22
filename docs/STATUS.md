@@ -31,8 +31,26 @@ lives in `website/` (Astro + Starlight, static → Cloudflare Pages; `npm run de
 in that dir). **Before the repo flips public**, internal test-VM SSH/IP details
 were scrubbed from the committed docs (the concrete address now lives only in the
 maintainer's private ops notes / agent memory, referenced as `$BEAMHALL_TEST_HOST`).
-Remaining for the public flip: decide on a `goreleaser`/CI workflow, GitHub issue
-templates, and wiring the Cloudflare Pages project + the `beamhall.com` DNS.
+Remaining for the public flip: GitHub issue templates, and wiring the Cloudflare
+Pages project + the `beamhall.com` DNS.
+
+**First public releases (2026-06-21):** ~~decide on a goreleaser/CI workflow~~
+**DONE** — `.github/workflows/release.yml` (tag `v*` → GoReleaser → published
+GitHub Release with checksums), and `install.sh` now **fetches the released
+binary by arch + verifies the checksum** (local path stays the dev fast-path).
+Cut **v0.1.0** (the install path) and **v0.1.1** (usable MCP-created workspaces +
+a true one-liner bundled IdP). The supported install is now:
+`curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/v0.1.1/packaging/install.sh | sudo bash -s -- --base-domain <d> --tls internal`.
+Two product fixes shipped in v0.1.1, both found by a **from-scratch MCP-driven
+pilot** (clean snapshot → live beam, simulating a first-time IT admin; see the
+2026-06-21 section in `docs/lab-phase0-validation.md` and the new
+`docs/getting-started.md`): (1) `admin_create_beamhall` over MCP defaulted to a
+**zero quota** → unusable workspace — now defaults 5/1/2 + optional overrides;
+(2) the bundled-IdP setup is a true `curl|bash` one-liner (self-fetches its
+sibling files). **Open finding:** an IT admin can't get the hidden `admin:it`
+scope through `claude mcp add`'s browser OAuth — admin-over-MCP today uses the
+Admin console or a `--header` bearer token; a role-gated admin-agent client is the
+proposed follow-up (PLAN §10).
 
 ## Build & test
 
@@ -381,7 +399,10 @@ internal/e2e/         lab suites: demo flow + negsec + lifecycle (rollback/destr
 internal/config/      env config
 scripts/              preflight, runsc-smoke, lab-bootstrap
 docs/                 PLAN.md, STATUS.md (this), lab-phase0-validation.md, threat-model.md,
-                      beamhall-for-it.md (IT-facing overview + planning surface)
+                      beamhall-for-it.md (IT overview + planning surface),
+                      getting-started.md (IT admin's step-by-step first-hour play),
+                      admin-over-mcp.md, idp-setup.md, air-gapped.md
+.github/workflows/    ci.yml (build/vet/test + website) + release.yml (tag → GoReleaser → published release)
 website/              public marketing + docs site (Astro + Starlight → Cloudflare Pages)
 ```
 
@@ -729,6 +750,14 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
   environment; the open questions below.
 
 ### Open questions still pending (PLAN §10 + security §)
+- **Admin-over-MCP client for `admin:it` (NEW, 2026-06-21 pilot):** `claude mcp add`
+  can't request the hidden `admin:it` scope, so admin-over-MCP needs the Admin
+  console or a `--header` bearer token today. Ship a **role-gated** public
+  admin-agent client (gate `admin:it` behind a `beamhall-it` realm role, since
+  `admin:it` ⇒ ITAdmin) vs. keep the console/header path? See PLAN §10.
+- **No quota-edit surface (NEW):** quota is set only at `create_beamhall` (baked
+  into the immutable SecurityContext); there's no `admin_set_quota`. Add one, or
+  keep quota create-only? (Pilot patched a pre-fix workspace's quota in the store.)
 - Y (preview auto-pause hours) default; per-Beamhall vs global.
 - IdP for the first pilot: bundled Keycloak vs customer Okta/Entra day one.
   (Partly resolved: the bundled IdP is now **persistent** + administrable over MCP,

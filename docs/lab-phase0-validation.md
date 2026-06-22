@@ -938,3 +938,55 @@ checkpoint (migration `0009`, `internal/audit/prune.go`).
 Manual: `beamhalld admin prune-audit -keep-days N|-keep N [-dry-run]`. Auto:
 opt-in `BEAMHALL_AUDIT_RETENTION_DAYS` (prune on boot + daily). No SIEM export in
 this build — pruned events are gone; the checkpoint records when/who/how many.
+
+## From-scratch MCP-driven pilot + first public releases — 2026-06-21
+
+A full bare-host → live-beam run **driven over MCP**, from a clean Proxmox
+snapshot, simulating a first-time IT admin. Produced `docs/getting-started.md`
+(the IT play) and shipped the first public releases. Bugs/gaps caught (each is a
+"the documented streamlined path didn't exist / didn't work" finding that no unit
+test could surface):
+
+- **No release pipeline (FIXED, v0.1.0).** `install.sh` only took a *local* binary
+  path; `.goreleaser.yaml` was draft-only; no tag/release/CI existed — so the
+  public install story ("`curl … install.sh | bash`") was impossible. Added
+  `.github/workflows/release.yml` (tag-triggered GoReleaser → published assets +
+  `checksums.txt`), an `install.sh` **GitHub-release fetch path** (resolve latest
+  or `--version`, download by arch, **verify checksum**; local path stays the dev
+  fast-path), and flipped goreleaser to publish-on-tag. Dogfooded: `curl|bash`
+  installed `beamhalld 0.1.0`, `/healthz` ok.
+- **`admin_create_beamhall` created a ZERO-quota, unusable workspace (FIXED).** A
+  workspace made over MCP got `ResourceQuota{}` → every `create_beam` failed
+  `max_beams 0 of 0`. Quota is baked into the immutable SecurityContext at create
+  and there is **no edit path** (no `admin_set_quota`), so the workspace was
+  permanently dead. Fix: default `5 beams / 1 live / 2 db` + optional
+  `max_beams/max_live_slots/max_databases` overrides, mirroring the Admin console.
+  **Gotcha:** the live-slot gate reads `EffectiveLiveSlotLimit =
+  min(beamhalls.live_slot_limit, quota_json.MaxLiveSlots)` — **two** places
+  (a column *and* the JSON), both set from `spec.LiveSlots`/`spec.Quota`. The MCP
+  fix sets `LiveSlots: q.MaxLiveSlots` so both move together; the pre-fix pilot
+  workspace needed both patched to promote.
+- **Bundled IdP wasn't a real one-liner (FIXED, v0.1.1).** `setup-bundled-idp.sh`
+  reads two sibling files (`realm-template.json`, `beamhall-keycloak.service`) via
+  `$HERE`, and `install.sh`'s post-install hint pointed at a **repo-relative path**
+  that doesn't exist after a `curl|bash` install. Fix: the script **self-fetches**
+  its siblings from `BEAMHALL_REF` when run without a checkout; the install hint now
+  prints the `curl|bash` one-liner pinned to the installed tag; the release archive
+  bundles the keycloak assets.
+- **`admin:it` over a real agent client (OPEN finding).** `claude mcp add` has no
+  OAuth-scope flag and requests only the *advertised* scopes — `admin:it` is hidden
+  by design — so the normal browser-OAuth connection can't obtain it. Working paths
+  today: the **Admin console**, or **MCP with a pre-minted `admin:it` token via
+  `--header`** (what the pilot used, via ROPC on `beamhall-agent`, which has
+  `admin:it` as an *optional* scope). A smoother dedicated **public admin client**
+  would need `admin:it` **role-gated** (else any realm user could mint it →
+  ITAdmin); left as a deliberate, security-sensitive follow-up, not a rushed realm
+  hack. See `docs/getting-started.md` Part 3B.
+
+**runsc money-shot re-confirmed on the freshly installed v0.1.1 appliance:** the
+beam ran `runtime=runsc`, kernel `4.19.0-gvisor`, read-only rootfs, all caps
+dropped, no-new-privileges, on a per-workspace bridge; managed Postgres reachable
+by name; sealed-secret greeting + live counter worked. Builder self-promote denied
+by role; IT promote → stable live URL with a separate live DB. Releases: **v0.1.0**
+(install path) and **v0.1.1** (usable MCP workspaces + one-liner bundled IdP),
+both public, checksum-verified.
