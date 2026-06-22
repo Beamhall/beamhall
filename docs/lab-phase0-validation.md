@@ -998,3 +998,35 @@ by name; sealed-secret greeting + live counter worked. Builder self-promote deni
 by role; IT promote → stable live URL with a separate live DB. Releases: **v0.1.0**
 (install path) and **v0.1.1** (usable MCP workspaces + one-liner bundled IdP),
 both public, checksum-verified.
+
+## Doc-driven install: `curl|bash` SIGPIPE/pipefail abort (v0.1.2–v0.1.5) — 2026-06-22
+
+Walking a fresh evaluator through `docs/getting-started.md` (operator runs the
+steps), the `curl | bash` install **silently stopped after `SUBSTRATE 4/4`** — no
+`APPLIANCE` phase, no binary, no service; the outer pipe exited **23**.
+
+- **Wrong first guess (v0.1.4):** assumed a stdin-draining child (`docker exec`)
+  was eating the piped script, and redirected each phase `</dev/null`. Did not
+  help — the same failure reproduced, and **process substitution `bash <(curl …)`
+  failed identically**, ruling out stdin.
+- **Real root cause:** a **`SIGPIPE` + `set -o pipefail` race**. `fetch_release_binary`
+  resolved the latest tag with `curl … | grep -m1 '"tag_name"' | sed …`. `grep -m1`
+  closes the pipe after the first match (near the top of the JSON) while `curl` is
+  still streaming the rest → `curl` takes SIGPIPE (exit 23) → `pipefail` propagates
+  it → `set -e` aborts the script in the command-substitution **assignment**, just
+  before the first `APPLIANCE` log line. Timing-dependent (a `bash -x` file-run won
+  the race and reached the appliance phase, masking it). The runc-floor check had
+  the same shape (`runc --version | … | head -1`).
+- **Fix (v0.1.5):** capture the API response fully, parse the tag with a pure-bash
+  regex (`[[ "$resp" =~ "tag_name"…]]`, no early-closing pipe); drop `| head -1`
+  from the runc check (take the first line via `${var%%$'\n'*}`). Lab-verified: the
+  exact released `curl | bash` now completes BASELINE 1–7 → SUBSTRATE 1–4 →
+  APPLIANCE 0–6 on a pristine baseline (`/healthz` green, `beamhalld 0.1.5`).
+- **Lesson:** command-substitution assignments under `set -euo pipefail` must not
+  pipe a long/streaming producer into an early-closing consumer (`grep -m1`,
+  `head -n`); parse the captured value instead. Unit tests can't see this — only a
+  real piped install does.
+
+Also done this session: docs/install now fetch the bootstrap scripts from
+`releases/latest/download/<script>` (GoReleaser `release.extra_files`) — the latest
+**release**, not the dev `main` branch — so the commands never need per-version edits.
