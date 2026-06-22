@@ -29,7 +29,7 @@ BASE_DOMAIN=""
 BIN_SRC=""
 SECRET_KEY_SRC=""           # supply your own age key instead of generating one
 AUTO_START=1
-TLS_MODE="on"               # on=public ACME | internal=Caddy local CA | off=plain HTTP
+TLS_MODE=""                 # set via --tls or the wizard: internal | on | off
 RELEASE_VERSION=""          # --version vX.Y.Z (empty => latest published release)
 REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
 RESOLVED_TAG=""
@@ -173,6 +173,33 @@ _pack_install() {
   curl -fsSL "https://github.com/buildpacks/pack/releases/download/${PACK_VERSION}/pack-${PACK_VERSION}-${pa}.tgz" | tar -xz -C /usr/local/bin pack
 }
 _caddy_install() { curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${DPKG_ARCH}" -o /usr/local/bin/caddy; chmod +x /usr/local/bin/caddy; }
+
+# ============================================================================
+ask_config() {
+  phase "Configuration"
+  if [ -z "$BASE_DOMAIN" ]; then
+    box "$C_C" "Base domain" \
+      "The DNS domain Beamhall serves everything under:" \
+      "   ${C_B}<beam>.<workspace>.<domain>${C_RST}  live beams" \
+      "   ${C_B}<random>.preview.<domain>${C_RST}    preview beams" \
+      "   ${C_B}idp.<domain>${C_RST}                 the identity provider" \
+      "   ${C_B}<domain>${C_RST}                     the MCP endpoint + Admin console" \
+      "Use a domain whose wildcard (*.<domain>) you can point at this host."
+    BASE_DOMAIN="$(ask 'Base domain (e.g. beamhall.example.com):' "$(hostname -f 2>/dev/null || hostname)")"
+    [ -n "$BASE_DOMAIN" ] || die "a base domain is required."
+  fi
+  if [ -z "$TLS_MODE" ]; then
+    box "$C_C" "TLS for the gateway" \
+      "How should the gateway serve HTTPS for *.${BASE_DOMAIN}?" \
+      "   ${C_B}internal${C_RST} — Caddy's own private CA (recommended for a private domain;" \
+      "              you distribute the CA to client machines)" \
+      "   ${C_B}on${C_RST}       — public ACME / Let's Encrypt (domain must be internet-reachable)" \
+      "   ${C_B}off${C_RST}      — plain HTTP (no TLS; local testing only)"
+    TLS_MODE="$(ask 'TLS mode [internal/on/off] (default internal):' internal)"
+  fi
+  case "$TLS_MODE" in internal|on|off) ;; *) die "invalid TLS mode '$TLS_MODE' (use internal | on | off)" ;; esac
+  ok "base domain ${C_B}${BASE_DOMAIN}${C_RST}, TLS ${C_B}${TLS_MODE}${C_RST}"
+}
 
 # ============================================================================
 step_dns() {
@@ -353,6 +380,7 @@ group_appliance() {
   else fetch_release_binary; fi
   [ -n "$BIN_SRC" ] && [ -x "$BIN_SRC" ] || die "no beamhalld binary (pass a path or use --version)"
   [ -n "$BASE_DOMAIN" ] || BASE_DOMAIN="$(hostname -f 2>/dev/null || hostname)"
+  [ -n "$TLS_MODE" ] || TLS_MODE=internal
 
   id beamhall >/dev/null 2>&1 || useradd --system --home-dir /var/lib/beamhall --shell /usr/sbin/nologin beamhall
   groupadd -f docker; usermod -aG docker beamhall
@@ -545,16 +573,17 @@ final_summary() {
 # ============================================================================
 if want baseline || want substrate || want appliance; then
   box "$C_BLU" "Beamhall Setup Wizard" \
-    "This will turn this host into a running Beamhall appliance:" \
-    "Docker + gVisor isolation · build pipeline · gateway · database · the" \
-    "hardened backplane service — then guide you through DNS, the secret key," \
-    "the gateway CA, and turning on identity." \
+    "This will turn this host (${C_B}$(hostname)${C_RST}, ${HOST_IP:-?}) into a running Beamhall" \
+    "appliance: Docker + gVisor isolation · build pipeline · gateway · database ·" \
+    "the hardened backplane service. We'll confirm a few settings (domain, TLS," \
+    "DNS), install, then turn on identity." \
     "" \
-    "Host: ${C_B}$(hostname)${C_RST} (${HOST_IP:-?}) · base domain: ${C_B}${BASE_DOMAIN:-unset}${C_RST} · TLS: ${C_B}${TLS_MODE}${C_RST}"
+    "${C_DIM}Defaults are fine for most pilots. Press Enter at each step to accept.${C_RST}"
   press_enter
 fi
 
-[ -n "$BASE_DOMAIN" ] && want appliance && step_dns || true
+want appliance && ask_config
+want appliance && step_dns
 want baseline  && group_baseline  </dev/null
 want substrate && group_substrate </dev/null
 want appliance && group_appliance </dev/null
