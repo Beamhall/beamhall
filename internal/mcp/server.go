@@ -21,6 +21,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/auth"
 	"github.com/Beamhall/beamhall/internal/domain"
 	"github.com/Beamhall/beamhall/internal/driver"
+	"github.com/Beamhall/beamhall/internal/identityadmin"
 	"github.com/Beamhall/beamhall/internal/orch"
 	"github.com/Beamhall/beamhall/internal/store"
 )
@@ -46,6 +47,23 @@ type Backplane interface {
 	ArchiveBeam(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	DestroyBeam(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ShowMetrics(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (driver.Stats, error)
+
+	// IT-structural + owned-IdP administration (the admin_* tool family,
+	// admin:it scope). These reuse the orchestrator's PEP/audit so the MCP
+	// admin surface is a thin client over the same enforcement as the Admin
+	// console.
+	CreateBeamhall(ctx context.Context, actor orch.Actor, spec orch.NewBeamhallSpec) (*domain.Beamhall, error)
+	RegisterIdentity(ctx context.Context, actor orch.Actor, issuer, subject, email, displayName string) (*domain.Identity, error)
+	GrantMembership(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID, role domain.MembershipRole) error
+	AdminListIdentities(ctx context.Context, actor orch.Actor) ([]domain.Identity, error)
+	IdentityAdminEnabled() bool
+	AdminCreateUser(ctx context.Context, actor orch.Actor, u identityadmin.NewUser) (identityadmin.User, error)
+	AdminListUsers(ctx context.Context, actor orch.Actor, query string, max int) ([]identityadmin.User, error)
+	AdminSetUserPassword(ctx context.Context, actor orch.Actor, userID, password string) error
+	AdminCreateGroup(ctx context.Context, actor orch.Actor, name string) (identityadmin.Group, error)
+	AdminListGroups(ctx context.Context, actor orch.Actor) ([]identityadmin.Group, error)
+	AdminAddUserToGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
+	AdminFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) error
 }
 
 // Directory is the slice of the store the MCP layer reads to resolve the

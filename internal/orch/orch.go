@@ -22,6 +22,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/domain"
 	"github.com/Beamhall/beamhall/internal/driver"
 	"github.com/Beamhall/beamhall/internal/gateway"
+	"github.com/Beamhall/beamhall/internal/identityadmin"
 	"github.com/Beamhall/beamhall/internal/policy"
 	"github.com/Beamhall/beamhall/internal/secret"
 	"github.com/Beamhall/beamhall/internal/store"
@@ -83,6 +84,13 @@ type Orchestrator struct {
 	egressSync        func(ctx context.Context) error
 	buildSem          chan struct{} // bounds concurrent pack builds (build-bomb defense)
 	promoteApproval   bool          // explicit IT-approval gate for promote_to_live (PLAN §10)
+
+	// idp administers the IdP Beamhall owns (the bundled Keycloak). Defaults to
+	// identityadmin.Disabled for BYO-IdP deployments. idpSensitive is the
+	// operator opt-in that unlocks the SENSITIVE auth-config tier (directory
+	// federation); off by default, those ops fail closed (human-in-the-loop).
+	idp          identityadmin.Provider
+	idpSensitive bool
 }
 
 // startupPolls divides the startup grace into status checks.
@@ -150,6 +158,22 @@ func WithPromoteApproval(on bool) Option {
 // layer routes promote_to_live to a request instead of an immediate promote.
 func (o *Orchestrator) PromoteApprovalEnabled() bool { return o.promoteApproval }
 
+// WithIdentityAdmin wires the owned-IdP administration provider (PLAN §5.9).
+// sensitive unlocks the SENSITIVE auth-config tier (directory federation); with
+// it off those operations fail closed, requiring a human-in-the-loop step.
+func WithIdentityAdmin(p identityadmin.Provider, sensitive bool) Option {
+	return func(o *Orchestrator) {
+		if p != nil {
+			o.idp = p
+		}
+		o.idpSensitive = sensitive
+	}
+}
+
+// IdentityAdminEnabled reports whether this appliance administers its IdP (the
+// bundled Keycloak) — false for a bring-your-own-IdP deployment.
+func (o *Orchestrator) IdentityAdminEnabled() bool { return o.idp.Enabled() }
+
 // New assembles the orchestrator. baseDomain anchors preview and live
 // hostnames (PLAN §5.6).
 func New(st *store.Store, drv driver.RuntimeDriver, gw GatewayAPI, sched PauseScheduler,
@@ -162,6 +186,7 @@ func New(st *store.Store, drv driver.RuntimeDriver, gw GatewayAPI, sched PauseSc
 		beamPort:          8080,
 		startupGrace:      2 * time.Second,
 		buildSem:          make(chan struct{}, 2),
+		idp:               identityadmin.Disabled{},
 	}
 	for _, opt := range opts {
 		opt(o)

@@ -21,9 +21,18 @@ RestartSec=5
 # Published on loopback only; the Beamhall gateway terminates TLS and proxies it.
 # Run on a dedicated network (like beamhall-postgres/registry), never the default
 # docker0 bridge — Beamhall's design doesn't use docker0 and it can drift away.
+# Persistent state: Keycloak's data dir (incl. the H2 DB under
+# /opt/keycloak/data/h2) lives in a named volume, so runtime identity/realm
+# changes made in the Keycloak console survive stop/restart/reboot. The realm
+# is seeded once on first boot (--import-realm); Keycloak's startup import skips
+# a realm that already exists, so it is NOT re-imported on restart.
 ExecStartPre=-/usr/bin/docker rm -f beamhall-keycloak
 ExecStartPre=-/usr/bin/docker network create beamhall-idp-net
-ExecStart=/usr/bin/docker run --rm --name beamhall-keycloak \
+ExecStartPre=-/usr/bin/docker volume create beamhall-keycloak-data
+# No --rm: keep the container's state across stop. The ExecStartPre rm -f above
+# re-creates it on restart. The named volume holds /opt/keycloak/data; the more
+# -specific realm.json bind mount (read-only seed) nests under it and is allowed.
+ExecStart=/usr/bin/docker run --name beamhall-keycloak \
   --network beamhall-idp-net \
   -p 127.0.0.1:8090:8080 \
   -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
@@ -32,6 +41,7 @@ ExecStart=/usr/bin/docker run --rm --name beamhall-keycloak \
   -e KC_HTTP_ENABLED=true \
   -e KC_PROXY_HEADERS=xforwarded \
   -e JAVA_OPTS_KC_HEAP=-Xmx640m \
+  -v beamhall-keycloak-data:/opt/keycloak/data \
   -v /etc/beamhall/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro \
   quay.io/keycloak/keycloak:26.0 start-dev --import-realm
 ExecStop=/usr/bin/docker stop beamhall-keycloak

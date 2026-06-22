@@ -11,8 +11,10 @@ OAuth) PLUS agent error-UX diagnosis, the negative-security suite, the
 rollback/destroy/show_metrics + build-bomb-cap lifecycle surface, the OIDC
 Admin console, and the git smart-HTTP push transport. All lab-verified
 (`internal/e2e`: demo flow, negsec proofs, lifecycle, git-push, all on the lab
-VM). Phase 4 (pilot + backup/restore + threat-model doc) is next. Project was
-renamed Workcell→Beamhall
+VM). Phase 4 (pilot + backup/restore + threat-model doc) in progress; latest:
+**admin lifecycle over MCP + the owned-IdP administration seam (3rd stable seam)
++ a persistent bundled Keycloak** (see the Phase 4 entries below — code-complete +
+unit-tested, lab verification pending). Project was renamed Workcell→Beamhall
 (product + domain entities: `Workcell`→`Beamhall` workspace, `App`→`Beam`
 workload; module `github.com/Beamhall/beamhall`, binary `beamhalld`, env
 `BEAMHALL_*`). Branch model: feature branches fast-forward-merged to `main`;
@@ -370,7 +372,8 @@ internal/orch/        orchestrator: lifecycle reconciler wiring driver+gateway+s
 internal/build/       source→image pipeline: managed go-git repos + pack (build daemon) + registry digest
 internal/resource/    managed-resource provisioners (Postgres: scoped role + db per beam)
 internal/auth/        OAuth resource server: JWKS/iss/aud/exp/scope validation, Origin check
-internal/mcp/         agent-facing MCP server (official go-sdk, Streamable HTTP): tools, progress, tarball transport
+internal/identityadmin/ owned-IdP administration seam (3rd stable seam): Provider iface + Keycloak Admin-REST impl + Disabled (BYO-IdP)
+internal/mcp/         agent-facing MCP server (official go-sdk, Streamable HTTP): tools (incl. admin_* family), progress, tarball transport
 internal/diagnose/    failure-signature catalog: infra denials → agent-actionable hints (build/run/exit)
 internal/web/         IT Admin console (/admin): OIDC login + session, views + audited IT actions
 internal/gitserver/   git smart-HTTP push transport (/git): receive-pack + one-time deploy tokens → build+deploy
@@ -622,6 +625,42 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
   NOTE: the test VM is currently configured for the bundled Keycloak (the seed
   credentials are written to a log under `/tmp` on the VM by the setup script);
   `bh-devidp` is also present if you switch back.
+- **Admin lifecycle over MCP + owned-IdP administration (3rd stable seam)** ✅
+  (`internal/identityadmin`, `internal/orch/identityadmin.go`,
+  `internal/mcp/admin.go`). IT runs onboarding + IdP admin through the **same MCP
+  channel** as everything else — no second web console. The `admin_*` tool family
+  (admin:it scope, kept off the agent scope advertisement) is a **thin client over
+  the orchestrator PEP/audit**, exactly like the Admin console: `admin_register_identity`,
+  `admin_grant_membership`, `admin_list_identities`, `admin_create_beamhall`, and
+  the owned-IdP ops `admin_create_user`/`admin_list_users`/`admin_set_user_password`/
+  `admin_create_group`/`admin_list_groups`/`admin_add_user_to_group`/
+  `admin_federate_directory`.
+  - **The third stable seam** is `identityadmin.Provider` (mirrors `RuntimeDriver`):
+    a Keycloak Admin-REST impl drives the **bundled** IdP; a `Disabled` impl is used
+    for **bring-your-own-IdP** (Beamhall validates the customer's tokens but does NOT
+    administer a directory it does not own). Keeps the agnosticism boundary clean:
+    *authentication* is IdP-agnostic; *administration* is offered only for the owned
+    IdP. Tools are intent-shaped (no raw Keycloak passthrough) so the MCP contract
+    never leaks Keycloak. Beamhall holds the IdP admin credential (service-account
+    client `beamhall-idp-admin`, `realm-admin`); the agent never does.
+  - **Risk tiering (guardrail decision, 2026-06-21):** routine onboarding ops run
+    autonomously (audited); `admin_federate_directory` is the **SENSITIVE** tier
+    (it changes who can sign in to the whole appliance) and **fails closed** unless
+    `BEAMHALL_IDP_SENSITIVE_ADMIN=on`. The full four-eyes pending-approval flow for
+    the sensitive tier (mirroring promotion approval) is the documented next step.
+  - Config: `BEAMHALL_IDP_ADMIN_URL/REALM/CLIENT_ID/CLIENT_SECRET` +
+    `BEAMHALL_IDP_SENSITIVE_ADMIN`; wired in `cmd/beamhalld` (Keycloak provider when
+    configured, else Disabled). Unit-tested at all three layers (seam via httptest
+    Keycloak stub; orchestrator tiering/fail-closed; MCP scope-gate + BYO-IdP hint).
+    **Not yet lab-verified against a live Keycloak Admin REST — pending pilot.**
+- **Bundled Keycloak is now PERSISTENT** ✅ (`packaging/keycloak/`): named volume
+  `beamhall-keycloak-data` (H2 in-volume), `--rm` dropped, realm **seeded once** on
+  first boot (not re-imported on restart) — so users/groups/config created at
+  runtime survive reboots and long evaluation gaps (the months-later-resume case).
+  `setup-bundled-idp.sh` is first-install-vs-re-run aware (re-run preserves state and
+  reuses secrets; `RESET=1` wipes + re-seeds). The realm now also seeds the
+  `beamhall-idp-admin` service-account client the admin-over-MCP IdP tools use.
+  Postgres is the documented scale path. **Not yet lab-verified.**
 - **Promote-approval gate (four-eyes)** ✅ (`BEAMHALL_PROMOTE_APPROVAL=on`, default
   off). When on, `promote_to_live` files a request a **different** IT operator
   approves (PLAN §10 resolved). New: migration 0005 `promotion_requests`, policy
@@ -680,6 +719,10 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
 ### Open questions still pending (PLAN §10 + security §)
 - Y (preview auto-pause hours) default; per-Beamhall vs global.
 - IdP for the first pilot: bundled Keycloak vs customer Okta/Entra day one.
+  (Partly resolved: the bundled IdP is now **persistent** + administrable over MCP,
+  so a growing multi-week/multi-month pilot can run on it and later LDAP/AD-federate
+  via `admin_federate_directory` without changing Beamhall's issuer — see the
+  admin-over-MCP entry above and `docs/admin-over-mcp.md`.)
 - `promote_to_live`: scope-gated vs mandatory IT human-in-the-loop.
 - Egress allowlist in MUST-HAVE vs fast-follow (does the pilot beam need an internal API on day one?).
 - Canonical demo stack: Node vs Python.

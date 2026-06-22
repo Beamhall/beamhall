@@ -59,6 +59,24 @@ type Config struct {
 	// redirect is <base>/admin/callback). Defaults to https://<base-domain>.
 	AdminBaseURL string
 
+	// Owned-IdP administration (PLAN §5.9): the admin_* MCP tools that manage
+	// the bundled Keycloak. Empty IDPAdminClientID disables IdP administration
+	// (a bring-your-own-IdP deployment — Beamhall validates tokens but does not
+	// administer a directory it does not own).
+	// IDPAdminURL is the Keycloak base URL (internal, e.g. http://127.0.0.1:8090).
+	IDPAdminURL string
+	// IDPAdminRealm is the managed realm (default "beamhall").
+	IDPAdminRealm string
+	// IDPAdminClientID / Secret authenticate a confidential service-account
+	// client (client_credentials) carrying realm-management roles. Beamhall holds
+	// this secret; the agent never does.
+	IDPAdminClientID     string
+	IDPAdminClientSecret string
+	// IDPSensitiveAdmin is the human-in-the-loop opt-in for the SENSITIVE
+	// auth-config tier (directory federation). Off by default: those operations
+	// fail closed (BEAMHALL_IDP_SENSITIVE_ADMIN=on to enable).
+	IDPSensitiveAdmin bool
+
 	// CaddyAdminURL is the gateway's Admin API.
 	CaddyAdminURL string
 	// GatewayListen are the Caddy listener addresses for beam routes.
@@ -118,6 +136,12 @@ func Load() (Config, error) {
 
 		AdminClientID:     os.Getenv("BEAMHALL_ADMIN_CLIENT_ID"),
 		AdminClientSecret: os.Getenv("BEAMHALL_ADMIN_CLIENT_SECRET"),
+
+		IDPAdminURL:          os.Getenv("BEAMHALL_IDP_ADMIN_URL"),
+		IDPAdminRealm:        envOr("BEAMHALL_IDP_ADMIN_REALM", "beamhall"),
+		IDPAdminClientID:     os.Getenv("BEAMHALL_IDP_ADMIN_CLIENT_ID"),
+		IDPAdminClientSecret: os.Getenv("BEAMHALL_IDP_ADMIN_CLIENT_SECRET"),
+		IDPSensitiveAdmin:    envOr("BEAMHALL_IDP_SENSITIVE_ADMIN", "off") == "on",
 
 		CaddyAdminURL:      envOr("BEAMHALL_CADDY_ADMIN", "http://127.0.0.1:2019"),
 		GatewayTLS:         envOr("BEAMHALL_GATEWAY_TLS", "on") != "off",

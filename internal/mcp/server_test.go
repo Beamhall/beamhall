@@ -29,6 +29,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/build"
 	"github.com/Beamhall/beamhall/internal/domain"
 	"github.com/Beamhall/beamhall/internal/driver"
+	"github.com/Beamhall/beamhall/internal/identityadmin"
 	"github.com/Beamhall/beamhall/internal/orch"
 	"github.com/Beamhall/beamhall/internal/store"
 )
@@ -43,6 +44,7 @@ type fakeBackplane struct {
 	failWith        error
 	logs            []byte
 	promoteApproval bool
+	idpEnabled      bool
 }
 
 func (f *fakeBackplane) record(call string, actor orch.Actor) {
@@ -157,6 +159,90 @@ func (f *fakeBackplane) ArchiveBeam(ctx context.Context, actor orch.Actor, beamh
 func (f *fakeBackplane) ShowMetrics(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (driver.Stats, error) {
 	f.record("ShowMetrics", actor)
 	return driver.Stats{CPUPct: 7.5, MemBytes: 32 << 20, MemLimit: 256 << 20}, nil
+}
+
+func (f *fakeBackplane) CreateBeamhall(ctx context.Context, actor orch.Actor, spec orch.NewBeamhallSpec) (*domain.Beamhall, error) {
+	f.record("CreateBeamhall:"+spec.Slug+":"+string(spec.RuntimeClass), actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return &domain.Beamhall{ID: "hall-new", Slug: spec.Slug, DisplayName: spec.DisplayName}, nil
+}
+
+func (f *fakeBackplane) RegisterIdentity(ctx context.Context, actor orch.Actor, issuer, subject, email, displayName string) (*domain.Identity, error) {
+	f.record("RegisterIdentity:"+subject, actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return &domain.Identity{ID: "ident-new", ExternalSubject: subject, IdPIssuer: issuer, Email: email}, nil
+}
+
+func (f *fakeBackplane) GrantMembership(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID, role domain.MembershipRole) error {
+	f.record(fmt.Sprintf("GrantMembership:%s:%s:%s", identityID, beamhallID, role), actor)
+	return f.failWith
+}
+
+func (f *fakeBackplane) AdminListIdentities(ctx context.Context, actor orch.Actor) ([]domain.Identity, error) {
+	f.record("AdminListIdentities", actor)
+	return []domain.Identity{{ID: "ident-1", ExternalSubject: "user-1", Email: "u1@x"}}, nil
+}
+
+func (f *fakeBackplane) IdentityAdminEnabled() bool { return f.idpEnabled }
+
+func (f *fakeBackplane) AdminCreateUser(ctx context.Context, actor orch.Actor, u identityadmin.NewUser) (identityadmin.User, error) {
+	f.record("AdminCreateUser:"+u.Username, actor)
+	if !f.idpEnabled {
+		return identityadmin.User{}, identityadmin.ErrNotEnabled
+	}
+	return identityadmin.User{ID: "u-1", Username: u.Username, Email: u.Email, Enabled: true}, nil
+}
+
+func (f *fakeBackplane) AdminListUsers(ctx context.Context, actor orch.Actor, query string, max int) ([]identityadmin.User, error) {
+	f.record("AdminListUsers:"+query, actor)
+	if !f.idpEnabled {
+		return nil, identityadmin.ErrNotEnabled
+	}
+	return []identityadmin.User{{ID: "u-1", Username: "alice", Enabled: true}}, nil
+}
+
+func (f *fakeBackplane) AdminSetUserPassword(ctx context.Context, actor orch.Actor, userID, password string) error {
+	f.record("AdminSetUserPassword:"+userID, actor)
+	if !f.idpEnabled {
+		return identityadmin.ErrNotEnabled
+	}
+	return nil
+}
+
+func (f *fakeBackplane) AdminCreateGroup(ctx context.Context, actor orch.Actor, name string) (identityadmin.Group, error) {
+	f.record("AdminCreateGroup:"+name, actor)
+	if !f.idpEnabled {
+		return identityadmin.Group{}, identityadmin.ErrNotEnabled
+	}
+	return identityadmin.Group{ID: "g-1", Name: name, Path: "/" + name}, nil
+}
+
+func (f *fakeBackplane) AdminListGroups(ctx context.Context, actor orch.Actor) ([]identityadmin.Group, error) {
+	f.record("AdminListGroups", actor)
+	if !f.idpEnabled {
+		return nil, identityadmin.ErrNotEnabled
+	}
+	return []identityadmin.Group{{ID: "g-1", Name: "builders", Path: "/builders"}}, nil
+}
+
+func (f *fakeBackplane) AdminAddUserToGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error {
+	f.record(fmt.Sprintf("AdminAddUserToGroup:%s:%s", userID, groupID), actor)
+	if !f.idpEnabled {
+		return identityadmin.ErrNotEnabled
+	}
+	return nil
+}
+
+func (f *fakeBackplane) AdminFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) error {
+	f.record("AdminFederateDirectory:"+d.Name, actor)
+	if f.failWith != nil {
+		return f.failWith
+	}
+	return nil
 }
 
 type fakeDirectory struct{}

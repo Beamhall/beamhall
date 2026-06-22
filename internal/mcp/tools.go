@@ -196,6 +196,9 @@ func (s *Server) registerTools() {
 		Description: "Permanently retire a beam (preview or LIVE): stop and remove its workload, retire its URL, free its quota slot. Terminal and IT-gated (use it to tear down a live beam). Source and history are retained; the name becomes available for reuse. Builders shelve their own previews with archive_beam instead.",
 	}, s.destroyBeam)
 
+	// IT lifecycle over MCP (admin:it): onboarding + owned-IdP administration.
+	s.registerAdminTools()
+
 	// Contract placeholders (PLAN §5.7): present so agents get a clear answer
 	// instead of an unknown-tool error; enabled in a future build.
 	for _, name := range []string{"create_object_store", "create_queue"} {

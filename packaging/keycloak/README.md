@@ -47,6 +47,17 @@ is a **default** scope (mints `aud`/`sub`), the capability scopes are **optional
 loopback redirect URIs accept the agent's callback, and the seed users carry the
 `offline_access` role.
 
+## Administering the IdP over MCP
+
+The setup also seeds the `beamhall-idp-admin` service-account client and wires
+`BEAMHALL_IDP_ADMIN_*`, so an **`admin:it`** operator manages users, groups, and
+directory federation through the **`admin_*` MCP tools** — no need to open the
+Keycloak console. Beamhall holds the admin credential; the agent never does.
+Directory federation (`admin_federate_directory`) is the **sensitive** tier and is
+**off by default** (`BEAMHALL_IDP_SENSITIVE_ADMIN=on` to enable). Full guide:
+`docs/admin-over-mcp.md`. (On a bring-your-own-IdP deployment these IdP tools are
+disabled — Beamhall administers only the IdP it owns.)
+
 ## How it fits together
 
 ```
@@ -60,15 +71,23 @@ beamhalld trusts issuer = <scheme>://idp.<base-domain>/realms/beamhall
 
 ## Notes & limits
 
-- **Ephemeral by design.** Keycloak runs `start-dev` with an in-container H2 DB
-  (`--rm`); the realm re-imports on each start, so seed users persist but
-  *runtime* changes made in the Keycloak console do not survive a restart. Fine
-  for a pilot; not a production IdP.
+- **Persistent.** Keycloak's data dir lives in the named Docker volume
+  `beamhall-keycloak-data`, so the realm is seeded **once on first boot** and
+  runtime changes made in the Keycloak console (users, groups, config) **survive
+  restarts and reboots** — they are not wiped or re-imported. To wipe all runtime
+  identity state and re-seed from scratch, re-run with `RESET=1`:
+  `sudo RESET=1 BASE_DOMAIN=... bash packaging/keycloak/setup-bundled-idp.sh`.
+  Still pilot-grade, not a production IdP: it runs `start-dev` with an embedded
+  H2 DB, which is fine for a single-host pilot; the scale path is Postgres (point
+  Keycloak at an external DB) — but for production you'd switch to your own IdP
+  anyway.
 - **Single-host DNS.** The script adds a hosts entry mapping `idp.<base-domain>`
   to the gateway. For multi-host or real clients, publish that name in DNS.
 - **Secrets.** The rendered realm (`/etc/beamhall/keycloak/realm.json`) is
   world-readable so the userns-remapped container can read it; it holds
-  pilot-grade, regenerated credentials. The bundled IdP is not for production.
+  pilot-grade credentials generated once on first install (printed then, and the
+  client secret recorded in `beamhall.env`). A re-run preserves them; use `RESET=1`
+  to rotate. The bundled IdP is not for production.
 - **Switching to your IdP:** set the real issuer in `beamhall.env`
   (`docs/idp-setup.md`), `systemctl disable --now beamhall-keycloak`, and remove
   `BEAMHALL_BUNDLED_IDP_UPSTREAM`.

@@ -59,9 +59,26 @@
       "attributes": { "pkce.code.challenge.method": "S256" },
       "defaultClientScopes": ["beamhall-audience"],
       "optionalClientScopes": ["beamhalls:read", "beams:write", "beams:deploy", "beams:operate", "beams:promote", "secrets:write", "resources:write", "logs:read", "metrics:read", "admin:it", "offline_access"]
+    },
+    {
+      "clientId": "beamhall-idp-admin",
+      "name": "Beamhall IdP administration (backplane service account)",
+      "description": "Confidential service-account client the backplane uses to administer this realm (admin_* IdP tools). Beamhall holds this secret; agents never do.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${IDP_ADMIN_SECRET}",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
+    {
+      "username": "service-account-beamhall-idp-admin",
+      "enabled": true,
+      "serviceAccountClientId": "beamhall-idp-admin",
+      "clientRoles": { "realm-management": ["realm-admin"] }
+    },
     {
       "username": "builder",
       "enabled": true,

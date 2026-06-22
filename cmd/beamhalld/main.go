@@ -32,6 +32,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/egress"
 	"github.com/Beamhall/beamhall/internal/gateway"
 	"github.com/Beamhall/beamhall/internal/gitserver"
+	"github.com/Beamhall/beamhall/internal/identityadmin"
 	"github.com/Beamhall/beamhall/internal/mcp"
 	"github.com/Beamhall/beamhall/internal/orch"
 	"github.com/Beamhall/beamhall/internal/policy"
@@ -347,6 +348,29 @@ func run() error {
 		}))
 	} else {
 		logger.Warn("BEAMHALL_PG_ADMIN_DSN unset — create_database is disabled")
+	}
+	// Owned-IdP administration (the admin_* IdP tools). Configured = the bundled
+	// Keycloak; unconfigured = a bring-your-own-IdP deployment where the
+	// orchestrator's default Disabled provider applies (Beamhall validates tokens
+	// but administers no directory).
+	if cfg.IDPAdminClientID != "" && cfg.IDPAdminClientSecret != "" {
+		idpURL := cfg.IDPAdminURL
+		if idpURL == "" && cfg.BundledIDPUpstream != "" {
+			idpURL = "http://" + cfg.BundledIDPUpstream // default to the bundled IdP upstream
+		}
+		idp, ierr := identityadmin.NewKeycloak(identityadmin.KeycloakConfig{
+			BaseURL: idpURL, Realm: cfg.IDPAdminRealm,
+			ClientID: cfg.IDPAdminClientID, ClientSecret: cfg.IDPAdminClientSecret,
+		})
+		if ierr != nil {
+			logger.Error("owned-IdP administration disabled (config error)", "err", ierr)
+		} else {
+			opts = append(opts, orch.WithIdentityAdmin(idp, cfg.IDPSensitiveAdmin))
+			logger.Info("owned-IdP administration enabled", "realm", cfg.IDPAdminRealm,
+				"sensitive_tier", cfg.IDPSensitiveAdmin)
+		}
+	} else {
+		logger.Info("BEAMHALL_IDP_ADMIN_CLIENT_ID unset — owned-IdP administration disabled (BYO-IdP); admin_* IdP tools return a BYO-IdP notice")
 	}
 	orchestrator := orch.New(st, drv, gw, sched, vault, pep, auditLog, cfg.BaseDomain, opts...)
 	pauseFn = orchestrator.PauseFunc()
