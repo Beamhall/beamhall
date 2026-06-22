@@ -5,7 +5,11 @@
 # agent flow without touching their corporate IdP. Swap to a real IdP for
 # production (docs/idp-setup.md).
 #
+#   # from a checkout:
 #   sudo BASE_DOMAIN=beamhall.acme.internal bash packaging/keycloak/setup-bundled-idp.sh
+#   # or streamlined (no checkout) — the script self-fetches its sibling files:
+#   curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/<tag>/packaging/keycloak/setup-bundled-idp.sh \
+#     | sudo BASE_DOMAIN=beamhall.acme.internal BEAMHALL_REF=<tag> bash
 #
 # Persistent: Keycloak state lives in the named volume beamhall-keycloak-data, so
 # users/groups/config created at runtime in the console survive reboots. The realm
@@ -18,9 +22,26 @@ set -euo pipefail
 BASE_DOMAIN="${BASE_DOMAIN:?set BASE_DOMAIN to the appliance base domain}"
 SCHEME="${SCHEME:-https}"                       # http for an internal pilot (gateway TLS-off); https with real DNS
 KC_PORT="${KC_PORT:-8090}"
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
 ENVFILE="${ENVFILE:-/etc/beamhall/beamhall.env}"
 BEAMHALLD="${BEAMHALLD:-/usr/local/bin/beamhalld}"
+
+# Sibling files this script reads. When run via `curl | bash` (no checkout),
+# fetch them from the same ref so the bundled IdP is a true one-liner.
+REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
+BEAMHALL_REF="${BEAMHALL_REF:-main}"
+_need_fetch=0
+for _f in realm-template.json beamhall-keycloak.service; do
+  [ -f "$HERE/$_f" ] || _need_fetch=1
+done
+if [ "$_need_fetch" = 1 ]; then
+  HERE="$(mktemp -d)"
+  for _f in realm-template.json beamhall-keycloak.service; do
+    curl -fsSL "https://raw.githubusercontent.com/${REPO_SLUG}/${BEAMHALL_REF}/packaging/keycloak/${_f}" -o "$HERE/$_f" \
+      || { echo "could not fetch ${_f} from ${REPO_SLUG}@${BEAMHALL_REF}"; exit 1; }
+  done
+  echo "fetched bundled-IdP assets from ${REPO_SLUG}@${BEAMHALL_REF}"
+fi
 
 IDP_HOST="idp.${BASE_DOMAIN}"
 ISSUER="${SCHEME}://${IDP_HOST}/realms/beamhall"

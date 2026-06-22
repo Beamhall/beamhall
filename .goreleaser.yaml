@@ -48,6 +48,10 @@ archives:
       - packaging/beamhalld.env.example
       - packaging/install.sh
       - packaging/README.md
+      - packaging/keycloak/setup-bundled-idp.sh
+      - packaging/keycloak/realm-template.json
+      - packaging/keycloak/beamhall-keycloak.service
+      - packaging/keycloak/README.md
       - scripts/lab-bootstrap.sh
       - scripts/preflight.sh
 

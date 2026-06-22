@@ -40,6 +40,7 @@ AUTO_START=1
 TLS_MODE="on"               # on=public ACME | internal=Caddy local CA | off=plain HTTP
 RELEASE_VERSION=""          # --version vX.Y.Z (empty => latest published release)
 REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
+RESOLVED_TAG=""             # set to the release tag actually installed (for the IdP hint)
 while [ $# -gt 0 ]; do
   case "$1" in
     --group)       GROUP="$2"; shift 2 ;;
@@ -282,6 +283,7 @@ fetch_release_binary() {
     [ -n "$tag" ] || die "could not resolve the latest ${REPO_SLUG} release; pin one with --version vX.Y.Z"
   fi
   case "$tag" in v*) ver="${tag#v}" ;; *) ver="$tag" ;; esac
+  RESOLVED_TAG="$tag"
   base="https://github.com/${REPO_SLUG}/releases/download/${tag}"
   ar="beamhall_${ver}_linux_${arch}.tar.gz"
   tmp="$(mktemp -d)"
@@ -449,6 +451,8 @@ EOF
     [ -s "$CA_OUT" ] || note "could not fetch the gateway CA yet (gateway still starting?); rerun: curl -s \$CADDY_ADMIN/pki/ca/local | jq -r .root_certificate"
   fi
 
+  # Pin the bundled-IdP hint to the exact release we installed (else main).
+  IDP_REF="${RESOLVED_TAG:-main}"
   cat <<EOF
 
 Beamhall appliance installed and running (/healthz is green).
@@ -457,7 +461,8 @@ NEXT — turn on identities (this enables the MCP endpoint + the Admin console).
 Pick ONE; you don't need to read any docs for the first option:
 
   • Evaluate now with the bundled IdP (recommended for a pilot) — one command:
-       sudo BASE_DOMAIN=${BASE_DOMAIN} bash packaging/keycloak/setup-bundled-idp.sh
+       curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/${IDP_REF}/packaging/keycloak/setup-bundled-idp.sh \\
+         | sudo BASE_DOMAIN=${BASE_DOMAIN} BEAMHALL_REF=${IDP_REF} bash
     It stands up a ready-to-use Keycloak + seed users and wires beamhalld for you.
 
   • Use your corporate IdP (production): set BEAMHALL_OAUTH_ISSUER in
