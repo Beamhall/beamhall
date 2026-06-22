@@ -41,16 +41,21 @@ binary by arch + verifies the checksum** (local path stays the dev fast-path).
 Cut **v0.1.0** (the install path) and **v0.1.1** (usable MCP-created workspaces +
 a true one-liner bundled IdP). The supported install is now:
 `curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/v0.1.1/packaging/install.sh | sudo bash -s -- --base-domain <d> --tls internal`.
-Two product fixes shipped in v0.1.1, both found by a **from-scratch MCP-driven
-pilot** (clean snapshot → live beam, simulating a first-time IT admin; see the
-2026-06-21 section in `docs/lab-phase0-validation.md` and the new
-`docs/getting-started.md`): (1) `admin_create_beamhall` over MCP defaulted to a
-**zero quota** → unusable workspace — now defaults 5/1/2 + optional overrides;
-(2) the bundled-IdP setup is a true `curl|bash` one-liner (self-fetches its
-sibling files). **Open finding:** an IT admin can't get the hidden `admin:it`
-scope through `claude mcp add`'s browser OAuth — admin-over-MCP today uses the
-Admin console or a `--header` bearer token; a role-gated admin-agent client is the
-proposed follow-up (PLAN §10).
+Product fixes found by a **from-scratch MCP-driven pilot** (clean snapshot → live
+beam, simulating a first-time IT admin; see the 2026-06-21 section in
+`docs/lab-phase0-validation.md` and the new `docs/getting-started.md`):
+**v0.1.1** — (1) `admin_create_beamhall` over MCP defaulted to a **zero quota** →
+unusable workspace, now defaults 5/1/2 + optional overrides; (2) the bundled-IdP
+setup is a true `curl|bash` one-liner (self-fetches its sibling files).
+**v0.1.2** — **role-gated IT admin over MCP**: an IT admin couldn't get the hidden
+`admin:it` scope through `claude mcp add`'s browser OAuth, so IT-admin is now
+derived from the `admin:it` scope **OR** a configurable realm role
+(`BEAMHALL_OAUTH_ADMIN_ROLE`, default `beamhall-it`; verifier extracts
+`realm_access.roles`). The bundled realm adds the `beamhall-it` role + a public
+`beamhall-admin-agent` client, so `claude mcp add --client-id beamhall-admin-agent`
+gives admins a plain browser-OAuth admin connection gated by a role a builder can't
+hold. Lab-verified; unit-tested. The Admin console + `--header` token paths still
+work.
 
 ## Build & test
 
@@ -750,11 +755,11 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
   environment; the open questions below.
 
 ### Open questions still pending (PLAN §10 + security §)
-- **Admin-over-MCP client for `admin:it` (NEW, 2026-06-21 pilot):** `claude mcp add`
-  can't request the hidden `admin:it` scope, so admin-over-MCP needs the Admin
-  console or a `--header` bearer token today. Ship a **role-gated** public
-  admin-agent client (gate `admin:it` behind a `beamhall-it` realm role, since
-  `admin:it` ⇒ ITAdmin) vs. keep the console/header path? See PLAN §10.
+- ~~**Admin-over-MCP client for `admin:it`**~~ **RESOLVED (v0.1.2):** IT-admin is
+  now derived from the `admin:it` scope OR the `beamhall-it` realm role
+  (`BEAMHALL_OAUTH_ADMIN_ROLE`); bundled realm ships a public `beamhall-admin-agent`
+  client so `claude mcp add --client-id beamhall-admin-agent` works via plain
+  browser OAuth, gated by a role a builder can't hold. Lab-verified + unit-tested.
 - **No quota-edit surface (NEW):** quota is set only at `create_beamhall` (baked
   into the immutable SecurityContext); there's no `admin_set_quota`. Add one, or
   keep quota create-only? (Pilot patched a pre-fix workspace's quota in the store.)

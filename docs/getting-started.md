@@ -148,24 +148,26 @@ operator onboard people and manage the bundled IdP from an agent — no console.
 Every `admin_*` tool requires the **`admin:it`** scope, which is deliberately a
 **master key**: keep it tightly held.
 
-**Connecting an admin agent.** `admin:it` is intentionally hidden from the
-public scope advertisement, and `claude mcp add`'s browser login only requests
-advertised scopes — so the clean way to drive `admin_*` today is to **inject a
-pre-minted `admin:it` token** as a header. Mint one from the bundled IdP and add
-the connection:
+**Connecting an admin agent.** IT admin is gated by the **`beamhall-it` realm
+role** (a builder can never hold it), so an IT operator connects with the
+dedicated admin client and a normal browser login — no token juggling:
 
 ```sh
-# mint an admin:it access token (valid ~1h) as the it-admin user
-TOKEN=$(curl -s --cacert beamhall-gateway-ca.crt \
-  https://idp.beamhall.example.com/realms/beamhall/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=beamhall-agent \
-  -d username=it-admin -d password=<it-admin-password> \
-  -d 'scope=openid admin:it' | jq -r .access_token)
-
-claude mcp add --transport http \
-  --header "Authorization: Bearer $TOKEN" \
+claude mcp add --transport http --client-id beamhall-admin-agent \
   beamhall-admin https://beamhall.example.com/mcp
+# sign in as an IT user (the bundled it-admin has the beamhall-it role)
 ```
+
+The bundled IdP gives this client the full capability scope set by default and
+elevates to IT admin **only** when the signed-in user has the `beamhall-it` role
+(the bundled `it-admin` does; grant it to other IT users in the Keycloak console,
+or `admin_create_user` + assign the role). A builder who authenticates with this
+same client gets no admin — the role, not the client, is the gate.
+
+> *Alternative (no dedicated client):* pass a pre-minted `admin:it` token as a
+> header — `claude mcp add --transport http --header "Authorization: Bearer
+> $TOKEN" …` where `$TOKEN` comes from the IdP token endpoint with
+> `scope=openid admin:it`. Useful for short-lived automation.
 
 Then ask the agent to run the onboarding tools. The full chain to onboard a new
 hire **Dana** into a new **runsc** workspace **engineering** is:

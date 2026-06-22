@@ -7,15 +7,27 @@ covers the `admin_*` tool family, how it stays IdP-agnostic, and the guardrails.
 
 ## Who can use it
 
-Every `admin_*` tool requires the **`admin:it`** scope. That scope is deliberately
-kept **off** the agent scope advertisement and is granted out-of-band to IT
-operators (the same scope that opens the `/admin` web console). A normal builder
-token can never reach these tools. Every admin action runs through the backplane
-PEP and is written to the audit chain, so IT actions are as accountable as agent
-actions — each audits against a known identity.
+Every `admin_*` tool requires **IT-admin**, which Beamhall derives from *either*
+the **`admin:it`** scope *or* the **`beamhall-it`** realm role
+(`BEAMHALL_OAUTH_ADMIN_ROLE`, default `beamhall-it`). Every admin action runs
+through the backplane PEP and is written to the audit chain, so IT actions are as
+accountable as agent actions — each audits against a known identity.
 
-Connect an IT operator's agent with an `admin:it`-capable client and sign in as an
-IT user (e.g. the bundled `it-admin`).
+Two ways an IT operator connects, both gated so a builder can never reach these
+tools:
+
+1. **Role-gated admin client (recommended).** Connect with the bundled
+   `beamhall-admin-agent` client and a normal browser login:
+   `claude mcp add --transport http --client-id beamhall-admin-agent beamhall-admin https://<base>/mcp`.
+   The client grants the capability scopes by default and elevates to IT admin
+   **only** for users holding the `beamhall-it` realm role (the bundled `it-admin`
+   has it; assign it to other IT users). This works because `admin:it` is
+   deliberately hidden from the scope advertisement — and `claude mcp add` can't
+   request hidden scopes — so the *role* (user-gated in the IdP), not a scope, is
+   the gate. A builder authenticating with the same client gets no admin.
+2. **Header token.** Pass a pre-minted `admin:it` token via
+   `--header "Authorization: Bearer …"` (token endpoint with `scope=openid admin:it`).
+   The same scope opens the `/admin` web console. Good for short-lived automation.
 
 ## Two kinds of "identity"
 

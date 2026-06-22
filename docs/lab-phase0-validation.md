@@ -973,15 +973,23 @@ test could surface):
   its siblings from `BEAMHALL_REF` when run without a checkout; the install hint now
   prints the `curl|bash` one-liner pinned to the installed tag; the release archive
   bundles the keycloak assets.
-- **`admin:it` over a real agent client (OPEN finding).** `claude mcp add` has no
-  OAuth-scope flag and requests only the *advertised* scopes — `admin:it` is hidden
-  by design — so the normal browser-OAuth connection can't obtain it. Working paths
-  today: the **Admin console**, or **MCP with a pre-minted `admin:it` token via
-  `--header`** (what the pilot used, via ROPC on `beamhall-agent`, which has
-  `admin:it` as an *optional* scope). A smoother dedicated **public admin client**
-  would need `admin:it` **role-gated** (else any realm user could mint it →
-  ITAdmin); left as a deliberate, security-sensitive follow-up, not a rushed realm
-  hack. See `docs/getting-started.md` Part 3B.
+- **`admin:it` over a real agent client (FIXED — role-gated admin, v0.1.2).**
+  `claude mcp add` has no OAuth-scope flag and requests only the *advertised*
+  scopes — `admin:it` is hidden by design — so a normal browser-OAuth connection
+  couldn't obtain it. Fix: Beamhall now derives IT-admin from the `admin:it` scope
+  **OR** a configurable realm role (`BEAMHALL_OAUTH_ADMIN_ROLE`, default
+  `beamhall-it`); the verifier extracts `realm_access.roles` into the token info,
+  and `resolveActor` accepts either at the gate and the PEP-bypass. The bundled
+  realm gained the `beamhall-it` role + a public **`beamhall-admin-agent`** client
+  (full capability scopes by default + a realm-roles mapper); the role is assigned
+  to `it-admin`. Lab-verified live: `it-admin` via `beamhall-admin-agent` (role,
+  **no `admin:it` scope**) → `admin_*` works; `builder` via the same client →
+  `insufficient_scope: requires IT-admin (the "admin:it" scope or the "beamhall-it"
+  role)`. The role is user-gated in the IdP, so an ungated client can't manufacture
+  admin. Header-token path (ROPC `admin:it`) and the Admin console still work.
+  Unit-tested (`TestITAdminViaRealmRole`, `TestNonAdminRoleDoesNotElevate`). For an
+  existing persistent IdP, add the role+client+assignment via the Admin REST (the
+  realm import only seeds a fresh install). See `docs/getting-started.md` Part 3B.
 
 **runsc money-shot re-confirmed on the freshly installed v0.1.1 appliance:** the
 beam ran `runtime=runsc`, kernel `4.19.0-gvisor`, read-only rootfs, all caps

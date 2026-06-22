@@ -159,6 +159,11 @@ agent client — no dynamic client registration needed):
   claude mcp add --transport http --client-id beamhall-agent beamhall ${SCHEME}://${BASE_DOMAIN}/mcp
   (then authenticate and sign in as builder / ${BUILDER_PASSWORD})
 
+For an IT operator to administer over MCP (the admin_* tools), use the admin
+client — IT-admin is gated by the 'beamhall-it' realm role (it-admin has it):
+  claude mcp add --transport http --client-id beamhall-admin-agent beamhall-admin ${SCHEME}://${BASE_DOMAIN}/mcp
+  (sign in as it-admin / ${IT_PASSWORD})
+
 Secrets were generated and written to ${ENVFILE}. SAVE the passwords above.
 Identity state is PERSISTENT (named volume ${VOLUME}): users/groups/config you
 create in the console survive restarts and reboots.
