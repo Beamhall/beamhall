@@ -47,6 +47,11 @@ type createBeamhallArgs struct {
 	DisplayName  string `json:"display_name,omitempty" jsonschema:"human-readable workspace name"`
 	Department   string `json:"department,omitempty" jsonschema:"owning department/team"`
 	RuntimeClass string `json:"runtime_class,omitempty" jsonschema:"isolation tier: runc (default) | runsc (gVisor, regulated)"`
+	// Quota is baked into the workspace at creation; omit for sensible defaults.
+	// A zero quota would make the workspace unusable (no beams can be created).
+	MaxBeams     int `json:"max_beams,omitempty" jsonschema:"max beams (preview workloads) builders may create; default 5"`
+	MaxLiveSlots int `json:"max_live_slots,omitempty" jsonschema:"max beams promoted to a live URL at once; default 1"`
+	MaxDatabases int `json:"max_databases,omitempty" jsonschema:"max managed Postgres databases; default 2"`
 }
 
 type createUserArgs struct {
@@ -226,13 +231,28 @@ func (s *Server) adminCreateBeamhall(ctx context.Context, req *sdkmcp.CallToolRe
 	default:
 		return nil, nil, fmt.Errorf("runtime_class must be runc or runsc, got %q", args.RuntimeClass)
 	}
+	// Default the quota so a workspace created over MCP is usable immediately;
+	// a zero quota fails every create_beam ("max_beams 0 of 0"). Mirrors the
+	// Admin console defaults (internal/web/actions.go).
+	q := domain.ResourceQuota{MaxBeams: args.MaxBeams, MaxLiveSlots: args.MaxLiveSlots, MaxDBCount: args.MaxDatabases}
+	if q.MaxBeams == 0 {
+		q.MaxBeams = 5
+	}
+	if q.MaxLiveSlots == 0 {
+		q.MaxLiveSlots = 1
+	}
+	if q.MaxDBCount == 0 {
+		q.MaxDBCount = 2
+	}
 	bh, err := s.bp.CreateBeamhall(ctx, actor, orch.NewBeamhallSpec{
 		Slug: args.Slug, DisplayName: args.DisplayName, Department: args.Department, RuntimeClass: rc,
+		Quota: q, LiveSlots: q.MaxLiveSlots,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return text(fmt.Sprintf("beamhall %q created (runtime_class %s). Grant builders access with admin_grant_membership.", bh.Slug, rc)),
+	return text(fmt.Sprintf("beamhall %q created (runtime_class %s; quota %d beams / %d live / %d databases). Grant builders access with admin_grant_membership.",
+		bh.Slug, rc, q.MaxBeams, q.MaxLiveSlots, q.MaxDBCount)),
 		map[string]string{"beamhall": bh.Slug}, nil
 }
 
