@@ -131,8 +131,20 @@ func (s *Server) registerAdminTools() {
 	}, s.adminAddUserToGroup)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_federate_directory",
-		Description: "IT only, SENSITIVE: connect the bundled IdP to an existing LDAP/Active Directory so directory users authenticate without local accounts. This changes who can sign in to the whole appliance, so it requires human confirmation — it fails closed unless the sensitive-admin tier is enabled, directing you to the Admin console otherwise.",
+		Description: "IT only, SENSITIVE (four-eyes): request connecting the bundled IdP to an existing LDAP/Active Directory so directory users authenticate without local accounts. This changes who can sign in to the whole appliance, so it does NOT execute immediately — it files a request that a DIFFERENT IT operator must approve with admin_approve_request. Requires the sensitive tier to be enabled (BEAMHALL_IDP_SENSITIVE_ADMIN=on).",
 	}, s.adminFederateDirectory)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_list_pending_requests",
+		Description: "IT only: list sensitive admin actions (e.g. directory federation) awaiting four-eyes approval. Shows a non-secret summary of each; secrets in the request stay sealed.",
+	}, s.adminListPendingRequests)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_approve_request",
+		Description: "IT only: approve and EXECUTE a pending sensitive admin action. The approver must differ from the requester (four-eyes/separation of duties).",
+	}, s.adminApproveRequest)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_reject_request",
+		Description: "IT only: reject a pending sensitive admin action without executing it.",
+	}, s.adminRejectRequest)
 }
 
 func (s *Server) adminRegisterIdentity(ctx context.Context, req *sdkmcp.CallToolRequest, args registerIdentityArgs) (*sdkmcp.CallToolResult, any, error) {
@@ -322,14 +334,69 @@ func (s *Server) adminFederateDirectory(ctx context.Context, req *sdkmcp.CallToo
 	if err != nil {
 		return nil, nil, err
 	}
-	err = s.bp.AdminFederateDirectory(ctx, actor, identityadmin.DirectoryFederation{
+	ar, err := s.bp.RequestFederateDirectory(ctx, actor, identityadmin.DirectoryFederation{
 		Name: args.Name, Vendor: args.Vendor, ConnectionURL: args.ConnectionURL,
 		UsersDN: args.UsersDN, BindDN: args.BindDN, BindCredential: args.BindPassword,
 	})
 	if err != nil {
 		return nil, nil, idpErr(err)
 	}
-	return text(fmt.Sprintf("directory %q federated; its users can now authenticate. Register the ones who should use Beamhall (admin_register_identity) and grant memberships.", args.Name)), nil, nil
+	return text(fmt.Sprintf("federation of directory %q requested (request %s). This is a SENSITIVE change to who can sign in, so it does not take effect yet — a DIFFERENT IT operator must run admin_approve_request %s. The bind password is sealed at rest.",
+		args.Name, ar.ID, ar.ID)), map[string]string{"request_id": string(ar.ID)}, nil
+}
+
+type adminRequestDecisionArgs struct {
+	RequestID string `json:"request_id" jsonschema:"the request id from admin_federate_directory or admin_list_pending_requests"`
+	Reason    string `json:"reason,omitempty" jsonschema:"reason for rejection (admin_reject_request only)"`
+}
+
+func (s *Server) adminListPendingRequests(ctx context.Context, req *sdkmcp.CallToolRequest, args struct{}) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	reqs, err := s.bp.ListPendingAdminActions(ctx, actor)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(reqs) == 0 {
+		return text("no sensitive admin actions are pending approval."), nil, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d sensitive action(s) awaiting four-eyes approval:\n", len(reqs))
+	out := make([]map[string]string, 0, len(reqs))
+	for _, r := range reqs {
+		fmt.Fprintf(&b, "  - %s  type=%s  requested_by=%s  %s\n", r.ID, r.ActionType, r.RequestedBy, r.Summary)
+		out = append(out, map[string]string{"request_id": string(r.ID), "type": string(r.ActionType), "requested_by": string(r.RequestedBy), "summary": r.Summary})
+	}
+	return text(b.String()), map[string]any{"requests": out}, nil
+}
+
+func (s *Server) adminApproveRequest(ctx context.Context, req *sdkmcp.CallToolRequest, args adminRequestDecisionArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	ar, err := s.bp.ApproveAdminAction(ctx, actor, domain.ID(args.RequestID))
+	if err != nil {
+		return nil, nil, idpErr(err)
+	}
+	msg := fmt.Sprintf("request %s approved and executed", args.RequestID)
+	if ar.Result != "" {
+		msg += ": " + ar.Result
+	}
+	return text(msg + "."), nil, nil
+}
+
+func (s *Server) adminRejectRequest(ctx context.Context, req *sdkmcp.CallToolRequest, args adminRequestDecisionArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.RejectAdminAction(ctx, actor, domain.ID(args.RequestID), args.Reason); err != nil {
+		return nil, nil, err
+	}
+	return text(fmt.Sprintf("request %s rejected.", args.RequestID)), nil, nil
 }
 
 // parseRole maps the agent-facing role string to a MembershipRole.

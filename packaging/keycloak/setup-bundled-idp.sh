@@ -145,8 +145,9 @@ create in the console survive restarts and reboots.
 IdP administration over MCP is ENABLED: an it-admin agent can run the admin_*
 tools (create users/groups, onboard people, list identities) without opening the
 Keycloak console. Directory federation (admin_federate_directory) is the
-SENSITIVE tier and is OFF by default — set BEAMHALL_IDP_SENSITIVE_ADMIN=on in
-${ENVFILE} to enable it (it changes who can sign in to the whole appliance).
+SENSITIVE tier: it files a request a DIFFERENT it-admin must approve (four-eyes)
+before it takes effect, and is OFF by default — set BEAMHALL_IDP_SENSITIVE_ADMIN=on
+in ${ENVFILE} to permit it (it changes who can sign in to the whole appliance).
 This is an evaluation IdP — for production, point Beamhall at your own IdP
 (docs/idp-setup.md) and disable beamhall-keycloak.service.
 ===========================================================

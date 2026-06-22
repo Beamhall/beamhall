@@ -237,12 +237,33 @@ func (f *fakeBackplane) AdminAddUserToGroup(ctx context.Context, actor orch.Acto
 	return nil
 }
 
-func (f *fakeBackplane) AdminFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) error {
-	f.record("AdminFederateDirectory:"+d.Name, actor)
+func (f *fakeBackplane) RequestFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) (domain.AdminActionRequest, error) {
+	f.record("RequestFederateDirectory:"+d.Name, actor)
 	if f.failWith != nil {
-		return f.failWith
+		return domain.AdminActionRequest{}, f.failWith
 	}
-	return nil
+	return domain.AdminActionRequest{ID: "areq-1", ActionType: domain.AdminActionFederateDirectory,
+		Summary: "federate " + d.Name, RequestedBy: actor.ID, Status: domain.AdminActionPending}, nil
+}
+
+func (f *fakeBackplane) ListPendingAdminActions(ctx context.Context, actor orch.Actor) ([]domain.AdminActionRequest, error) {
+	f.record("ListPendingAdminActions", actor)
+	return []domain.AdminActionRequest{{ID: "areq-1", ActionType: domain.AdminActionFederateDirectory,
+		Summary: "federate corp-ad", RequestedBy: "other-it", Status: domain.AdminActionPending}}, nil
+}
+
+func (f *fakeBackplane) ApproveAdminAction(ctx context.Context, actor orch.Actor, id domain.ID) (domain.AdminActionRequest, error) {
+	f.record("ApproveAdminAction:"+string(id), actor)
+	if f.failWith != nil {
+		return domain.AdminActionRequest{}, f.failWith
+	}
+	return domain.AdminActionRequest{ID: id, Status: domain.AdminActionApproved, DecidedBy: actor.ID,
+		Result: "directory federated"}, nil
+}
+
+func (f *fakeBackplane) RejectAdminAction(ctx context.Context, actor orch.Actor, id domain.ID, reason string) error {
+	f.record("RejectAdminAction:"+string(id), actor)
+	return f.failWith
 }
 
 type fakeDirectory struct{}

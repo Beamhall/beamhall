@@ -82,33 +82,63 @@ IdP later wouldn't change the tools.
 - **Routine** ops (onboarding: users, passwords, groups, identities, memberships)
   run autonomously and are audited.
 - **Sensitive** ops change *who can sign in to the whole appliance*. Today that is
-  `admin_federate_directory`; restores and upgrades will join it. Sensitive ops
-  **fail closed**: they require the operator opt-in `BEAMHALL_IDP_SENSITIVE_ADMIN=on`
-  (the human-in-the-loop gate). With it off, the tool refuses and points you to the
-  `/admin` console. The planned upgrade is a four-eyes in-band approval (a second IT
-  operator confirms), mirroring promotion approval.
+  `admin_federate_directory`; restores and upgrades will join it. These go through
+  a **four-eyes approval flow** (below): the requesting operator never executes them;
+  a *different* IT operator must approve. The master switch
+  `BEAMHALL_IDP_SENSITIVE_ADMIN=on` controls whether sensitive actions can be
+  requested at all — with it off they fail closed.
 
-Why the gate matters: an `admin:it` agent that can create identities and grant
+Why this matters: an `admin:it` agent that can create identities and grant
 memberships can *manufacture access*. `admin:it` is a master key — keep it
-out-of-band, and keep the sensitive tier confirmed.
+out-of-band, keep the sensitive tier behind a second operator.
+
+## Four-eyes approval (sensitive actions)
+
+A sensitive action is filed as a **pending request**, then a second IT operator
+approves it before it executes (separation of duties):
+
+```
+# operator A files the request:
+admin_federate_directory  name=corp-ad ...        # returns request_id; does NOT execute
+# operator B (a different IT person) reviews and approves:
+admin_list_pending_requests                        # shows the non-secret summary
+admin_approve_request  request_id=<id>             # executes now; records the result
+#   or
+admin_reject_request   request_id=<id> reason=...  # discards it
+```
+
+- **Separation of duties is enforced:** the requester cannot approve their own
+  request — a *different* `admin:it` identity must.
+- **Secrets stay sealed:** the request payload (e.g. the LDAP **bind password**) is
+  encrypted at rest with the appliance's age key; only a non-secret summary appears
+  in `admin_list_pending_requests`. The credential is opened only at execution.
+- **Failure is retryable:** if execution fails (e.g. the directory is unreachable),
+  the request stays pending — fix the cause and approve again.
+- The flow is **generic** (`action_type`), so future sensitive actions (restore,
+  upgrade) use the same request → approve path.
 
 ## Connecting to an existing directory (LDAP / Active Directory)
 
 When a pilot graduates from local accounts to the company directory, federate the
 **bundled Keycloak** to it — Beamhall's issuer does not change, so nothing in
-Beamhall's config changes:
+Beamhall's config changes. Federation is a sensitive action, so it goes through
+four-eyes approval:
 
 ```
 # enable the sensitive tier first (operator decision):
 #   BEAMHALL_IDP_SENSITIVE_ADMIN=on  in /etc/beamhall/beamhall.env, then restart beamhalld
+# operator A files the request:
 admin_federate_directory \
   name=corp-ad vendor=ad \
   connection_url=ldaps://dc1.corp.example:636 \
   users_dn="OU=Beamhall,OU=Users,DC=corp,DC=example" \
   bind_dn="CN=svc-beamhall,OU=Service,DC=corp,DC=example" bind_password=<pw>
+# operator B (a different IT person) approves it:
+admin_approve_request request_id=<id>
 ```
 
-Directory users can now authenticate. They are **new** `(issuer, subject)` records
+The bind password is sealed at rest while the request is pending. Once approved,
+directory users can authenticate. They are **new** `(issuer, subject)` records
 (the issuer is still your Keycloak), so register the ones who should use Beamhall
 (`admin_register_identity`) and grant memberships — the same routine step as any
 onboarding. Retire the earlier local test accounts when ready.

@@ -645,9 +645,21 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     client `beamhall-idp-admin`, `realm-admin`); the agent never does.
   - **Risk tiering (guardrail decision, 2026-06-21):** routine onboarding ops run
     autonomously (audited); `admin_federate_directory` is the **SENSITIVE** tier
-    (it changes who can sign in to the whole appliance) and **fails closed** unless
-    `BEAMHALL_IDP_SENSITIVE_ADMIN=on`. The full four-eyes pending-approval flow for
-    the sensitive tier (mirroring promotion approval) is the documented next step.
+    (it changes who can sign in to the whole appliance) and goes through a
+    **four-eyes approval flow** (below). `BEAMHALL_IDP_SENSITIVE_ADMIN=on` is the
+    master enable (off ⇒ not requestable).
+  - **Four-eyes flow for the sensitive tier** ✅ (migration `0010_admin_action_requests`,
+    `internal/store/admin_request.go`, `internal/orch/identityadmin.go`,
+    `internal/mcp/admin.go`): `admin_federate_directory` **files a pending request**;
+    a **different** IT operator runs `admin_approve_request` (the requester can't
+    approve their own — separation of duties), which executes the stored intent and
+    records the result; `admin_reject_request` discards it; `admin_list_pending_requests`
+    lists them. Generic `action_type` so restore/upgrade reuse it. The request payload
+    can carry a secret (the LDAP bind credential) so it's **vault-sealed at rest**
+    (`Vault.Seal`/`Open` over age); only a non-secret summary is listed. Execution
+    failure leaves the request pending (retryable). Unit-tested at all three layers
+    (store round-trip + decide-once; orch sealing/four-eyes/execute-on-approval;
+    MCP request/approve/reject scope-gated). **Lab verification pending pilot.**
   - Config: `BEAMHALL_IDP_ADMIN_URL/REALM/CLIENT_ID/CLIENT_SECRET` +
     `BEAMHALL_IDP_SENSITIVE_ADMIN`; wired in `cmd/beamhalld` (Keycloak provider when
     configured, else Disabled). Unit-tested at all three layers (seam via httptest

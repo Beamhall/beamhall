@@ -195,6 +195,16 @@ func (v *Vault) value(ctx context.Context, ref string) ([]byte, error) {
 	return v.decrypt(ct)
 }
 
+// Seal encrypts arbitrary bytes to the vault key (age), for control-plane data
+// that must not sit in the store as plaintext but is not a per-beam secret —
+// e.g. the payload of a pending sensitive admin action, which may carry an LDAP
+// bind credential (PLAN §5.9). Open reverses it. Unlike Set, these don't touch
+// the secret_values table; the caller stores the ciphertext wherever it needs.
+func (v *Vault) Seal(plain []byte) ([]byte, error) { return v.encrypt(plain) }
+
+// Open decrypts bytes produced by Seal.
+func (v *Vault) Open(ct []byte) ([]byte, error) { return v.decrypt(ct) }
+
 func (v *Vault) encrypt(plain []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w, err := age.Encrypt(&buf, v.recip)

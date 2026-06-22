@@ -72,9 +72,10 @@ type Config struct {
 	// this secret; the agent never does.
 	IDPAdminClientID     string
 	IDPAdminClientSecret string
-	// IDPSensitiveAdmin is the human-in-the-loop opt-in for the SENSITIVE
-	// auth-config tier (directory federation). Off by default: those operations
-	// fail closed (BEAMHALL_IDP_SENSITIVE_ADMIN=on to enable).
+	// IDPSensitiveAdmin is the master enable for the SENSITIVE auth-config tier
+	// (directory federation). Off by default → those actions can't even be
+	// requested (fail closed). On → they can be requested, but still require a
+	// SECOND IT operator's approval before they execute (four-eyes; PLAN §5.9).
 	IDPSensitiveAdmin bool
 
 	// CaddyAdminURL is the gateway's Admin API.

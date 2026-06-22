@@ -63,7 +63,12 @@ type Backplane interface {
 	AdminCreateGroup(ctx context.Context, actor orch.Actor, name string) (identityadmin.Group, error)
 	AdminListGroups(ctx context.Context, actor orch.Actor) ([]identityadmin.Group, error)
 	AdminAddUserToGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
-	AdminFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) error
+	// SENSITIVE tier (four-eyes): federation files a request a different IT
+	// operator must approve before it executes (PLAN §5.9).
+	RequestFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) (domain.AdminActionRequest, error)
+	ListPendingAdminActions(ctx context.Context, actor orch.Actor) ([]domain.AdminActionRequest, error)
+	ApproveAdminAction(ctx context.Context, actor orch.Actor, id domain.ID) (domain.AdminActionRequest, error)
+	RejectAdminAction(ctx context.Context, actor orch.Actor, id domain.ID, reason string) error
 }
 
 // Directory is the slice of the store the MCP layer reads to resolve the

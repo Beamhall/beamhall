@@ -4,6 +4,20 @@
 
 package db
 
+type AdminActionRequest struct {
+	ID            string
+	ActionType    string
+	Summary       string
+	PayloadCipher []byte
+	RequestedBy   string
+	Status        string
+	Reason        string
+	Result        string
+	CreatedAt     int64
+	DecidedBy     string
+	DecidedAt     int64
+}
+
 type ArmedPause struct {
 	BeamID   string
 	Deadline int64

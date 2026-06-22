@@ -285,6 +285,43 @@ const (
 	PromotionRejected PromotionStatus = "rejected"
 )
 
+// AdminActionStatus is the state of a four-eyes-gated sensitive admin action.
+type AdminActionStatus string
+
+const (
+	AdminActionPending  AdminActionStatus = "pending"
+	AdminActionApproved AdminActionStatus = "approved"
+	AdminActionRejected AdminActionStatus = "rejected"
+)
+
+// AdminActionType discriminates the sensitive admin actions that go through the
+// four-eyes approval flow (PLAN §5.9). New sensitive actions (restore, upgrade)
+// add a constant + a dispatcher case.
+type AdminActionType string
+
+const (
+	AdminActionFederateDirectory AdminActionType = "federate_directory"
+)
+
+// AdminActionRequest records a SENSITIVE admin action awaiting a second IT
+// operator's approval (separation of duties). The requesting operator cannot
+// approve their own request; on approval the backplane executes the stored
+// intent. The payload may carry secrets (e.g. an LDAP bind credential) and is
+// stored vault-sealed; only Summary is non-secret and safe to display.
+type AdminActionRequest struct {
+	ID            ID
+	ActionType    AdminActionType
+	Summary       string
+	PayloadCipher []byte // vault-sealed JSON intent
+	RequestedBy   ID
+	Status        AdminActionStatus
+	Reason        string
+	Result        string
+	CreatedAt     time.Time
+	DecidedBy     ID
+	DecidedAt     time.Time
+}
+
 // PromotionRequest records a builder's request to promote a beam to live when
 // the explicit IT-approval gate is enabled (PLAN §10). A different IT operator
 // approves it (four-eyes), at which point the promotion executes.

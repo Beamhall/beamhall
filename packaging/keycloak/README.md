@@ -53,8 +53,10 @@ The setup also seeds the `beamhall-idp-admin` service-account client and wires
 `BEAMHALL_IDP_ADMIN_*`, so an **`admin:it`** operator manages users, groups, and
 directory federation through the **`admin_*` MCP tools** — no need to open the
 Keycloak console. Beamhall holds the admin credential; the agent never does.
-Directory federation (`admin_federate_directory`) is the **sensitive** tier and is
-**off by default** (`BEAMHALL_IDP_SENSITIVE_ADMIN=on` to enable). Full guide:
+Directory federation (`admin_federate_directory`) is the **sensitive** tier: it
+files a request that a **different** IT operator must approve (`admin_approve_request`)
+before it executes — four-eyes/separation of duties. It is **off by default**
+(`BEAMHALL_IDP_SENSITIVE_ADMIN=on` to permit requesting it). Full guide:
 `docs/admin-over-mcp.md`. (On a bring-your-own-IdP deployment these IdP tools are
 disabled — Beamhall administers only the IdP it owns.)
 

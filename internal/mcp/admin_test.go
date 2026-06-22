@@ -94,18 +94,57 @@ func TestAdminCreateUserBYOIdpHint(t *testing.T) {
 	}
 }
 
-func TestAdminFederateDirectoryReachesBackplane(t *testing.T) {
+func TestAdminFederateDirectoryFilesRequest(t *testing.T) {
 	h := newHarness(t)
 	h.bp.idpEnabled = true
 	cs := h.connect(t, auth.ScopeAdminIT, nil)
 	_, txt := h.call(t, cs, "admin_federate_directory", map[string]any{
 		"name": "corp-ad", "vendor": "ad",
 		"connection_url": "ldaps://dc1.corp:636", "users_dn": "OU=x,DC=corp",
+		"bind_password": "s3cret",
 	}, false)
-	if !strings.Contains(txt, "corp-ad") {
-		t.Fatalf("federate reply: %q", txt)
+	// It files a request (does not execute) and tells the operator a second IT
+	// person must approve. The reply must not echo the bind password.
+	if !strings.Contains(txt, "areq-1") || !strings.Contains(txt, "approve") {
+		t.Fatalf("expected a four-eyes request reply, got %q", txt)
 	}
-	assertCalled(t, h, "AdminFederateDirectory:corp-ad")
+	if strings.Contains(txt, "s3cret") {
+		t.Fatalf("reply leaked the bind password: %q", txt)
+	}
+	assertCalled(t, h, "RequestFederateDirectory:corp-ad")
+}
+
+func TestAdminApproveAndRejectRequest(t *testing.T) {
+	h := newHarness(t)
+	cs := h.connect(t, auth.ScopeAdminIT, nil)
+
+	_, txt := h.call(t, cs, "admin_list_pending_requests", map[string]any{}, false)
+	if !strings.Contains(txt, "areq-1") {
+		t.Fatalf("pending list: %q", txt)
+	}
+	_, txt = h.call(t, cs, "admin_approve_request", map[string]any{"request_id": "areq-1"}, false)
+	if !strings.Contains(txt, "approved") {
+		t.Fatalf("approve reply: %q", txt)
+	}
+	assertCalled(t, h, "ApproveAdminAction:areq-1")
+
+	_, _ = h.call(t, cs, "admin_reject_request", map[string]any{"request_id": "areq-2", "reason": "nope"}, false)
+	assertCalled(t, h, "RejectAdminAction:areq-2")
+}
+
+func TestSensitiveToolsRequireAdminScope(t *testing.T) {
+	h := newHarness(t)
+	cs := h.connect(t, auth.ScopeBeamsWrite, nil)
+	for tool, args := range map[string]map[string]any{
+		"admin_list_pending_requests": {},
+		"admin_approve_request":       {"request_id": "areq-1"},
+		"admin_reject_request":        {"request_id": "areq-1"},
+	} {
+		_, txt := h.call(t, cs, tool, args, true)
+		if !strings.Contains(txt, "insufficient_scope") {
+			t.Fatalf("%s without admin:it: want insufficient_scope, got %q", tool, txt)
+		}
+	}
 }
 
 func assertCalled(t *testing.T, h *harness, want string) {
