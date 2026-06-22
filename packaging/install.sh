@@ -7,7 +7,7 @@
 # With no binary path it fetches the latest published beamhalld from GitHub
 # Releases for this host's arch and verifies it against checksums.txt:
 #
-#   curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/<tag>/packaging/install.sh \
+#   curl -fsSL https://github.com/Beamhall/beamhall/releases/latest/download/install.sh \
 #     | sudo bash -s -- --base-domain beamhall.example.com --tls internal
 #
 # Pin a specific release with --version vX.Y.Z; pass a local path to install a
@@ -451,8 +451,6 @@ EOF
     [ -s "$CA_OUT" ] || note "could not fetch the gateway CA yet (gateway still starting?); rerun: curl -s \$CADDY_ADMIN/pki/ca/local | jq -r .root_certificate"
   fi
 
-  # Pin the bundled-IdP hint to the exact release we installed (else main).
-  IDP_REF="${RESOLVED_TAG:-main}"
   cat <<EOF
 
 Beamhall appliance installed and running (/healthz is green).
@@ -461,8 +459,8 @@ NEXT — turn on identities (this enables the MCP endpoint + the Admin console).
 Pick ONE; you don't need to read any docs for the first option:
 
   • Evaluate now with the bundled IdP (recommended for a pilot) — one command:
-       curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/${IDP_REF}/packaging/keycloak/setup-bundled-idp.sh \\
-         | sudo BASE_DOMAIN=${BASE_DOMAIN} BEAMHALL_REF=${IDP_REF} bash
+       curl -fsSL https://github.com/${REPO_SLUG}/releases/latest/download/setup-bundled-idp.sh \\
+         | sudo BASE_DOMAIN=${BASE_DOMAIN} bash
     It stands up a ready-to-use Keycloak + seed users and wires beamhalld for you.
 
   • Use your corporate IdP (production): set BEAMHALL_OAUTH_ISSUER in

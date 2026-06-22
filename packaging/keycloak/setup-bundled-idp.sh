@@ -7,9 +7,10 @@
 #
 #   # from a checkout:
 #   sudo BASE_DOMAIN=beamhall.acme.internal bash packaging/keycloak/setup-bundled-idp.sh
-#   # or streamlined (no checkout) — the script self-fetches its sibling files:
-#   curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/<tag>/packaging/keycloak/setup-bundled-idp.sh \
-#     | sudo BASE_DOMAIN=beamhall.acme.internal BEAMHALL_REF=<tag> bash
+#   # or streamlined (no checkout) — the script self-fetches its sibling files
+#   # from the latest release (set BEAMHALL_REF=<tag|branch> to pin):
+#   curl -fsSL https://github.com/Beamhall/beamhall/releases/latest/download/setup-bundled-idp.sh \
+#     | sudo BASE_DOMAIN=beamhall.acme.internal bash
 #
 # Persistent: Keycloak state lives in the named volume beamhall-keycloak-data, so
 # users/groups/config created at runtime in the console survive reboots. The realm
@@ -27,9 +28,11 @@ ENVFILE="${ENVFILE:-/etc/beamhall/beamhall.env}"
 BEAMHALLD="${BEAMHALLD:-/usr/local/bin/beamhalld}"
 
 # Sibling files this script reads. When run via `curl | bash` (no checkout),
-# fetch them from the same ref so the bundled IdP is a true one-liner.
+# fetch them so the bundled IdP is a true one-liner. Default: the latest RELEASE
+# assets (version-independent, matches `releases/latest/download/...`). Set
+# BEAMHALL_REF=<tag|branch> to pin to a git ref instead.
 REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
-BEAMHALL_REF="${BEAMHALL_REF:-main}"
+BEAMHALL_REF="${BEAMHALL_REF:-}"
 _need_fetch=0
 for _f in realm-template.json beamhall-keycloak.service; do
   [ -f "$HERE/$_f" ] || _need_fetch=1
@@ -37,10 +40,14 @@ done
 if [ "$_need_fetch" = 1 ]; then
   HERE="$(mktemp -d)"
   for _f in realm-template.json beamhall-keycloak.service; do
-    curl -fsSL "https://raw.githubusercontent.com/${REPO_SLUG}/${BEAMHALL_REF}/packaging/keycloak/${_f}" -o "$HERE/$_f" \
-      || { echo "could not fetch ${_f} from ${REPO_SLUG}@${BEAMHALL_REF}"; exit 1; }
+    if [ -n "$BEAMHALL_REF" ]; then
+      _url="https://raw.githubusercontent.com/${REPO_SLUG}/${BEAMHALL_REF}/packaging/keycloak/${_f}"
+    else
+      _url="https://github.com/${REPO_SLUG}/releases/latest/download/${_f}"
+    fi
+    curl -fsSL "$_url" -o "$HERE/$_f" || { echo "could not fetch ${_f} from ${_url}"; exit 1; }
   done
-  echo "fetched bundled-IdP assets from ${REPO_SLUG}@${BEAMHALL_REF}"
+  echo "fetched bundled-IdP assets (${BEAMHALL_REF:-latest release})"
 fi
 
 IDP_HOST="idp.${BASE_DOMAIN}"

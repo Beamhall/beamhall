@@ -51,12 +51,13 @@ That's it. Everything else the installer lays for you.
 SSH to the host as root and run:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/main/packaging/install.sh \
+curl -fsSL https://github.com/Beamhall/beamhall/releases/latest/download/install.sh \
   | sudo bash -s -- --base-domain beamhall.example.com --tls internal
 ```
 
-> This installs the **latest published release** (the script resolves it for you).
-> Pin a specific version for reproducibility with `--version vX.Y.Z`.
+> This fetches the installer and binary from the **latest release** (not the dev
+> branch), so the command never needs updating. Pin a specific version for
+> reproducibility with `--version vX.Y.Z`.
 
 What this does (idempotent — safe to re-run):
 
@@ -107,8 +108,8 @@ corporate IdP** — is the bundled Keycloak. One command (the installer prints t
 exact line, pinned to the version you installed):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Beamhall/beamhall/main/packaging/keycloak/setup-bundled-idp.sh \
-  | sudo BASE_DOMAIN=beamhall.example.com BEAMHALL_REF=main bash
+curl -fsSL https://github.com/Beamhall/beamhall/releases/latest/download/setup-bundled-idp.sh \
+  | sudo BASE_DOMAIN=beamhall.example.com bash
 ```
 
 It stands up Keycloak (fronted by your gateway at `idp.<base-domain>`), seeds two

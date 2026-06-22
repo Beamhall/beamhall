@@ -73,3 +73,12 @@ release:
   draft: false
   prerelease: auto
   make_latest: true
+  # Attach the bootstrap scripts as standalone, version-independent assets so the
+  # docs can fetch them from the stable URL
+  # https://github.com/Beamhall/beamhall/releases/latest/download/<name> — always
+  # the latest RELEASE (not the dev branch), with no per-version doc edits.
+  extra_files:
+    - glob: packaging/install.sh
+    - glob: packaging/keycloak/setup-bundled-idp.sh
+    - glob: packaging/keycloak/realm-template.json
+    - glob: packaging/keycloak/beamhall-keycloak.service
