@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "bh-admin-alice": {
+      "command": "python3",
+      "args": ["scripts/agent-conformance/bh-mcp-proxy.py"],
+      "env": {
+        "BH_USER": "admin-alice",
+        "BH_CLIENT_ID": "beamhall-admin-agent",
+        "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
+        "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
+        "BH_MCP_URL": "https://beamhall.internal/mcp",
+        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+      }
+    },
+    "bh-admin-bob": {
+      "command": "python3",
+      "args": ["scripts/agent-conformance/bh-mcp-proxy.py"],
+      "env": {
+        "BH_USER": "admin-bob",
+        "BH_CLIENT_ID": "beamhall-admin-agent",
+        "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
+        "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
+        "BH_MCP_URL": "https://beamhall.internal/mcp",
+        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+      }
+    },
+    "bh-builder-carol": {
+      "command": "python3",
+      "args": ["scripts/agent-conformance/bh-mcp-proxy.py"],
+      "env": {
+        "BH_USER": "builder-carol",
+        "BH_CLIENT_ID": "beamhall-agent",
+        "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
+        "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
+        "BH_MCP_URL": "https://beamhall.internal/mcp",
+        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+      }
+    },
+    "bh-builder-dave": {
+      "command": "python3",
+      "args": ["scripts/agent-conformance/bh-mcp-proxy.py"],
+      "env": {
+        "BH_USER": "builder-dave",
+        "BH_CLIENT_ID": "beamhall-agent",
+        "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
+        "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
+        "BH_MCP_URL": "https://beamhall.internal/mcp",
+        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+      }
+    }
+  }
+}

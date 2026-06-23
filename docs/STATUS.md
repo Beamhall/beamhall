@@ -404,10 +404,13 @@ internal/gitserver/   git smart-HTTP push transport (/git): receive-pack + one-t
 internal/e2e/         lab suites: demo flow + negsec + lifecycle (rollback/destroy) + git-push deploy
 internal/config/      env config
 scripts/              preflight, runsc-smoke, lab-bootstrap
+scripts/agent-conformance/  four-persona MCP conformance suite (bh-mcp-proxy.py +
+                      provision/verify/gates/teardown/bh-call) — see docs/agent-conformance.md
+.mcp.json + .claude/agents/bh-*.md  the four authenticated personas (2 admin, 2 builder)
 docs/                 PLAN.md, STATUS.md (this), lab-phase0-validation.md, threat-model.md,
                       beamhall-for-it.md (IT overview + planning surface),
                       getting-started.md (IT admin's step-by-step first-hour play),
-                      admin-over-mcp.md, idp-setup.md, air-gapped.md
+                      admin-over-mcp.md, agent-conformance.md, idp-setup.md, air-gapped.md
 .github/workflows/    ci.yml (build/vet/test + website) + release.yml (tag → GoReleaser → published release)
 website/              public marketing + docs site (Astro + Starlight → Cloudflare Pages)
 ```
@@ -694,6 +697,26 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     self-replacing restart). `WithUpgrader` orch option; `BEAMHALL_SELF_UPGRADE` /
     `BEAMHALL_RELEASE_BASE_URL` config. The admin-over-MCP surface is now complete
     (36 admin tools).
+  - **Agent-conformance suite (2026-06-23, `scripts/agent-conformance/` + `.mcp.json`
+    + `.claude/agents/bh-*.md`, `docs/agent-conformance.md`)** — exercises the agentic
+    side with **four authenticated personas** so isolation + four-eyes are proven the
+    way agents actually hit them. Each persona drives Beamhall over its own **stdio MCP
+    proxy** (`bh-mcp-proxy.py`, evolved from the pilot `bhmcp.py`) that ROPC-mints +
+    auto-refreshes that identity's token and bridges Claude Code ⇄ Streamable-HTTP MCP;
+    the four proxies are four `.mcp.json` servers, one tool-scoped persona subagent
+    each (`bh-admin-alice/-bob` via the `beamhall-it` role, `bh-builder-carol→team-blue`
+    / `bh-builder-dave→team-green`). `provision.sh` (idempotent, over SSH) creates the
+    IdP users via Keycloak Admin REST (with a **complete profile** — an incomplete one
+    triggers Keycloak "Account is not fully set up" → ROPC 400; gotcha logged),
+    assigns `beamhall-it` to the admins, registers the four identities + bootstraps the
+    two workspaces; `gates.sh` reversibly toggles `BEAMHALL_IDP_SENSITIVE_ADMIN` /
+    `BEAMHALL_PROMOTE_APPROVAL`; `verify.sh` + `bh-call.sh` drive a persona without a
+    Claude restart. **Live-verified end-to-end:** cross-workspace `denied … no membership`
+    both directions; builders see 16 tools / 0 `admin_*`, admins' menu tracks state live
+    (30↔35 as the sensitive tier toggles); admin four-eyes (cross-approve executes,
+    self-approve refused with the four-eyes message); audit chain `VERIFIED — intact`
+    with the denials + request/approve pairs against distinct actor IDs. Native
+    multi-proxy is primary; Apple `container` documented as an optional OS-level tier.
   - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
     `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
     `s.srv` returns only the tools a caller's token could invoke (builder surface vs

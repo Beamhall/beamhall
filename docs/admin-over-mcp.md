@@ -246,6 +246,14 @@ re-list, picking up their newly-correct menu without reconnecting. Source:
 (`TestToolVisibilityTableMatchesRegistry`) fails if a new tool is left
 unclassified.
 
+## Testing this surface
+
+The admin tool family (and the builder surface, isolation, and four-eyes) is
+exercised end-to-end by the **agent-conformance suite** (`docs/agent-conformance.md`):
+four authenticated personas — two IT admins and two builders — each driving Beamhall
+over its own ROPC-authenticated MCP channel, so separation-of-duties and
+environment isolation are proven the way an agent actually hits them.
+
 ## Persistence
 
 The bundled Keycloak is **persistent** (named volume `beamhall-keycloak-data`): the

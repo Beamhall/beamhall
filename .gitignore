@@ -19,6 +19,10 @@ go.work.sum
 .env
 .env.*
 
+# Python (agent-conformance tooling)
+__pycache__/
+*.pyc
+
 # Editor / OS
 .DS_Store
 .idea/
