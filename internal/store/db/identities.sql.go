@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const deleteIdentity = `-- name: DeleteIdentity :exec
+DELETE FROM identities WHERE id = ?
+`
+
+func (q *Queries) DeleteIdentity(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteIdentity, id)
+	return err
+}
+
 const deleteMembership = `-- name: DeleteMembership :exec
 DELETE FROM memberships WHERE id = ?
 `

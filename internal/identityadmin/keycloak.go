@@ -251,6 +251,24 @@ func (k *Keycloak) SetTemporaryPassword(ctx context.Context, userID, password st
 	return nil
 }
 
+// SetUserEnabled toggles a user's enabled flag. Keycloak's update endpoint
+// applies only the non-null fields of the representation, so a partial body
+// with just "enabled" flips that flag and leaves the rest of the account intact.
+func (k *Keycloak) SetUserEnabled(ctx context.Context, userID string, enabled bool) error {
+	if userID == "" {
+		return fmt.Errorf("userID is required")
+	}
+	resp, err := k.do(ctx, http.MethodPut, "/users/"+url.PathEscape(userID), map[string]any{"enabled": enabled})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("set user enabled: HTTP %d (%s)", resp.StatusCode, snippet(resp))
+	}
+	return nil
+}
+
 func (k *Keycloak) CreateGroup(ctx context.Context, name string) (Group, error) {
 	if name == "" {
 		return Group{}, fmt.Errorf("group name is required")
@@ -359,6 +377,65 @@ func (k *Keycloak) FederateDirectory(ctx context.Context, d DirectoryFederation)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("federate directory %q: HTTP %d (%s)", d.Name, resp.StatusCode, snippet(resp))
+	}
+	return nil
+}
+
+func (k *Keycloak) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
+	if userID == "" || groupID == "" {
+		return fmt.Errorf("userID and groupID are required")
+	}
+	resp, err := k.do(ctx, http.MethodDelete,
+		"/users/"+url.PathEscape(userID)+"/groups/"+url.PathEscape(groupID), nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("remove user from group: HTTP %d (%s)", resp.StatusCode, snippet(resp))
+	}
+	return nil
+}
+
+// UnfederateDirectory deletes the LDAP UserStorageProvider component created by
+// FederateDirectory, looked up by its name. The MCP layer only reaches this
+// after four-eyes approval (it changes who can sign in).
+func (k *Keycloak) UnfederateDirectory(ctx context.Context, name string) error {
+	if name == "" {
+		return fmt.Errorf("federation name is required")
+	}
+	resp, err := k.do(ctx, http.MethodGet, "/components?type=org.keycloak.storage.UserStorageProvider", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("list federation components: HTTP %d (%s)", resp.StatusCode, snippet(resp))
+	}
+	var comps []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&comps); err != nil {
+		return fmt.Errorf("decode federation components: %w", err)
+	}
+	id := ""
+	for _, c := range comps {
+		if strings.EqualFold(c.Name, name) {
+			id = c.ID
+			break
+		}
+	}
+	if id == "" {
+		return fmt.Errorf("no federation source named %q", name)
+	}
+	del, err := k.do(ctx, http.MethodDelete, "/components/"+url.PathEscape(id), nil)
+	if err != nil {
+		return err
+	}
+	defer del.Body.Close()
+	if del.StatusCode != http.StatusNoContent && del.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete federation %q: HTTP %d (%s)", name, del.StatusCode, snippet(del))
 	}
 	return nil
 }

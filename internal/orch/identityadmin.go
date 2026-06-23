@@ -49,6 +49,15 @@ func (o *Orchestrator) AdminSetUserPassword(ctx context.Context, actor Actor, us
 	return o.itAudit(ctx, actor, "admin_set_user_password", "", o.idp.SetTemporaryPassword(ctx, userID, password))
 }
 
+// AdminSetUserEnabled enables/disables a bundled-IdP account — offboarding (or
+// re-activating) a user without deleting the account. it_admin only.
+func (o *Orchestrator) AdminSetUserEnabled(ctx context.Context, actor Actor, userID string, enabled bool) error {
+	if err := o.requireIT(actor); err != nil {
+		return o.itAudit(ctx, actor, "admin_set_user_enabled", "", err)
+	}
+	return o.itAudit(ctx, actor, "admin_set_user_enabled", "", o.idp.SetUserEnabled(ctx, userID, enabled))
+}
+
 // AdminCreateGroup creates an IdP group. it_admin only.
 func (o *Orchestrator) AdminCreateGroup(ctx context.Context, actor Actor, name string) (identityadmin.Group, error) {
 	if err := o.requireIT(actor); err != nil {
@@ -72,6 +81,15 @@ func (o *Orchestrator) AdminAddUserToGroup(ctx context.Context, actor Actor, use
 		return o.itAudit(ctx, actor, "admin_add_user_to_group", "", err)
 	}
 	return o.itAudit(ctx, actor, "admin_add_user_to_group", "", o.idp.AddUserToGroup(ctx, userID, groupID))
+}
+
+// AdminRemoveUserFromGroup removes an IdP user from an IdP group (the
+// AddUserToGroup inverse). it_admin only.
+func (o *Orchestrator) AdminRemoveUserFromGroup(ctx context.Context, actor Actor, userID, groupID string) error {
+	if err := o.requireIT(actor); err != nil {
+		return o.itAudit(ctx, actor, "admin_remove_user_from_group", "", err)
+	}
+	return o.itAudit(ctx, actor, "admin_remove_user_from_group", "", o.idp.RemoveUserFromGroup(ctx, userID, groupID))
 }
 
 // --- SENSITIVE tier: four-eyes approval (PLAN §5.9) ---------------------------
@@ -104,6 +122,93 @@ func (o *Orchestrator) RequestFederateDirectory(ctx context.Context, actor Actor
 	summary := fmt.Sprintf("federate directory %q (%s) → %s users_dn=%s", d.Name, vendorLabel(d.Vendor), d.ConnectionURL, d.UsersDN)
 	req, err := o.requestSensitive(ctx, actor, domain.AdminActionFederateDirectory, summary, d)
 	return req, o.itAudit(ctx, actor, "admin_request_federate_directory", "", err)
+}
+
+// requireSensitiveTier fails closed when the sensitive admin tier is disabled.
+// idpSensitive (BEAMHALL_IDP_SENSITIVE_ADMIN) is the general sensitive-tier
+// master switch — despite the IdP-flavoured name it gates every four-eyes
+// action (federation, security-context, audit prune, restore), not just IdP ones.
+func (o *Orchestrator) requireSensitiveTier() error {
+	if !o.idpSensitive {
+		return fmt.Errorf("the sensitive admin tier is disabled on this appliance; set BEAMHALL_IDP_SENSITIVE_ADMIN=on to permit sensitive actions (they still require a second IT operator's approval)")
+	}
+	return nil
+}
+
+type unfederatePayload struct{ Name string }
+
+// RequestUnfederateDirectory files a four-eyes request to remove a directory
+// federation by name (directory users lose access). it_admin + sensitive tier +
+// owned IdP.
+func (o *Orchestrator) RequestUnfederateDirectory(ctx context.Context, actor Actor, name string) (domain.AdminActionRequest, error) {
+	const action = "admin_request_unfederate_directory"
+	if err := o.requireIT(actor); err != nil {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", err)
+	}
+	if err := o.requireSensitiveTier(); err != nil {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", err)
+	}
+	if !o.idp.Enabled() {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", identityadmin.ErrNotEnabled)
+	}
+	if name == "" {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", fmt.Errorf("federation name is required"))
+	}
+	summary := fmt.Sprintf("REMOVE directory federation %q (its directory users lose access)", name)
+	req, err := o.requestSensitive(ctx, actor, domain.AdminActionUnfederateDirectory, summary, unfederatePayload{Name: name})
+	return req, o.itAudit(ctx, actor, action, "", err)
+}
+
+type setSecurityContextPayload struct {
+	Slug         string
+	RuntimeClass string
+}
+
+// RequestSetSecurityContext files a four-eyes request to change a workspace's
+// runtime isolation class (runc<->runsc). It alters the hardening posture (and
+// can weaken the regulated gVisor tier), so it is SENSITIVE. it_admin +
+// sensitive tier. The change applies to NEW deploys.
+func (o *Orchestrator) RequestSetSecurityContext(ctx context.Context, actor Actor, slug string, runtimeClass domain.RuntimeClass) (domain.AdminActionRequest, error) {
+	const action = "admin_request_set_security_context"
+	if err := o.requireIT(actor); err != nil {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", err)
+	}
+	if err := o.requireSensitiveTier(); err != nil {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", err)
+	}
+	switch runtimeClass {
+	case domain.RuntimeRunc, domain.RuntimeRunsc:
+	default:
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", fmt.Errorf("runtime_class must be runc or runsc, got %q", runtimeClass))
+	}
+	bh, err := o.st.GetBeamhallBySlug(ctx, slug)
+	if err != nil {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", fmt.Errorf("no beamhall named %q", slug))
+	}
+	summary := fmt.Sprintf("set runtime_class of beamhall %q to %s (changes isolation tier; applies to new deploys)", slug, runtimeClass)
+	req, err := o.requestSensitive(ctx, actor, domain.AdminActionSetSecurityContext, summary, setSecurityContextPayload{Slug: slug, RuntimeClass: string(runtimeClass)})
+	return req, o.itAudit(ctx, actor, action, bh.ID, err)
+}
+
+type pruneAuditPayload struct{ ThroughSeq int64 }
+
+// RequestPruneAudit files a four-eyes request to prune the audit log up to a
+// sequence (retention). It permanently removes rows below a written checkpoint
+// — destroying tamper-evidence — so it is SENSITIVE. it_admin + sensitive tier.
+func (o *Orchestrator) RequestPruneAudit(ctx context.Context, actor Actor, throughSeq int64) (domain.AdminActionRequest, error) {
+	const action = "admin_request_prune_audit"
+	if err := o.requireIT(actor); err != nil {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", err)
+	}
+	if err := o.requireSensitiveTier(); err != nil {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", err)
+	}
+	if throughSeq <= 0 {
+		return domain.AdminActionRequest{}, o.itAudit(ctx, actor, action, "", fmt.Errorf("through_seq must be a positive audit sequence number"))
+	}
+	summary := fmt.Sprintf("PRUNE audit log through seq %d (writes a retention checkpoint; older rows are permanently removed)", throughSeq)
+	req, err := o.requestSensitive(ctx, actor, domain.AdminActionPruneAudit, summary, pruneAuditPayload{ThroughSeq: throughSeq})
+	return req, o.itAudit(ctx, actor, action, "", err)
 }
 
 // requestSensitive seals an action's payload and records the pending request.
@@ -172,7 +277,7 @@ func (o *Orchestrator) approveAdminAction(ctx context.Context, actor Actor, id d
 	if err != nil {
 		return req, "", fmt.Errorf("open sealed payload: %w", err)
 	}
-	result, err := o.executeAdminAction(ctx, req.ActionType, plain)
+	result, err := o.executeAdminAction(ctx, actor.ID, req.ActionType, plain)
 	if err != nil {
 		// Leave the request pending so it can be retried after the cause is fixed.
 		return req, "", err
@@ -205,9 +310,11 @@ func (o *Orchestrator) RejectAdminAction(ctx context.Context, actor Actor, id do
 	return o.itAudit(ctx, actor, "admin_reject_action", "", op())
 }
 
-// executeAdminAction dispatches a sensitive action by type. New sensitive
-// actions add a case here (and an AdminActionType constant).
-func (o *Orchestrator) executeAdminAction(ctx context.Context, typ domain.AdminActionType, payload []byte) (string, error) {
+// executeAdminAction dispatches a sensitive action by type, on approval. New
+// sensitive actions add a case here (and an AdminActionType constant). approver
+// is the second IT operator whose approval triggered execution (recorded where
+// the action itself takes an actor, e.g. audit prune).
+func (o *Orchestrator) executeAdminAction(ctx context.Context, approver domain.ID, typ domain.AdminActionType, payload []byte) (string, error) {
 	switch typ {
 	case domain.AdminActionFederateDirectory:
 		var d identityadmin.DirectoryFederation
@@ -218,6 +325,45 @@ func (o *Orchestrator) executeAdminAction(ctx context.Context, typ domain.AdminA
 			return "", err
 		}
 		return fmt.Sprintf("directory %q federated; its users can now authenticate", d.Name), nil
+	case domain.AdminActionUnfederateDirectory:
+		var p unfederatePayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return "", fmt.Errorf("decode unfederate payload: %w", err)
+		}
+		if err := o.idp.UnfederateDirectory(ctx, p.Name); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("directory federation %q removed; its users can no longer authenticate", p.Name), nil
+	case domain.AdminActionSetSecurityContext:
+		var p setSecurityContextPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return "", fmt.Errorf("decode security-context payload: %w", err)
+		}
+		bh, err := o.st.GetBeamhallBySlug(ctx, p.Slug)
+		if err != nil {
+			return "", fmt.Errorf("no beamhall named %q", p.Slug)
+		}
+		sc, err := o.st.GetSecurityContext(ctx, bh.ID)
+		if err != nil {
+			return "", err
+		}
+		sc.RuntimeClass = domain.RuntimeClass(p.RuntimeClass)
+		if err := o.st.UpdateSecurityContext(ctx, sc); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("beamhall %q runtime_class set to %s (applies to new deploys)", p.Slug, p.RuntimeClass), nil
+	case domain.AdminActionPruneAudit:
+		var p pruneAuditPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return "", fmt.Errorf("decode prune payload: %w", err)
+		}
+		n, err := o.st.PruneAuditThrough(ctx, p.ThroughSeq, approver)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("pruned %d audit row(s) through seq %d; retention checkpoint written", n, p.ThroughSeq), nil
+	case domain.AdminActionRestoreBackup:
+		return o.executeRestoreBackup(payload)
 	default:
 		return "", fmt.Errorf("unknown sensitive admin action %q", typ)
 	}

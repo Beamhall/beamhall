@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -99,6 +100,82 @@ type setEgressArgs struct {
 	Allowlist []string `json:"allowlist,omitempty" jsonschema:"FQDN/CIDR[:port] entries beams in this workspace may reach (used when mode=allowlist)"`
 }
 
+type updateBeamhallArgs struct {
+	Slug         string `json:"slug" jsonschema:"beamhall (workspace) slug to update"`
+	MaxBeams     *int   `json:"max_beams,omitempty" jsonschema:"new cap on preview beams builders may create"`
+	MaxLiveSlots *int   `json:"max_live_slots,omitempty" jsonschema:"new cap on simultaneously-live (promoted) beams"`
+	MaxDatabases *int   `json:"max_databases,omitempty" jsonschema:"new cap on managed Postgres databases"`
+	Status       string `json:"status,omitempty" jsonschema:"new lifecycle status: active | suspended (freeze: PEP denies all actions in the workspace) | archived (decommission)"`
+	DisplayName  string `json:"display_name,omitempty" jsonschema:"new human-readable workspace name"`
+	Department   string `json:"department,omitempty" jsonschema:"new owning department/team"`
+}
+
+type revokeMembershipArgs struct {
+	Beamhall   string `json:"beamhall" jsonschema:"slug of the beamhall (workspace) to remove access from"`
+	IdentityID string `json:"identity_id,omitempty" jsonschema:"the identity id to revoke (from admin_list_identities / admin_show_beamhall). If omitted, give issuer+subject"`
+	Issuer     string `json:"issuer,omitempty" jsonschema:"identity issuer (alternative to identity_id)"`
+	Subject    string `json:"subject,omitempty" jsonschema:"identity subject (alternative to identity_id)"`
+}
+
+type setIdentityStatusArgs struct {
+	Status     string `json:"status" jsonschema:"active (restore access) | disabled (kill switch: the identity keeps its row but every authorization fails)"`
+	IdentityID string `json:"identity_id,omitempty" jsonschema:"the identity id (from admin_list_identities). If omitted, give issuer+subject"`
+	Issuer     string `json:"issuer,omitempty" jsonschema:"identity issuer (alternative to identity_id)"`
+	Subject    string `json:"subject,omitempty" jsonschema:"identity subject (alternative to identity_id)"`
+}
+
+type deregisterIdentityArgs struct {
+	IdentityID string `json:"identity_id,omitempty" jsonschema:"the identity id to remove (from admin_list_identities). If omitted, give issuer+subject"`
+	Issuer     string `json:"issuer,omitempty" jsonschema:"identity issuer (alternative to identity_id)"`
+	Subject    string `json:"subject,omitempty" jsonschema:"identity subject (alternative to identity_id)"`
+}
+
+type listReleasesArgs struct {
+	Beamhall string `json:"beamhall" jsonschema:"beamhall (workspace) slug"`
+	Beam     string `json:"beam" jsonschema:"beam slug"`
+}
+
+type queryAuditArgs struct {
+	Beamhall string `json:"beamhall,omitempty" jsonschema:"optional workspace slug to scope the log to one beamhall; omit for appliance-wide"`
+	AfterSeq int64  `json:"after_seq,omitempty" jsonschema:"return events with sequence number greater than this (pagination cursor; omit to start at the oldest retained event)"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"max events to return (default 100, max 1000)"`
+}
+
+type setUserEnabledArgs struct {
+	UserID  string `json:"user_id" jsonschema:"the bundled-IdP user id (from admin_list_users)"`
+	Enabled bool   `json:"enabled" jsonschema:"true to enable the account, false to disable it (offboard without deleting)"`
+}
+
+type setMembershipRoleArgs struct {
+	Beamhall   string `json:"beamhall" jsonschema:"workspace slug"`
+	Role       string `json:"role" jsonschema:"new role: builder | beamhall_admin | viewer"`
+	IdentityID string `json:"identity_id,omitempty" jsonschema:"identity id (from admin_list_identities). If omitted, give issuer+subject"`
+	Issuer     string `json:"issuer,omitempty" jsonschema:"identity issuer (alternative to identity_id)"`
+	Subject    string `json:"subject,omitempty" jsonschema:"identity subject (alternative to identity_id)"`
+}
+
+type removeUserFromGroupArgs struct {
+	UserID  string `json:"user_id" jsonschema:"the bundled-IdP user id"`
+	GroupID string `json:"group_id" jsonschema:"the bundled-IdP group id (from admin_list_groups)"`
+}
+
+type setSecurityContextArgs struct {
+	Slug         string `json:"slug" jsonschema:"workspace slug"`
+	RuntimeClass string `json:"runtime_class" jsonschema:"isolation tier: runc | runsc (gVisor, regulated)"`
+}
+
+type unfederateDirectoryArgs struct {
+	Name string `json:"name" jsonschema:"the federation source name/label to remove (from the original admin_federate_directory)"`
+}
+
+type pruneAuditArgs struct {
+	ThroughSeq int64 `json:"through_seq" jsonschema:"prune (permanently remove) audit events with sequence number ≤ this; find it via admin_query_audit"`
+}
+
+type restoreBackupArgs struct {
+	Name string `json:"name" jsonschema:"the backup archive name to restore from (from admin_list_backups)"`
+}
+
 // registerAdminTools registers the admin:it tool family. Called from
 // registerTools.
 func (s *Server) registerAdminTools() {
@@ -172,6 +249,80 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_reject_request",
 		Description: "IT only: reject a pending sensitive admin action without executing it.",
 	}, s.adminRejectRequest)
+
+	// Lifecycle / management surface (the UPDATE + DELETE half): post-create
+	// edits, offboarding kill switches, the audit read surface, and release
+	// history. All it_admin, all audited.
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_update_beamhall",
+		Description: "IT only: change an existing workspace's quota (max_beams / max_live_slots / max_databases), lifecycle status, or metadata (display_name / department). status=suspended FREEZES the workspace (the policy engine then denies every action in it — deploys, agent calls, everything); status=archived decommissions it; status=active reactivates. Only the fields you pass change. Quota/live-slot limits are IT-owned and cannot be raised by builders — this is the path to resize a workspace after creation.",
+	}, s.adminUpdateBeamhall)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_revoke_membership",
+		Description: "IT only: remove an identity's access (membership) to a workspace — offboarding. Identify the user by identity_id (from admin_list_identities / admin_show_beamhall) or by issuer+subject. The grant counterpart is admin_grant_membership.",
+	}, s.adminRevokeMembership)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_identity_status",
+		Description: "IT only: enable or disable a registered identity appliance-wide — the per-principal kill switch. status=disabled keeps the identity's row and audit history but makes EVERY authorization fail (the user can sign in to the IdP but Beamhall refuses them); status=active restores access. Use admin_set_user_enabled to also disable the underlying IdP account.",
+	}, s.adminSetIdentityStatus)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_list_releases",
+		Description: "IT only: list a beam's PRODUCTION (live) release history, newest first, as a clean v1,v2,… sequence with the release version to pass to rollback's to_version. Use it to pick a rollback target.",
+	}, s.adminListReleases)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_query_audit",
+		Description: "IT only: read the hash-chained audit log — every authorization decision (allow/deny), who, what action, on which workspace/beam, and why. Appliance-wide, or scope to one workspace with `beamhall`. Paginate with after_seq (pass the next_after_seq from the previous page); limit defaults to 100 (max 1000). This is the regulated audit trail, now readable over MCP.",
+	}, s.adminQueryAudit)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_verify_audit_chain",
+		Description: "IT only: verify the tamper-evidence of the audit log — walk the hash chain and report whether it is intact or list any integrity violations (seq gaps, broken hash links). Use it to demonstrate the log has not been altered.",
+	}, s.adminVerifyAuditChain)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_user_enabled",
+		Description: "IT only: enable or disable a bundled-IdP account — offboarding (or re-activating) a user WITHOUT deleting the account (its history/linkage is kept). A disabled account cannot authenticate at all. Only available when Beamhall runs its bundled IdP.",
+	}, s.adminSetUserEnabled)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_membership_role",
+		Description: "IT only: change a member's role in a workspace in place (e.g. promote viewer→builder). Identify the member by identity_id (from admin_list_identities / admin_show_beamhall) or issuer+subject. Roles: builder | beamhall_admin | viewer.",
+	}, s.adminSetMembershipRole)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_deregister_identity",
+		Description: "IT only: remove a registered identity entirely (cleanup of an offboarded principal — the admin_register_identity inverse). Refuses while the identity still has any workspace membership — revoke those first (admin_revoke_membership). Identify by identity_id (from admin_list_identities) or issuer+subject. Audit history referencing the identity is preserved.",
+	}, s.adminDeregisterIdentity)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_remove_user_from_group",
+		Description: "IT only: remove a bundled-IdP user from a group (the admin_add_user_to_group inverse). Only available when Beamhall runs its bundled IdP.",
+	}, s.adminRemoveUserFromGroup)
+
+	// SENSITIVE management actions — four-eyes (a DIFFERENT IT operator approves
+	// via admin_approve_request). They mutate isolation posture, sign-in, or
+	// tamper-evidence, so they're never executed by the requester.
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_security_context",
+		Description: "IT only, SENSITIVE (four-eyes): change a workspace's runtime isolation class (runc ↔ runsc/gVisor). This alters the hardening posture and can weaken the regulated gVisor tier, so it does NOT apply immediately — it files a request a DIFFERENT IT operator must approve with admin_approve_request. Applies to NEW deploys. Requires the sensitive tier (BEAMHALL_IDP_SENSITIVE_ADMIN=on).",
+	}, s.adminSetSecurityContext)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_unfederate_directory",
+		Description: "IT only, SENSITIVE (four-eyes): remove a directory (LDAP/AD) federation by name — its directory users lose access. The admin_federate_directory inverse. Files a request a DIFFERENT IT operator must approve. Requires the sensitive tier and the bundled IdP.",
+	}, s.adminUnfederateDirectory)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_prune_audit",
+		Description: "IT only, SENSITIVE (four-eyes): prune the audit log up to a sequence number (retention). It permanently removes older rows below a written checkpoint — destroying tamper-evidence — so it files a request a DIFFERENT IT operator must approve. Find the through_seq via admin_query_audit. Requires the sensitive tier.",
+	}, s.adminPruneAudit)
+
+	// Appliance backup/restore.
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_backup_now",
+		Description: "IT only: take an appliance backup now — an online snapshot of the control-plane DB plus the sealed secret root key and the managed git repos, written to the backup directory. Returns the archive name + manifest. Use admin_list_backups to see them.",
+	}, s.adminBackupNow)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_list_backups",
+		Description: "IT only: list the appliance backups (newest first) with each archive's creation time, size, contents, and integrity-verification status.",
+	}, s.adminListBackups)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_restore_backup",
+		Description: "IT only, SENSITIVE (four-eyes): restore the appliance from a named backup (overwrites the WHOLE control plane). It is never applied live — it files a request a DIFFERENT IT operator must approve; on approval the backup is verified and you get the exact stop→restore→start command to run on the host (restore is a stop-the-world operation). Requires the sensitive tier. Use admin_list_backups for the name.",
+	}, s.adminRestoreBackup)
 }
 
 func (s *Server) adminRegisterIdentity(ctx context.Context, req *sdkmcp.CallToolRequest, args registerIdentityArgs) (*sdkmcp.CallToolResult, any, error) {
@@ -288,8 +439,16 @@ func (s *Server) adminShowBeamhall(ctx context.Context, req *sdkmcp.CallToolRequ
 	fmt.Fprintf(&b, "  beams (%d):\n", len(v.Beams))
 	beams := make([]map[string]string, 0, len(v.Beams))
 	for _, bm := range v.Beams {
-		fmt.Fprintf(&b, "    - %s  state=%s  mode=%s  live=%s\n", bm.Slug, bm.State, bm.Mode, bm.LiveState)
-		beams = append(beams, map[string]string{"slug": bm.Slug, "state": bm.State, "mode": bm.Mode, "live_state": bm.LiveState})
+		line := fmt.Sprintf("    - %s  state=%s  mode=%s  live=%s", bm.Slug, bm.State, bm.Mode, bm.LiveState)
+		if bm.PreviewURL != "" {
+			line += "  preview=" + bm.PreviewURL
+		}
+		if bm.LiveURL != "" {
+			line += "  live_url=" + bm.LiveURL
+		}
+		fmt.Fprintln(&b, line)
+		beams = append(beams, map[string]string{"slug": bm.Slug, "state": bm.State, "mode": bm.Mode,
+			"live_state": bm.LiveState, "preview_url": bm.PreviewURL, "live_url": bm.LiveURL})
 	}
 	return text(b.String()), map[string]any{
 		"slug": v.Slug, "status": string(v.Status), "egress_mode": string(v.NetworkPolicy.EgressMode),
@@ -522,6 +681,375 @@ func (s *Server) adminRejectRequest(ctx context.Context, req *sdkmcp.CallToolReq
 		return nil, nil, err
 	}
 	return text(fmt.Sprintf("request %s rejected.", args.RequestID)), nil, nil
+}
+
+func (s *Server) adminSetMembershipRole(ctx context.Context, req *sdkmcp.CallToolRequest, args setMembershipRoleArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	role, err := parseRole(args.Role)
+	if err != nil {
+		return nil, nil, err
+	}
+	identID, err := s.resolveIdentityRef(ctx, args.IdentityID, args.Issuer, args.Subject)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.SetMembershipRole(ctx, actor, identID, bh.ID, role); err != nil {
+		return nil, nil, err
+	}
+	return text(fmt.Sprintf("member %s in beamhall %q now has role %q.", identID, bh.Slug, role)),
+		map[string]string{"identity_id": string(identID), "beamhall": bh.Slug, "role": string(role)}, nil
+}
+
+func (s *Server) adminDeregisterIdentity(ctx context.Context, req *sdkmcp.CallToolRequest, args deregisterIdentityArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	identID, err := s.resolveIdentityRef(ctx, args.IdentityID, args.Issuer, args.Subject)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.DeregisterIdentity(ctx, actor, identID); err != nil {
+		return nil, nil, err
+	}
+	return text(fmt.Sprintf("identity %s deregistered.", identID)),
+		map[string]string{"identity_id": string(identID)}, nil
+}
+
+func (s *Server) adminRemoveUserFromGroup(ctx context.Context, req *sdkmcp.CallToolRequest, args removeUserFromGroupArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.AdminRemoveUserFromGroup(ctx, actor, args.UserID, args.GroupID); err != nil {
+		return nil, nil, idpErr(err)
+	}
+	return text(fmt.Sprintf("user %s removed from group %s.", args.UserID, args.GroupID)), nil, nil
+}
+
+// sensitiveRequestReply renders the four-eyes "request filed, a different
+// operator must approve" response shared by the sensitive management tools.
+func sensitiveRequestReply(ar domain.AdminActionRequest) *sdkmcp.CallToolResult {
+	return text(fmt.Sprintf("%s — SENSITIVE, so it does NOT take effect yet (request %s). A DIFFERENT IT operator must run admin_approve_request %s (the requester cannot approve their own). Review the queue with admin_list_pending_requests.",
+		ar.Summary, ar.ID, ar.ID))
+}
+
+func (s *Server) adminSetSecurityContext(ctx context.Context, req *sdkmcp.CallToolRequest, args setSecurityContextArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	var rc domain.RuntimeClass
+	switch strings.ToLower(args.RuntimeClass) {
+	case "runc":
+		rc = domain.RuntimeRunc
+	case "runsc", "gvisor":
+		rc = domain.RuntimeRunsc
+	default:
+		return nil, nil, fmt.Errorf("runtime_class must be runc or runsc, got %q", args.RuntimeClass)
+	}
+	ar, err := s.bp.RequestSetSecurityContext(ctx, actor, args.Slug, rc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sensitiveRequestReply(ar), map[string]string{"request_id": string(ar.ID)}, nil
+}
+
+func (s *Server) adminUnfederateDirectory(ctx context.Context, req *sdkmcp.CallToolRequest, args unfederateDirectoryArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	ar, err := s.bp.RequestUnfederateDirectory(ctx, actor, args.Name)
+	if err != nil {
+		return nil, nil, idpErr(err)
+	}
+	return sensitiveRequestReply(ar), map[string]string{"request_id": string(ar.ID)}, nil
+}
+
+func (s *Server) adminPruneAudit(ctx context.Context, req *sdkmcp.CallToolRequest, args pruneAuditArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	ar, err := s.bp.RequestPruneAudit(ctx, actor, args.ThroughSeq)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sensitiveRequestReply(ar), map[string]string{"request_id": string(ar.ID)}, nil
+}
+
+func (s *Server) adminBackupNow(ctx context.Context, req *sdkmcp.CallToolRequest, args struct{}) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := s.bp.AdminBackupNow(ctx, actor, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
+	return text(fmt.Sprintf("backup written: %s (%d bytes, created %s; secret key + repos included). Verified intact. List with admin_list_backups.",
+			info.Name, info.SizeBytes, info.CreatedAt)),
+		map[string]any{"name": info.Name, "size_bytes": info.SizeBytes, "created_at": info.CreatedAt,
+			"has_secret_key": info.HasKey, "has_repos": info.HasRepos, "valid": info.Valid}, nil
+}
+
+func (s *Server) adminListBackups(ctx context.Context, req *sdkmcp.CallToolRequest, args struct{}) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	backups, err := s.bp.AdminListBackups(ctx, actor)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(backups) == 0 {
+		return text("no backups yet — take one with admin_backup_now."), map[string]any{"backups": []any{}}, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d backup(s) (newest first):\n", len(backups))
+	out := make([]map[string]any, 0, len(backups))
+	for _, bk := range backups {
+		status := "verified"
+		if !bk.Valid {
+			status = "INVALID: " + bk.Error
+		}
+		fmt.Fprintf(&b, "  - %s  created=%s  %d bytes  [%s]\n", bk.Name, bk.CreatedAt, bk.SizeBytes, status)
+		out = append(out, map[string]any{"name": bk.Name, "created_at": bk.CreatedAt, "size_bytes": bk.SizeBytes,
+			"valid": bk.Valid, "error": bk.Error, "has_secret_key": bk.HasKey, "has_repos": bk.HasRepos})
+	}
+	return text(b.String()), map[string]any{"backups": out}, nil
+}
+
+func (s *Server) adminRestoreBackup(ctx context.Context, req *sdkmcp.CallToolRequest, args restoreBackupArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	ar, err := s.bp.RequestRestoreBackup(ctx, actor, args.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sensitiveRequestReply(ar), map[string]string{"request_id": string(ar.ID)}, nil
+}
+
+// resolveIdentityRef resolves an identity by explicit id, or by issuer+subject
+// (the identity must already be registered). Shared by the revoke/disable tools.
+func (s *Server) resolveIdentityRef(ctx context.Context, identityID, issuer, subject string) (domain.ID, error) {
+	if identityID != "" {
+		return domain.ID(identityID), nil
+	}
+	if issuer == "" || subject == "" {
+		return "", fmt.Errorf("give identity_id, or both issuer and subject")
+	}
+	ident, err := s.dir.GetIdentityByIssuerSubject(ctx, issuer, subject)
+	if err != nil {
+		return "", fmt.Errorf("no registered identity for that issuer+subject")
+	}
+	return ident.ID, nil
+}
+
+func (s *Server) adminUpdateBeamhall(ctx context.Context, req *sdkmcp.CallToolRequest, args updateBeamhallArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	upd := orch.BeamhallUpdate{MaxBeams: args.MaxBeams, MaxLiveSlots: args.MaxLiveSlots, MaxDatabases: args.MaxDatabases}
+	if args.Status != "" {
+		st := domain.BeamhallStatus(args.Status)
+		upd.Status = &st
+	}
+	if args.DisplayName != "" {
+		dn := args.DisplayName
+		upd.DisplayName = &dn
+	}
+	if args.Department != "" {
+		dep := args.Department
+		upd.Department = &dep
+	}
+	if upd.MaxBeams == nil && upd.MaxLiveSlots == nil && upd.MaxDatabases == nil &&
+		upd.Status == nil && upd.DisplayName == nil && upd.Department == nil {
+		return nil, nil, fmt.Errorf("nothing to update: set at least one of max_beams, max_live_slots, max_databases, status, display_name, department")
+	}
+	bh, err := s.bp.AdminUpdateBeamhall(ctx, actor, args.Slug, upd)
+	if err != nil {
+		return nil, nil, err
+	}
+	return text(fmt.Sprintf("beamhall %q updated: status=%s, quota %d beams / %d live slots / %d databases.",
+			bh.Slug, bh.Status, bh.Quota.MaxBeams, bh.LiveSlotLimit, bh.Quota.MaxDBCount)),
+		map[string]any{"slug": bh.Slug, "status": string(bh.Status),
+			"max_beams": bh.Quota.MaxBeams, "max_live_slots": bh.LiveSlotLimit, "max_databases": bh.Quota.MaxDBCount}, nil
+}
+
+func (s *Server) adminRevokeMembership(ctx context.Context, req *sdkmcp.CallToolRequest, args revokeMembershipArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	identID, err := s.resolveIdentityRef(ctx, args.IdentityID, args.Issuer, args.Subject)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.RevokeMembership(ctx, actor, identID, bh.ID); err != nil {
+		return nil, nil, err
+	}
+	return text(fmt.Sprintf("revoked %s access to beamhall %q.", identID, bh.Slug)),
+		map[string]string{"identity_id": string(identID), "beamhall": bh.Slug}, nil
+}
+
+func (s *Server) adminSetIdentityStatus(ctx context.Context, req *sdkmcp.CallToolRequest, args setIdentityStatusArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	identID, err := s.resolveIdentityRef(ctx, args.IdentityID, args.Issuer, args.Subject)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.SetIdentityStatus(ctx, actor, identID, args.Status); err != nil {
+		return nil, nil, err
+	}
+	verb := "disabled (all authorization now fails)"
+	if args.Status == domain.IdentityActive {
+		verb = "re-enabled"
+	}
+	return text(fmt.Sprintf("identity %s %s.", identID, verb)),
+		map[string]string{"identity_id": string(identID), "status": args.Status}, nil
+}
+
+func (s *Server) adminListReleases(ctx context.Context, req *sdkmcp.CallToolRequest, args listReleasesArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	rels, err := s.bp.AdminListReleases(ctx, actor, beam.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(rels) == 0 {
+		return text(fmt.Sprintf("beam %q has no production (live) releases yet — promote_to_live creates the first.", beam.Slug)),
+			map[string]any{"releases": []any{}}, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d production release(s) for beam %q (newest first):\n", len(rels), beam.Slug)
+	out := make([]map[string]any, 0, len(rels))
+	for _, r := range rels {
+		cur := ""
+		if r.Current {
+			cur = "  <- current"
+		}
+		fmt.Fprintf(&b, "  - %s  release_id=%s  to_version=%d%s\n", r.Label, r.ReleaseID, r.Version, cur)
+		out = append(out, map[string]any{"label": r.Label, "release_id": r.ReleaseID, "to_version": r.Version, "current": r.Current})
+	}
+	b.WriteString("Roll back with the rollback tool (to_version = the number above).")
+	return text(b.String()), map[string]any{"releases": out}, nil
+}
+
+func (s *Server) adminQueryAudit(ctx context.Context, req *sdkmcp.CallToolRequest, args queryAuditArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	entries, err := s.bp.AdminQueryAudit(ctx, actor, args.Beamhall, args.AfterSeq, args.Limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(entries) == 0 {
+		return text("no audit events match."), map[string]any{"events": []any{}}, nil
+	}
+	var b strings.Builder
+	scope := "appliance-wide"
+	if args.Beamhall != "" {
+		scope = "beamhall " + args.Beamhall
+	}
+	fmt.Fprintf(&b, "%d audit event(s) (%s):\n", len(entries), scope)
+	out := make([]map[string]any, 0, len(entries))
+	var maxSeq int64
+	for _, e := range entries {
+		if e.Seq > maxSeq {
+			maxSeq = e.Seq
+		}
+		fmt.Fprintf(&b, "  #%d  %s  %s  %s  actor=%s", e.Seq, e.At.UTC().Format(time.RFC3339), e.Decision, e.Action, e.Actor)
+		if e.Beamhall != "" {
+			fmt.Fprintf(&b, "  beamhall=%s", e.Beamhall)
+		}
+		if e.ResultStatus != "" {
+			fmt.Fprintf(&b, "  result=%s", e.ResultStatus)
+		}
+		if e.Reason != "" {
+			fmt.Fprintf(&b, "  reason=%s", e.Reason)
+		}
+		b.WriteByte('\n')
+		out = append(out, map[string]any{
+			"seq": e.Seq, "at": e.At.UTC().Format(time.RFC3339), "action": e.Action,
+			"decision": e.Decision, "actor": e.Actor, "beamhall": e.Beamhall, "beam": e.Beam,
+			"result": e.ResultStatus, "reason": e.Reason, "source_ip": e.SourceIP,
+		})
+	}
+	fmt.Fprintf(&b, "(next_after_seq=%d to page forward)", maxSeq)
+	return text(b.String()), map[string]any{"events": out, "next_after_seq": maxSeq}, nil
+}
+
+func (s *Server) adminVerifyAuditChain(ctx context.Context, req *sdkmcp.CallToolRequest, args struct{}) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	st, err := s.bp.AdminVerifyAuditChain(ctx, actor)
+	if err != nil {
+		return nil, nil, err
+	}
+	var b strings.Builder
+	if st.Intact {
+		b.WriteString("audit chain VERIFIED — intact, no tampering detected.")
+	} else {
+		fmt.Fprintf(&b, "audit chain INTEGRITY VIOLATION — %d issue(s):\n", len(st.Issues))
+		for _, is := range st.Issues {
+			fmt.Fprintf(&b, "  - %s\n", is)
+		}
+	}
+	res := map[string]any{"intact": st.Intact, "issues": st.Issues}
+	if st.Checkpoint != nil {
+		fmt.Fprintf(&b, "\n(retention checkpoint: %d event(s) pruned through seq %d on %s; verification resumes from there)",
+			st.Checkpoint.PrunedCount, st.Checkpoint.ThroughSeq, st.Checkpoint.At.UTC().Format(time.RFC3339))
+		res["checkpoint"] = map[string]any{"through_seq": st.Checkpoint.ThroughSeq, "pruned_count": st.Checkpoint.PrunedCount}
+	}
+	return text(b.String()), res, nil
+}
+
+func (s *Server) adminSetUserEnabled(ctx context.Context, req *sdkmcp.CallToolRequest, args setUserEnabledArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.AdminSetUserEnabled(ctx, actor, args.UserID, args.Enabled); err != nil {
+		return nil, nil, idpErr(err)
+	}
+	state := "disabled"
+	if args.Enabled {
+		state = "enabled"
+	}
+	return text(fmt.Sprintf("bundled-IdP user %s %s.", args.UserID, state)),
+		map[string]any{"user_id": args.UserID, "enabled": args.Enabled}, nil
 }
 
 // parseRole maps the agent-facing role string to a MembershipRole.

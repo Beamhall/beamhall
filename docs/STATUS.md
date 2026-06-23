@@ -396,7 +396,7 @@ internal/build/       source→image pipeline: managed go-git repos + pack (buil
 internal/resource/    managed-resource provisioners (Postgres: scoped role + db per beam)
 internal/auth/        OAuth resource server: JWKS/iss/aud/exp/scope validation, Origin check
 internal/identityadmin/ owned-IdP administration seam (3rd stable seam): Provider iface + Keycloak Admin-REST impl + Disabled (BYO-IdP)
-internal/mcp/         agent-facing MCP server (official go-sdk, Streamable HTTP): tools (incl. admin_* family), progress, tarball transport
+internal/mcp/         agent-facing MCP server (official go-sdk, Streamable HTTP): tools (incl. admin_* family), per-caller tools/list filtering (visibility.go), progress, tarball transport
 internal/diagnose/    failure-signature catalog: infra denials → agent-actionable hints (build/run/exit)
 internal/web/         IT Admin console (/admin): OIDC login + session, views + audited IT actions
 internal/gitserver/   git smart-HTTP push transport (/git): receive-pack + one-time deploy tokens → build+deploy
@@ -661,6 +661,41 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
   the owned-IdP ops `admin_create_user`/`admin_list_users`/`admin_set_user_password`/
   `admin_create_group`/`admin_list_groups`/`admin_add_user_to_group`/
   `admin_federate_directory`.
+  - **MCP-first management surface (0.1.9+mcpadmin)** — closes the UPDATE/DELETE half
+    so an MCP-only IT operator has full parity with (and beyond) the demoted web
+    console. New tools (all it_admin, audited, live-verified on the appliance):
+    `admin_query_audit` + `admin_verify_audit_chain` (read+verify the regulated
+    hash-chained audit log — previously web-console-only), `admin_update_beamhall`
+    (quota/live-slots/status suspend·archive·reactivate/metadata), `admin_revoke_membership`,
+    `admin_set_identity_status` (per-principal kill switch; PEP-enforced),
+    `admin_set_user_enabled` (bundled-IdP offboarding; new `Provider.SetUserEnabled`
+    seam method), `admin_list_releases` (rollback targets). `admin_show_beamhall` now
+    includes per-beam channel URLs.
+  - **Routine lifecycle + sensitive tier + backup (0.1.9+mcpadmin, batches A/B)** —
+    routine: `admin_set_membership_role` (in-place role change), `admin_remove_user_from_group`.
+    sensitive (four-eyes, reuse the `admin_action_requests` flow + new `AdminActionType`s):
+    `admin_set_security_context` (runtime-class runc↔runsc), `admin_unfederate_directory`,
+    `admin_prune_audit`. backup: `admin_backup_now` + `admin_list_backups` (routine,
+    online `VACUUM INTO` snapshot — **live-verified** on the appliance), `admin_restore_backup`
+    (four-eyes; verifies + returns the operator stop→restore→start runbook, never a live
+    in-process overwrite). New seam methods `Provider.RemoveUserFromGroup`/`UnfederateDirectory`;
+    new `WithBackup` orch option + `BEAMHALL_BACKUP_DIR` config. Sensitive-tier gate reuses
+    `BEAMHALL_IDP_SENSITIVE_ADMIN` as the general four-eyes master switch. See
+    `docs/admin-over-mcp.md`. Still deferred: IdP user/group hard-delete, self-upgrade.
+  - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
+    `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
+    `s.srv` returns only the tools a caller's token could invoke (builder surface vs
+    full `admin_*` menu), plus appliance-state gates (bundled-IdP tools hidden on
+    BYO-IdP; the four-eyes sensitive tools hidden until the sensitive tier is on;
+    backup tools hidden unless a backup dir is configured). The
+    token rides on `req.Extra` (Streamable HTTP attaches it to every request, incl.
+    `tools/list`), so the same `TokenInfo` `resolveActor` reads is available at list
+    time. **Discovery only** — handlers still enforce via `resolveActor` (filtering
+    never widens access). Updates ride `tools/list_changed` (Claude Code re-lists on
+    notify/reconnect — verified live: a redeploy added the 7 new tools and dropped
+    `admin_federate_directory` from the menu because the sensitive tier is off). CI
+    drift test (`TestToolVisibilityTableMatchesRegistry`) fails if a new tool is left
+    unclassified. go-sdk v1.6.1; no fork.
   - **The third stable seam** is `identityadmin.Provider` (mirrors `RuntimeDriver`):
     a Keycloak Admin-REST impl drives the **bundled** IdP; a `Disabled` impl is used
     for **bring-your-own-IdP** (Beamhall validates the customer's tokens but does NOT
@@ -760,9 +795,12 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
   (`BEAMHALL_OAUTH_ADMIN_ROLE`); bundled realm ships a public `beamhall-admin-agent`
   client so `claude mcp add --client-id beamhall-admin-agent` works via plain
   browser OAuth, gated by a role a builder can't hold. Lab-verified + unit-tested.
-- **No quota-edit surface (NEW):** quota is set only at `create_beamhall` (baked
-  into the immutable SecurityContext); there's no `admin_set_quota`. Add one, or
-  keep quota create-only? (Pilot patched a pre-fix workspace's quota in the store.)
+- ~~**No quota-edit surface**~~ **RESOLVED (0.1.9+mcpadmin):** `admin_update_beamhall`
+  edits an existing workspace's quota (`max_beams`/`max_live_slots`/`max_databases`),
+  lifecycle status (`active`/`suspended`/`archived`), and metadata over MCP — wraps
+  `store.UpdateBeamhall`, it_admin-gated + audited. (Security-context/runtime-class
+  edits stay deferred — they weaken isolation posture, so they want a four-eyes
+  design before exposure; see PLAN §10.)
 - Y (preview auto-pause hours) default; per-Beamhall vs global.
 - IdP for the first pilot: bundled Keycloak vs customer Okta/Entra day one.
   (Partly resolved: the bundled IdP is now **persistent** + administrable over MCP,

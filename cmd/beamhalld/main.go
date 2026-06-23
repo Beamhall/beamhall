@@ -319,10 +319,21 @@ func run() error {
 	pep := policy.New(st, auditLog)
 	egressSync := egressSyncFunc(cfg, st, drv, logger)
 	repos := build.NewRepos(filepath.Join(cfg.DataDir, "repos")) // shared with the git server
+	// Backup config for the admin backup tools: the key path mirrors the boot
+	// key resolution; backups land in <DataDir>/backups unless overridden.
+	backupKeyPath := cfg.SecretKeyFile
+	if backupKeyPath == "" {
+		backupKeyPath = filepath.Join(cfg.DataDir, "secret.key")
+	}
+	backupDir := cfg.BackupDir
+	if backupDir == "" {
+		backupDir = filepath.Join(cfg.DataDir, "backups")
+	}
 	opts := []orch.Option{
 		orch.WithLogger(logger),
 		orch.WithEgressSync(egressSync),
 		orch.WithPromoteApproval(cfg.PromoteApproval),
+		orch.WithBackup(cfg.DataDir, backupKeyPath, backupDir),
 		orch.WithBuilder(&build.Pipeline{
 			Repos: repos,
 			Packer: &build.Packer{

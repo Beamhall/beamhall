@@ -210,12 +210,15 @@ type MemberView struct {
 	Role       string
 }
 
-// BeamView is a beam's high-level state for the admin read model.
+// BeamView is a beam's high-level state for the admin read model, including its
+// active channel URLs (empty when a channel has no active route).
 type BeamView struct {
-	Slug      string
-	State     string
-	Mode      string
-	LiveState string
+	Slug       string
+	State      string
+	Mode       string
+	LiveState  string
+	PreviewURL string
+	LiveURL    string
 }
 
 // AdminListBeamhalls returns every workspace on the appliance (IT-wide, not
@@ -253,7 +256,9 @@ func (o *Orchestrator) AdminBeamhallView(ctx context.Context, actor Actor, slug 
 		return nil, err
 	}
 	for _, b := range beams {
-		v.Beams = append(v.Beams, BeamView{Slug: b.Slug, State: string(b.State), Mode: string(b.Mode), LiveState: string(b.LiveState)})
+		preview, live := o.channelURLs(ctx, b.ID)
+		v.Beams = append(v.Beams, BeamView{Slug: b.Slug, State: string(b.State), Mode: string(b.Mode),
+			LiveState: string(b.LiveState), PreviewURL: preview, LiveURL: live})
 	}
 	return v, nil
 }

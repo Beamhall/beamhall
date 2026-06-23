@@ -300,7 +300,11 @@ const (
 type AdminActionType string
 
 const (
-	AdminActionFederateDirectory AdminActionType = "federate_directory"
+	AdminActionFederateDirectory   AdminActionType = "federate_directory"
+	AdminActionUnfederateDirectory AdminActionType = "unfederate_directory"
+	AdminActionSetSecurityContext  AdminActionType = "set_security_context"
+	AdminActionPruneAudit          AdminActionType = "prune_audit"
+	AdminActionRestoreBackup       AdminActionType = "restore_backup"
 )
 
 // AdminActionRequest records a SENSITIVE admin action awaiting a second IT

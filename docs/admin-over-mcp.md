@@ -68,8 +68,39 @@ For many users a week, drive these from the agent in a loop, or use the
 | `admin_list_users` | routine (read) | search bundled-IdP accounts |
 | `admin_set_user_password` | routine | set a temporary password (change-at-next-login) |
 | `admin_create_group` / `admin_list_groups` | routine | organize bundled-IdP users |
-| `admin_add_user_to_group` | routine | add a user to a group |
-| `admin_federate_directory` | **sensitive** | connect the bundled IdP to LDAP/Active Directory |
+| `admin_add_user_to_group` / `admin_remove_user_from_group` | routine | manage group membership in the bundled IdP |
+| `admin_set_user_enabled` | routine | enable/disable a bundled-IdP account (offboarding without deletion) |
+| `admin_federate_directory` / `admin_unfederate_directory` | **sensitive** | connect/disconnect the bundled IdP to/from LDAP/Active Directory |
+
+### Workspace + membership lifecycle (read/update/offboard)
+
+| Tool | Tier | Effect |
+|---|---|---|
+| `admin_list_beamhalls` | routine (read) | list every workspace appliance-wide (not membership-scoped) |
+| `admin_show_beamhall` | routine (read) | one workspace in detail: egress, quota, members+roles, beams (+channel URLs) |
+| `admin_update_beamhall` | routine (loud) | change quota (`max_beams`/`max_live_slots`/`max_databases`), **status** (`active`/`suspended`/`archived`), or metadata. `suspended` freezes the workspace — the PEP then **denies every action in it**; `archived` decommissions it |
+| `admin_revoke_membership` | routine | remove an identity's access to a workspace (the `admin_grant_membership` inverse) |
+| `admin_set_membership_role` | routine | change a member's role in place (e.g. `viewer`→`builder`) |
+| `admin_set_identity_status` | routine | `disabled` = per-principal kill switch (the identity keeps its row + audit history but **every** authorization fails); `active` restores it |
+| `admin_set_egress` | routine | set a workspace's egress policy (`deny_all`/`allowlist`) |
+| `admin_set_security_context` | **sensitive** | change a workspace's runtime isolation class (`runc`↔`runsc`) — alters the hardening posture, four-eyes |
+| `admin_list_releases` | routine (read) | a beam's production-release history (`v1,v2,…`) — the `to_version` targets for `rollback` |
+
+### Audit (the regulated trail, now MCP-readable)
+
+| Tool | Tier | Effect |
+|---|---|---|
+| `admin_query_audit` | routine (read) | read the hash-chained audit log — every allow/deny decision (who/what/where/why), appliance-wide or `beamhall`-scoped, paginated via `after_seq` |
+| `admin_verify_audit_chain` | routine (read) | walk the hash chain and report intact / list integrity violations (tamper-evidence) |
+| `admin_prune_audit` | **sensitive** | prune the log to a retention checkpoint (destroys tamper-evidence below it), four-eyes |
+
+### Backup / restore
+
+| Tool | Tier | Effect |
+|---|---|---|
+| `admin_backup_now` | routine | write an online snapshot (control-plane DB + sealed secret key + git repos) to the backup directory |
+| `admin_list_backups` | routine (read) | list backups (newest first) with size, contents, and integrity-verification status |
+| `admin_restore_backup` | **sensitive** | restore from a named backup (overwrites the whole control plane). Four-eyes; never applied live — on approval the archive is verified and you get the exact stop→restore→start command (restore is a stop-the-world operation) |
 
 The owned-IdP tools require Beamhall to be running its **bundled** IdP. On a
 bring-your-own-IdP deployment they return a clear notice telling you to manage
@@ -93,12 +124,15 @@ IdP later wouldn't change the tools.
 
 - **Routine** ops (onboarding: users, passwords, groups, identities, memberships)
   run autonomously and are audited.
-- **Sensitive** ops change *who can sign in to the whole appliance*. Today that is
-  `admin_federate_directory`; restores and upgrades will join it. These go through
-  a **four-eyes approval flow** (below): the requesting operator never executes them;
+- **Sensitive** ops change *who can sign in*, the *isolation posture*, *tamper-evidence*,
+  or *all appliance state*: `admin_federate_directory` / `admin_unfederate_directory`,
+  `admin_set_security_context` (runtime-class), `admin_prune_audit`, and
+  `admin_restore_backup` (self-upgrade will join them). These go through a
+  **four-eyes approval flow** (below): the requesting operator never executes them;
   a *different* IT operator must approve. The master switch
   `BEAMHALL_IDP_SENSITIVE_ADMIN=on` controls whether sensitive actions can be
-  requested at all — with it off they fail closed.
+  requested at all — with it off they fail closed and stay off the tool menu.
+  (`admin_restore_backup` also needs a backup directory configured.)
 
 Why this matters: an `admin:it` agent that can create identities and grant
 memberships can *manufacture access*. `admin:it` is a master key — keep it
@@ -154,6 +188,35 @@ directory users can authenticate. They are **new** `(issuer, subject)` records
 (the issuer is still your Keycloak), so register the ones who should use Beamhall
 (`admin_register_identity`) and grant memberships — the same routine step as any
 onboarding. Retire the earlier local test accounts when ready.
+
+## The tool menu is per-caller (multi-level menu)
+
+`tools/list` is filtered per caller, so an agent only ever sees the tools its
+token could actually invoke — the same gate the handler enforces, applied at
+discovery time. This keeps a builder agent's context free of the ~25 `admin_*`
+tools it can't use, and shows an IT operator the full admin menu. The cut is two
+cheap, fail-closed axes (no extra DB read):
+
+- **Privilege tier** — a builder token (capability scopes, no `admin:it`) sees
+  only the builder surface; an `admin:it` token (scope **or** the `beamhall-it`
+  realm role) additionally sees the `admin_*` family. Mirrors `resolveActor`
+  exactly: a tool is shown **iff** the caller would pass its scope/role check.
+- **Appliance state** — bundled-IdP tools are hidden on a bring-your-own-IdP
+  deployment; the four-eyes sensitive tools are hidden until the sensitive tier is
+  enabled; the backup tools are hidden unless a backup directory is configured. (No
+  point offering a tool that can only answer "not enabled.") This was observed live:
+  redeploying with the sensitive tier off kept `admin_set_security_context` /
+  `admin_unfederate_directory` / `admin_prune_audit` / `admin_restore_backup` off the
+  menu, while the routine tools and the configured-backup tools appeared.
+
+This is **discovery, not authorization** — every handler still calls
+`resolveActor`, so a hidden tool invoked directly is still refused. When the
+appliance state changes (e.g. enabling the sensitive tier, or a future build
+adding tools), the server emits a `tools/list_changed` and connected agents
+re-list, picking up their newly-correct menu without reconnecting. Source:
+`internal/mcp/visibility.go`; a CI drift test
+(`TestToolVisibilityTableMatchesRegistry`) fails if a new tool is left
+unclassified.
 
 ## Persistence
 

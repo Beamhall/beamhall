@@ -91,6 +91,12 @@ type Orchestrator struct {
 	// federation); off by default, those ops fail closed (human-in-the-loop).
 	idp          identityadmin.Provider
 	idpSensitive bool
+
+	// Backup config (WithBackup): the data dir + key to archive and where
+	// admin_backup_now writes. Empty backupDir = backups disabled.
+	backupDataDir string
+	backupKeyPath string
+	backupDir     string
 }
 
 // startupPolls divides the startup grace into status checks.
@@ -170,9 +176,27 @@ func WithIdentityAdmin(p identityadmin.Provider, sensitive bool) Option {
 	}
 }
 
+// WithBackup enables the admin backup tools: dataDir is the appliance data
+// directory to snapshot, keyPath the secret root key to embed (its real
+// out-of-band location), backupDir where archives are written and listed. With
+// no backupDir the backup tools report unconfigured and stay off the menu.
+func WithBackup(dataDir, keyPath, backupDir string) Option {
+	return func(o *Orchestrator) {
+		o.backupDataDir = dataDir
+		o.backupKeyPath = keyPath
+		o.backupDir = backupDir
+	}
+}
+
 // IdentityAdminEnabled reports whether this appliance administers its IdP (the
 // bundled Keycloak) — false for a bring-your-own-IdP deployment.
 func (o *Orchestrator) IdentityAdminEnabled() bool { return o.idp.Enabled() }
+
+// SensitiveAdminEnabled reports whether the SENSITIVE auth-config tier (the
+// four-eyes directory-federation request flow) is unlocked. Off by default;
+// the MCP layer uses it to keep the federate tool off the menu when the tier
+// is fail-closed, so an agent isn't offered an action it can't file.
+func (o *Orchestrator) SensitiveAdminEnabled() bool { return o.idpSensitive }
 
 // New assembles the orchestrator. baseDomain anchors preview and live
 // hostnames (PLAN §5.6).

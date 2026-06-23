@@ -45,6 +45,9 @@ type fakeBackplane struct {
 	logs            []byte
 	promoteApproval bool
 	idpEnabled      bool
+	sensitiveTier   bool
+	backupEnabled   bool
+	auditIntact     bool // AdminVerifyAuditChain reports a clean chain when true
 }
 
 func (f *fakeBackplane) record(call string, actor orch.Actor) {
@@ -212,7 +215,117 @@ func (f *fakeBackplane) SetEgress(ctx context.Context, actor orch.Actor, beamhal
 	return f.failWith
 }
 
-func (f *fakeBackplane) IdentityAdminEnabled() bool { return f.idpEnabled }
+func (f *fakeBackplane) IdentityAdminEnabled() bool  { return f.idpEnabled }
+func (f *fakeBackplane) SensitiveAdminEnabled() bool { return f.sensitiveTier }
+func (f *fakeBackplane) BackupEnabled() bool         { return f.backupEnabled }
+
+func (f *fakeBackplane) AdminBackupNow(ctx context.Context, actor orch.Actor, now time.Time) (orch.BackupInfo, error) {
+	f.record("AdminBackupNow", actor)
+	if f.failWith != nil {
+		return orch.BackupInfo{}, f.failWith
+	}
+	return orch.BackupInfo{Name: "beamhall-20260101T000000Z.tar.gz", CreatedAt: "2026-01-01T00:00:00Z",
+		SizeBytes: 4096, HasKey: true, HasRepos: true, Valid: true}, nil
+}
+
+func (f *fakeBackplane) AdminListBackups(ctx context.Context, actor orch.Actor) ([]orch.BackupInfo, error) {
+	f.record("AdminListBackups", actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return []orch.BackupInfo{
+		{Name: "beamhall-20260102T000000Z.tar.gz", CreatedAt: "2026-01-02T00:00:00Z", SizeBytes: 5000, Valid: true, HasKey: true},
+		{Name: "beamhall-20260101T000000Z.tar.gz", CreatedAt: "2026-01-01T00:00:00Z", SizeBytes: 4096, Valid: false, Error: "checksum mismatch"},
+	}, nil
+}
+
+func (f *fakeBackplane) RequestRestoreBackup(ctx context.Context, actor orch.Actor, name string) (domain.AdminActionRequest, error) {
+	f.record("RequestRestoreBackup:"+name, actor)
+	if f.failWith != nil {
+		return domain.AdminActionRequest{}, f.failWith
+	}
+	return domain.AdminActionRequest{ID: "areq-restore", ActionType: domain.AdminActionRestoreBackup,
+		Summary: "restore from " + name, RequestedBy: actor.ID, Status: domain.AdminActionPending}, nil
+}
+
+func (f *fakeBackplane) AdminUpdateBeamhall(ctx context.Context, actor orch.Actor, slug string, upd orch.BeamhallUpdate) (*domain.Beamhall, error) {
+	f.record("AdminUpdateBeamhall:"+slug, actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	bh := &domain.Beamhall{ID: "hall-1", Slug: slug, Status: domain.BeamhallActive,
+		Quota: domain.ResourceQuota{MaxBeams: 5, MaxDBCount: 2}, LiveSlotLimit: 1}
+	if upd.MaxBeams != nil {
+		bh.Quota.MaxBeams = *upd.MaxBeams
+	}
+	if upd.MaxDatabases != nil {
+		bh.Quota.MaxDBCount = *upd.MaxDatabases
+	}
+	if upd.MaxLiveSlots != nil {
+		bh.Quota.MaxLiveSlots = *upd.MaxLiveSlots
+		bh.LiveSlotLimit = *upd.MaxLiveSlots
+	}
+	if upd.Status != nil {
+		bh.Status = *upd.Status
+	}
+	return bh, nil
+}
+
+func (f *fakeBackplane) AdminListReleases(ctx context.Context, actor orch.Actor, beamID domain.ID) ([]orch.ReleaseEntry, error) {
+	f.record("AdminListReleases:"+string(beamID), actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return []orch.ReleaseEntry{
+		{Label: "v2", ReleaseID: "live-2", Version: 4, Current: true},
+		{Label: "v1", ReleaseID: "live-1", Version: 2},
+	}, nil
+}
+
+func (f *fakeBackplane) RevokeMembership(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID) error {
+	f.record(fmt.Sprintf("RevokeMembership:%s:%s", identityID, beamhallID), actor)
+	return f.failWith
+}
+
+func (f *fakeBackplane) SetIdentityStatus(ctx context.Context, actor orch.Actor, identityID domain.ID, status string) error {
+	f.record(fmt.Sprintf("SetIdentityStatus:%s:%s", identityID, status), actor)
+	return f.failWith
+}
+
+func (f *fakeBackplane) DeregisterIdentity(ctx context.Context, actor orch.Actor, identityID domain.ID) error {
+	f.record("DeregisterIdentity:"+string(identityID), actor)
+	return f.failWith
+}
+
+func (f *fakeBackplane) AdminQueryAudit(ctx context.Context, actor orch.Actor, beamhallSlug string, afterSeq int64, limit int) ([]orch.AuditEntry, error) {
+	f.record(fmt.Sprintf("AdminQueryAudit:%s:%d:%d", beamhallSlug, afterSeq, limit), actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return []orch.AuditEntry{
+		{Seq: 1, At: time.Unix(0, 0), Action: "admin_create_beamhall", Decision: "allow", Actor: "ident-1", ResultStatus: "ok"},
+		{Seq: 2, At: time.Unix(0, 0), Action: "create_beam", Decision: "deny", Actor: "ident-2", Beamhall: "hall-1", ResultStatus: "denied", Reason: "role viewer"},
+	}, nil
+}
+
+func (f *fakeBackplane) AdminVerifyAuditChain(ctx context.Context, actor orch.Actor) (orch.AuditChainStatus, error) {
+	f.record("AdminVerifyAuditChain", actor)
+	if f.failWith != nil {
+		return orch.AuditChainStatus{}, f.failWith
+	}
+	if f.auditIntact {
+		return orch.AuditChainStatus{Intact: true}, nil
+	}
+	return orch.AuditChainStatus{Intact: false, Issues: []string{"seq 5: chain break"}}, nil
+}
+
+func (f *fakeBackplane) AdminSetUserEnabled(ctx context.Context, actor orch.Actor, userID string, enabled bool) error {
+	f.record(fmt.Sprintf("AdminSetUserEnabled:%s:%v", userID, enabled), actor)
+	if !f.idpEnabled {
+		return identityadmin.ErrNotEnabled
+	}
+	return nil
+}
 
 func (f *fakeBackplane) AdminCreateUser(ctx context.Context, actor orch.Actor, u identityadmin.NewUser) (identityadmin.User, error) {
 	f.record("AdminCreateUser:"+u.Username, actor)
@@ -260,6 +373,46 @@ func (f *fakeBackplane) AdminAddUserToGroup(ctx context.Context, actor orch.Acto
 		return identityadmin.ErrNotEnabled
 	}
 	return nil
+}
+
+func (f *fakeBackplane) SetMembershipRole(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID, role domain.MembershipRole) error {
+	f.record(fmt.Sprintf("SetMembershipRole:%s:%s:%s", identityID, beamhallID, role), actor)
+	return f.failWith
+}
+
+func (f *fakeBackplane) AdminRemoveUserFromGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error {
+	f.record(fmt.Sprintf("AdminRemoveUserFromGroup:%s:%s", userID, groupID), actor)
+	if !f.idpEnabled {
+		return identityadmin.ErrNotEnabled
+	}
+	return nil
+}
+
+func (f *fakeBackplane) RequestUnfederateDirectory(ctx context.Context, actor orch.Actor, name string) (domain.AdminActionRequest, error) {
+	f.record("RequestUnfederateDirectory:"+name, actor)
+	if f.failWith != nil {
+		return domain.AdminActionRequest{}, f.failWith
+	}
+	return domain.AdminActionRequest{ID: "areq-unfed", ActionType: domain.AdminActionUnfederateDirectory,
+		Summary: "remove federation " + name, RequestedBy: actor.ID, Status: domain.AdminActionPending}, nil
+}
+
+func (f *fakeBackplane) RequestSetSecurityContext(ctx context.Context, actor orch.Actor, slug string, runtimeClass domain.RuntimeClass) (domain.AdminActionRequest, error) {
+	f.record(fmt.Sprintf("RequestSetSecurityContext:%s:%s", slug, runtimeClass), actor)
+	if f.failWith != nil {
+		return domain.AdminActionRequest{}, f.failWith
+	}
+	return domain.AdminActionRequest{ID: "areq-secctx", ActionType: domain.AdminActionSetSecurityContext,
+		Summary: "set " + slug + " runtime " + string(runtimeClass), RequestedBy: actor.ID, Status: domain.AdminActionPending}, nil
+}
+
+func (f *fakeBackplane) RequestPruneAudit(ctx context.Context, actor orch.Actor, throughSeq int64) (domain.AdminActionRequest, error) {
+	f.record(fmt.Sprintf("RequestPruneAudit:%d", throughSeq), actor)
+	if f.failWith != nil {
+		return domain.AdminActionRequest{}, f.failWith
+	}
+	return domain.AdminActionRequest{ID: "areq-prune", ActionType: domain.AdminActionPruneAudit,
+		Summary: fmt.Sprintf("prune through %d", throughSeq), RequestedBy: actor.ID, Status: domain.AdminActionPending}, nil
 }
 
 func (f *fakeBackplane) RequestFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) (domain.AdminActionRequest, error) {
@@ -517,22 +670,25 @@ func TestProtectedResourceMetadata(t *testing.T) {
 	}
 }
 
+// A builder holding the full set of agent capability scopes sees the whole
+// builder contract — and NONE of the IT admin surface (per-caller filtering).
 func TestToolListMatchesContract(t *testing.T) {
 	h := newHarness(t)
-	cs := h.connect(t, auth.ScopeBeamsWrite, nil)
-	res, err := cs.ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]bool{}
-	for _, tool := range res.Tools {
-		got[tool.Name] = true
-	}
+	cs := h.connect(t, strings.Join(auth.AllScopes(), ","), nil)
+	got := listToolNames(t, cs)
 	for _, want := range []string{"list_beams", "create_beam", "deploy_beam", "get_repo",
 		"create_database", "set_secret", "show_logs", "pause_preview", "resume_preview",
-		"promote_to_live", "create_object_store", "create_queue"} {
+		"promote_to_live", "rollback", "show_metrics", "archive_beam", "destroy_beam",
+		"create_object_store", "create_queue"} {
 		if !got[want] {
-			t.Errorf("tool %q missing from the contract", want)
+			t.Errorf("builder tool %q missing from the contract", want)
+		}
+	}
+	// The admin surface must NOT leak into a builder's tool list.
+	for _, hidden := range []string{"admin_create_beamhall", "admin_list_beamhalls",
+		"admin_query_audit", "list_pending_promotions", "approve_promotion"} {
+		if got[hidden] {
+			t.Errorf("admin tool %q leaked into the builder tool list", hidden)
 		}
 	}
 }

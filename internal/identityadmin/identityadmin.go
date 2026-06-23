@@ -46,6 +46,10 @@ type Provider interface {
 	// SetTemporaryPassword sets a one-time password the user must change at next
 	// login — the onboarding hand-off for a freshly created account.
 	SetTemporaryPassword(ctx context.Context, userID, password string) error
+	// SetUserEnabled enables or disables a local account. A disabled account
+	// cannot authenticate — the offboarding control that stops short of deleting
+	// the user (and the audit/history linkage that deletion would orphan).
+	SetUserEnabled(ctx context.Context, userID string, enabled bool) error
 
 	// CreateGroup creates a group used to organize users. Idempotent on name.
 	CreateGroup(ctx context.Context, name string) (Group, error)
@@ -54,6 +58,9 @@ type Provider interface {
 	// AddUserToGroup adds a user to a group (membership in the IdP, distinct
 	// from Beamhall's own beamhall memberships).
 	AddUserToGroup(ctx context.Context, userID, groupID string) error
+	// RemoveUserFromGroup removes a user from a group (the AddUserToGroup
+	// inverse).
+	RemoveUserFromGroup(ctx context.Context, userID, groupID string) error
 
 	// FederateDirectory configures an LDAP/Active Directory user-federation
 	// source on the owned IdP, so the customer's existing directory users
@@ -61,6 +68,9 @@ type Provider interface {
 	// change (it changes who can sign in to the whole appliance): the MCP layer
 	// gates it behind human confirmation.
 	FederateDirectory(ctx context.Context, d DirectoryFederation) error
+	// UnfederateDirectory removes a federation source by name (the
+	// FederateDirectory inverse) — also SENSITIVE (it changes who can sign in).
+	UnfederateDirectory(ctx context.Context, name string) error
 }
 
 // NewUser is the input to CreateUser.
@@ -123,10 +133,16 @@ func (Disabled) ListUsers(context.Context, string, int) ([]User, error) { return
 
 func (Disabled) SetTemporaryPassword(context.Context, string, string) error { return ErrNotEnabled }
 
+func (Disabled) SetUserEnabled(context.Context, string, bool) error { return ErrNotEnabled }
+
 func (Disabled) CreateGroup(context.Context, string) (Group, error) { return Group{}, ErrNotEnabled }
 
 func (Disabled) ListGroups(context.Context) ([]Group, error) { return nil, ErrNotEnabled }
 
 func (Disabled) AddUserToGroup(context.Context, string, string) error { return ErrNotEnabled }
 
+func (Disabled) RemoveUserFromGroup(context.Context, string, string) error { return ErrNotEnabled }
+
 func (Disabled) FederateDirectory(context.Context, DirectoryFederation) error { return ErrNotEnabled }
+
+func (Disabled) UnfederateDirectory(context.Context, string) error { return ErrNotEnabled }

@@ -15,7 +15,11 @@ import (
 type fakeProvider struct {
 	createdUser    string
 	federated      string
-	bindCredential string
+	bindCredential   string
+	userEnabled      bool
+	userEnabledID    string
+	removedFromGroup string
+	unfederated      string
 }
 
 func (f *fakeProvider) Enabled() bool { return true }
@@ -27,11 +31,24 @@ func (f *fakeProvider) ListUsers(context.Context, string, int) ([]identityadmin.
 	return nil, nil
 }
 func (f *fakeProvider) SetTemporaryPassword(context.Context, string, string) error { return nil }
+func (f *fakeProvider) SetUserEnabled(_ context.Context, userID string, enabled bool) error {
+	f.userEnabled = enabled
+	f.userEnabledID = userID
+	return nil
+}
 func (f *fakeProvider) CreateGroup(_ context.Context, name string) (identityadmin.Group, error) {
 	return identityadmin.Group{ID: "g-1", Name: name}, nil
 }
 func (f *fakeProvider) ListGroups(context.Context) ([]identityadmin.Group, error) { return nil, nil }
 func (f *fakeProvider) AddUserToGroup(context.Context, string, string) error      { return nil }
+func (f *fakeProvider) RemoveUserFromGroup(_ context.Context, userID, groupID string) error {
+	f.removedFromGroup = userID + ":" + groupID
+	return nil
+}
+func (f *fakeProvider) UnfederateDirectory(_ context.Context, name string) error {
+	f.unfederated = name
+	return nil
+}
 func (f *fakeProvider) FederateDirectory(_ context.Context, d identityadmin.DirectoryFederation) error {
 	f.federated = d.Name
 	f.bindCredential = d.BindCredential
@@ -174,5 +191,105 @@ func TestIdentityAdminDisabledByDefault(t *testing.T) {
 	}
 	if _, err := w.o.AdminCreateUser(context.Background(), itActor(w), identityadmin.NewUser{Username: "x"}); err != identityadmin.ErrNotEnabled {
 		t.Fatalf("expected ErrNotEnabled from the Disabled provider, got %v", err)
+	}
+}
+
+func TestSetMembershipRoleChangesRole(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	// w.build is a builder member of w.bh; change it to viewer in place.
+	if err := w.o.SetMembershipRole(ctx, itActor(w), w.build.ID, w.bh.ID, domain.RoleViewer); err != nil {
+		t.Fatalf("SetMembershipRole: %v", err)
+	}
+	m, err := w.st.GetMembership(ctx, w.build.ID, w.bh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Role != domain.RoleViewer {
+		t.Fatalf("role = %s, want viewer", m.Role)
+	}
+	// Non-IT is refused.
+	if err := w.o.SetMembershipRole(ctx, w.build, w.build.ID, w.bh.ID, domain.RoleBuilder); err == nil {
+		t.Fatal("non-IT actor must be refused")
+	}
+}
+
+func TestFourEyesSetSecurityContextApplies(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.o.idpSensitive = true
+	// newWorld's beamhall starts on runsc; request a change to runc.
+	req, err := w.o.RequestSetSecurityContext(ctx, itActor(w), "ops", domain.RuntimeRunc)
+	if err != nil {
+		t.Fatalf("RequestSetSecurityContext: %v", err)
+	}
+	// Not applied until approval, and the requester cannot approve their own.
+	if _, err := w.o.ApproveAdminAction(ctx, itActor(w), req.ID); err == nil {
+		t.Fatal("four-eyes: requester approved their own action")
+	}
+	if sc, _ := w.st.GetSecurityContext(ctx, w.bh.ID); sc.RuntimeClass != domain.RuntimeRunsc {
+		t.Fatalf("runtime changed before approval: %s", sc.RuntimeClass)
+	}
+	if _, err := w.o.ApproveAdminAction(ctx, secondIT(w), req.ID); err != nil {
+		t.Fatalf("ApproveAdminAction: %v", err)
+	}
+	sc, err := w.st.GetSecurityContext(ctx, w.bh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.RuntimeClass != domain.RuntimeRunc {
+		t.Fatalf("runtime_class = %s after approval, want runc", sc.RuntimeClass)
+	}
+}
+
+func TestFourEyesUnfederateExecutes(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	fp := &fakeProvider{}
+	w.o.idp = fp
+	w.o.idpSensitive = true
+	req, err := w.o.RequestUnfederateDirectory(ctx, itActor(w), "corp-ad")
+	if err != nil {
+		t.Fatalf("RequestUnfederateDirectory: %v", err)
+	}
+	if _, err := w.o.ApproveAdminAction(ctx, secondIT(w), req.ID); err != nil {
+		t.Fatalf("ApproveAdminAction: %v", err)
+	}
+	if fp.unfederated != "corp-ad" {
+		t.Fatalf("unfederated = %q, want corp-ad", fp.unfederated)
+	}
+}
+
+func TestRequestSensitiveRequiresTier(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.o.idpSensitive = false // master switch off
+	if _, err := w.o.RequestSetSecurityContext(ctx, itActor(w), "ops", domain.RuntimeRunc); err == nil {
+		t.Fatal("set_security_context must be refused when the sensitive tier is off")
+	}
+	if _, err := w.o.RequestPruneAudit(ctx, itActor(w), 1); err == nil {
+		t.Fatal("prune_audit must be refused when the sensitive tier is off")
+	}
+}
+
+func TestDeregisterIdentityGuardsMemberships(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	// w.build has a membership in w.bh → deregister must refuse.
+	if err := w.o.DeregisterIdentity(ctx, itActor(w), w.build.ID); err == nil {
+		t.Fatal("deregister must refuse an identity that still has memberships")
+	}
+	// Register a fresh, membership-less identity → deregister succeeds and the
+	// row is gone.
+	ident := &domain.Identity{ExternalSubject: "throwaway", IdPIssuer: "idp",
+		Email: "t@x", Status: domain.IdentityActive}
+	if err := w.st.CreateIdentity(ctx, ident); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.o.DeregisterIdentity(ctx, itActor(w), ident.ID); err != nil {
+		t.Fatalf("DeregisterIdentity: %v", err)
+	}
+	if _, err := w.st.GetIdentity(ctx, ident.ID); err == nil {
+		t.Fatal("identity row should be gone after deregister")
 	}
 }

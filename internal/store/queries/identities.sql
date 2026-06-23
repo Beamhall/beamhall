@@ -29,3 +29,6 @@ SELECT * FROM memberships WHERE identity_id = ? ORDER BY granted_at;
 
 -- name: DeleteMembership :exec
 DELETE FROM memberships WHERE id = ?;
+
+-- name: DeleteIdentity :exec
+DELETE FROM identities WHERE id = ?;

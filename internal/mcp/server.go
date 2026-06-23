@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -55,20 +56,39 @@ type Backplane interface {
 	CreateBeamhall(ctx context.Context, actor orch.Actor, spec orch.NewBeamhallSpec) (*domain.Beamhall, error)
 	AdminListBeamhalls(ctx context.Context, actor orch.Actor) ([]domain.Beamhall, error)
 	AdminBeamhallView(ctx context.Context, actor orch.Actor, slug string) (*orch.BeamhallView, error)
+	AdminUpdateBeamhall(ctx context.Context, actor orch.Actor, slug string, upd orch.BeamhallUpdate) (*domain.Beamhall, error)
 	SetEgress(ctx context.Context, actor orch.Actor, beamhallID domain.ID, mode domain.EgressMode, allowlist []string) error
+	AdminListReleases(ctx context.Context, actor orch.Actor, beamID domain.ID) ([]orch.ReleaseEntry, error)
 	RegisterIdentity(ctx context.Context, actor orch.Actor, issuer, subject, email, displayName string) (*domain.Identity, error)
 	GrantMembership(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID, role domain.MembershipRole) error
+	RevokeMembership(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID) error
+	SetMembershipRole(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID, role domain.MembershipRole) error
 	AdminListIdentities(ctx context.Context, actor orch.Actor) ([]domain.Identity, error)
+	SetIdentityStatus(ctx context.Context, actor orch.Actor, identityID domain.ID, status string) error
+	DeregisterIdentity(ctx context.Context, actor orch.Actor, identityID domain.ID) error
+	// Audit read surface (the regulated sign-off artifact, now MCP-readable).
+	AdminQueryAudit(ctx context.Context, actor orch.Actor, beamhallSlug string, afterSeq int64, limit int) ([]orch.AuditEntry, error)
+	AdminVerifyAuditChain(ctx context.Context, actor orch.Actor) (orch.AuditChainStatus, error)
 	IdentityAdminEnabled() bool
+	SensitiveAdminEnabled() bool
+	BackupEnabled() bool
+	AdminBackupNow(ctx context.Context, actor orch.Actor, now time.Time) (orch.BackupInfo, error)
+	AdminListBackups(ctx context.Context, actor orch.Actor) ([]orch.BackupInfo, error)
+	RequestRestoreBackup(ctx context.Context, actor orch.Actor, name string) (domain.AdminActionRequest, error)
 	AdminCreateUser(ctx context.Context, actor orch.Actor, u identityadmin.NewUser) (identityadmin.User, error)
 	AdminListUsers(ctx context.Context, actor orch.Actor, query string, max int) ([]identityadmin.User, error)
 	AdminSetUserPassword(ctx context.Context, actor orch.Actor, userID, password string) error
+	AdminSetUserEnabled(ctx context.Context, actor orch.Actor, userID string, enabled bool) error
 	AdminCreateGroup(ctx context.Context, actor orch.Actor, name string) (identityadmin.Group, error)
 	AdminListGroups(ctx context.Context, actor orch.Actor) ([]identityadmin.Group, error)
 	AdminAddUserToGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
+	AdminRemoveUserFromGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
 	// SENSITIVE tier (four-eyes): federation files a request a different IT
 	// operator must approve before it executes (PLAN §5.9).
 	RequestFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) (domain.AdminActionRequest, error)
+	RequestUnfederateDirectory(ctx context.Context, actor orch.Actor, name string) (domain.AdminActionRequest, error)
+	RequestSetSecurityContext(ctx context.Context, actor orch.Actor, slug string, runtimeClass domain.RuntimeClass) (domain.AdminActionRequest, error)
+	RequestPruneAudit(ctx context.Context, actor orch.Actor, throughSeq int64) (domain.AdminActionRequest, error)
 	ListPendingAdminActions(ctx context.Context, actor orch.Actor) ([]domain.AdminActionRequest, error)
 	ApproveAdminAction(ctx context.Context, actor orch.Actor, id domain.ID) (domain.AdminActionRequest, error)
 	RejectAdminAction(ctx context.Context, actor orch.Actor, id domain.ID, reason string) error
@@ -108,6 +128,7 @@ type Server struct {
 	gitMinter  DeployTokenMinter
 	gitBaseURL string
 	adminRole  string // realm role that elevates to IT admin (in addition to the admin:it scope)
+	skipFilter bool   // test-only: register all tools but skip the tools/list filter
 }
 
 // DeployTokenMinter issues beam-scoped git tokens (*gitserver.TokenStore
@@ -148,6 +169,13 @@ func New(bp Backplane, dir Directory, version string, opts ...Option) *Server {
 		Version: version,
 	}, nil)
 	s.registerTools()
+	// Per-caller tools/list filtering: an agent only sees tools its token could
+	// invoke (small builder context, full admin menu for it_admin), kept in sync
+	// with the live appliance state via tools/list_changed. Discovery only — the
+	// handlers still enforce via resolveActor (see visibility.go).
+	if !s.skipFilter {
+		s.installToolFilter()
+	}
 	return s
 }
 

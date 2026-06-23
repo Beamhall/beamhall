@@ -26,6 +26,9 @@ type Config struct {
 	// never generated — production must set this. Empty falls back to
 	// generate-if-absent at <DataDir>/secret.key (dev/lab only).
 	SecretKeyFile string
+	// BackupDir is where admin_backup_now writes appliance backups (and
+	// admin_list_backups reads them). Empty falls back to <DataDir>/backups.
+	BackupDir string
 	// LogLevel is one of debug|info|warn|error.
 	LogLevel string
 
@@ -133,6 +136,7 @@ func Load() (Config, error) {
 		DataDir:       envOr("BEAMHALL_DATA_DIR", "/var/lib/beamhall"),
 		LogLevel:      strings.ToLower(envOr("BEAMHALL_LOG_LEVEL", "info")),
 		SecretKeyFile: os.Getenv("BEAMHALL_SECRET_KEY_FILE"),
+		BackupDir:     os.Getenv("BEAMHALL_BACKUP_DIR"),
 
 		AuditRetentionDays: envInt("BEAMHALL_AUDIT_RETENTION_DAYS", 0),
 

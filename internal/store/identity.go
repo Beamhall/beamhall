@@ -137,6 +137,13 @@ func (s *Store) DeleteMembership(ctx context.Context, id domain.ID) error {
 	return mapErr(s.q.DeleteMembership(ctx, string(id)))
 }
 
+// DeleteIdentity removes a registered identity row. The caller must ensure no
+// memberships reference it (the orchestrator refuses otherwise); audit rows
+// reference the id as an opaque string and are unaffected.
+func (s *Store) DeleteIdentity(ctx context.Context, id domain.ID) error {
+	return mapErr(s.q.DeleteIdentity(ctx, string(id)))
+}
+
 func identityFromRow(r db.Identity) domain.Identity {
 	return domain.Identity{
 		ID:              domain.ID(r.ID),
