@@ -128,6 +128,17 @@ Each change backs up `beamhall.env` (timestamped) first. The restart is the only
 disruptive step (seconds; running beams unaffected). Wrap the four-eyes scenarios
 with `on`, then `off`.
 
+**Restart resilience.** A gate toggle (and a self-upgrade) restarts `beamhalld`,
+which invalidates every open `Mcp-Session-Id` — the server then returns **HTTP 404**
+to any client still holding the old session. `bh-mcp-proxy.py` recovers
+automatically: on a 404 it drops the session, re-handshakes, retries, and emits a
+`tools/list_changed` so Claude Code re-lists (picking up the now-visible sensitive
+tools). Caveat: an *already-running* proxy started with an older build can't recover
+— if you toggle gates mid-session and the persona subagents then return HTTP 404 or
+a stale menu, `/mcp` reconnect (or a Claude restart) respawns the proxies with the
+current code and a fresh session. The no-restart `bh-call.sh` path is immune (fresh
+process per call).
+
 ## Teardown
 
 ```sh

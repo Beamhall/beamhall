@@ -27,6 +27,7 @@ Configuration (all via env, set per-server in .mcp.json — NO secrets here):
 The secrets file (BH_ENV_FILE) is plain `username=password` lines, gitignored.
 Diagnostics go to stderr; stdout carries ONLY the MCP protocol.
 """
+import http.client
 import json
 import os
 import ssl
@@ -154,6 +155,10 @@ class Upstream:
         self.ts = ts
         self.sid = None
         self._id = 0
+        # Set when a recovery re-handshake happened (stale session / re-auth); the
+        # pump then emits tools/list_changed so the client re-lists (the menu may
+        # have changed across an appliance restart, e.g. a gate toggle or upgrade).
+        self.resynced = False
 
     def _headers(self):
         h = {"Authorization": "Bearer " + self.ts.bearer(),
@@ -173,9 +178,16 @@ class Upstream:
             self.sid = sid
         return obj
 
+    # Errors that mean "the appliance went away and came back" — a gate toggle or a
+    # self-upgrade restarts beamhalld, which both invalidates the Mcp-Session-Id
+    # (clean HTTP 404 once it's back up) and can sever the in-flight connection
+    # (RemoteDisconnected / URLError during the restart window).
+    _TRANSIENT = (urllib.error.URLError, http.client.HTTPException, ConnectionError)
+
     def call(self, method, params=None, notif=False):
-        """One request/response (or fire-and-forget notification) to Beamhall,
-        with a single re-auth+resession retry on a 401."""
+        """One request/response (or fire-and-forget notification) to Beamhall, with
+        automatic recovery across an appliance restart (stale session / dropped
+        connection): re-handshake (re-minting on auth failure), then retry once."""
         body = {"jsonrpc": "2.0", "method": method}
         want = None
         if not notif:
@@ -187,13 +199,32 @@ class Upstream:
         try:
             return self._post(body, want, notif)
         except urllib.error.HTTPError as e:
+            if e.code not in (401, 403, 404):
+                raise
+            log("upstream %d — recovering" % e.code)
             if e.code in (401, 403):
-                log("upstream", e.code, "— re-minting + re-handshaking")
                 self.ts.force_remint()
-                self.sid = None
+            self._reconnect()
+            self.resynced = True
+            return self._post(body, want, notif)
+        except self._TRANSIENT as e:
+            log("upstream transient (%s) — recovering" % e)
+            self._reconnect()
+            self.resynced = True
+            return self._post(body, want, notif)
+
+    def _reconnect(self, tries=10, delay=0.75):
+        """Drop the stale session and re-handshake, waiting out a daemon restart."""
+        self.sid = None
+        last = None
+        for _ in range(tries):
+            try:
                 self._handshake()
-                return self._post(body, want, notif)
-            raise
+                return
+            except Exception as e:  # server still down / mid-restart — back off and retry
+                last = e
+                time.sleep(delay)
+        raise last if last else RuntimeError("reconnect failed")
 
     def _handshake(self):
         body = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
@@ -278,6 +309,12 @@ def main():
             emit(_err(mid, -32001, "Beamhall HTTP %s: %s" % (e.code, e.reason)))
         except Exception as e:
             emit(_err(mid, -32001, "proxy error: %s" % e))
+
+        # If a recovery re-handshake happened, prompt the client to re-list its
+        # tools (the menu may have changed across the appliance restart).
+        if up.resynced:
+            emit({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+            up.resynced = False
 
 
 if __name__ == "__main__":
