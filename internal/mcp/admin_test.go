@@ -158,3 +158,33 @@ func assertCalled(t *testing.T, h *harness, want string) {
 	}
 	t.Fatalf("expected backplane call %q; got %v", want, h.bp.calls)
 }
+
+func TestAdminBeamhallReadAndEgress(t *testing.T) {
+	h := newHarness(t)
+	cs := h.connect(t, auth.ScopeAdminIT, nil)
+
+	_, txt := h.call(t, cs, "admin_list_beamhalls", map[string]any{}, false)
+	if !strings.Contains(txt, "ops") {
+		t.Fatalf("admin_list_beamhalls: want the workspace listed, got %q", txt)
+	}
+	_, txt = h.call(t, cs, "admin_show_beamhall", map[string]any{"slug": "ops"}, false)
+	if !strings.Contains(txt, "user-1") || !strings.Contains(txt, "tracker") {
+		t.Fatalf("admin_show_beamhall: want members + beams, got %q", txt)
+	}
+	_, txt = h.call(t, cs, "admin_set_egress", map[string]any{
+		"slug": "ops", "mode": "allowlist", "allowlist": []any{"api.corp.internal:443"},
+	}, false)
+	if !strings.Contains(txt, "allow_set") {
+		t.Fatalf("admin_set_egress: %q", txt)
+	}
+	assertCalled(t, h, "SetEgress:hall-1:allow_set:[api.corp.internal:443]")
+}
+
+func TestAdminBeamhallReadRequiresAdmin(t *testing.T) {
+	h := newHarness(t)
+	cs := h.connect(t, auth.ScopeBeamsWrite, nil) // builder scope, no admin:it
+	_, txt := h.call(t, cs, "admin_list_beamhalls", map[string]any{}, true)
+	if !strings.Contains(txt, "insufficient_scope") {
+		t.Fatalf("admin_list_beamhalls without admin: want insufficient_scope, got %q", txt)
+	}
+}

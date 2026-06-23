@@ -187,6 +187,31 @@ func (f *fakeBackplane) AdminListIdentities(ctx context.Context, actor orch.Acto
 	return []domain.Identity{{ID: "ident-1", ExternalSubject: "user-1", Email: "u1@x"}}, nil
 }
 
+func (f *fakeBackplane) AdminListBeamhalls(ctx context.Context, actor orch.Actor) ([]domain.Beamhall, error) {
+	f.record("AdminListBeamhalls", actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return []domain.Beamhall{{ID: "hall-1", Slug: "ops", Status: domain.BeamhallActive}}, nil
+}
+
+func (f *fakeBackplane) AdminBeamhallView(ctx context.Context, actor orch.Actor, slug string) (*orch.BeamhallView, error) {
+	f.record("AdminBeamhallView:"+slug, actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return &orch.BeamhallView{
+		Beamhall: domain.Beamhall{ID: "hall-1", Slug: slug, Status: domain.BeamhallActive},
+		Members:  []orch.MemberView{{IdentityID: "ident-1", Subject: "user-1", Role: "builder"}},
+		Beams:    []orch.BeamView{{Slug: "tracker", State: "running", Mode: "preview"}},
+	}, nil
+}
+
+func (f *fakeBackplane) SetEgress(ctx context.Context, actor orch.Actor, beamhallID domain.ID, mode domain.EgressMode, allowlist []string) error {
+	f.record(fmt.Sprintf("SetEgress:%s:%s:%v", beamhallID, mode, allowlist), actor)
+	return f.failWith
+}
+
 func (f *fakeBackplane) IdentityAdminEnabled() bool { return f.idpEnabled }
 
 func (f *fakeBackplane) AdminCreateUser(ctx context.Context, actor orch.Actor, u identityadmin.NewUser) (identityadmin.User, error) {

@@ -53,6 +53,9 @@ type Backplane interface {
 	// admin surface is a thin client over the same enforcement as the Admin
 	// console.
 	CreateBeamhall(ctx context.Context, actor orch.Actor, spec orch.NewBeamhallSpec) (*domain.Beamhall, error)
+	AdminListBeamhalls(ctx context.Context, actor orch.Actor) ([]domain.Beamhall, error)
+	AdminBeamhallView(ctx context.Context, actor orch.Actor, slug string) (*orch.BeamhallView, error)
+	SetEgress(ctx context.Context, actor orch.Actor, beamhallID domain.ID, mode domain.EgressMode, allowlist []string) error
 	RegisterIdentity(ctx context.Context, actor orch.Actor, issuer, subject, email, displayName string) (*domain.Identity, error)
 	GrantMembership(ctx context.Context, actor orch.Actor, identityID, beamhallID domain.ID, role domain.MembershipRole) error
 	AdminListIdentities(ctx context.Context, actor orch.Actor) ([]domain.Identity, error)

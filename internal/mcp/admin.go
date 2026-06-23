@@ -89,6 +89,16 @@ type federateDirectoryArgs struct {
 	BindPassword  string `json:"bind_password,omitempty" jsonschema:"service-account password (held by Beamhall; never returned)"`
 }
 
+type showBeamhallArgs struct {
+	Slug string `json:"slug" jsonschema:"beamhall (workspace) slug — from admin_list_beamhalls"`
+}
+
+type setEgressArgs struct {
+	Slug      string   `json:"slug" jsonschema:"beamhall (workspace) slug"`
+	Mode      string   `json:"mode" jsonschema:"egress mode: deny_all (fully isolated, default) | allowlist"`
+	Allowlist []string `json:"allowlist,omitempty" jsonschema:"FQDN/CIDR[:port] entries beams in this workspace may reach (used when mode=allowlist)"`
+}
+
 // registerAdminTools registers the admin:it tool family. Called from
 // registerTools.
 func (s *Server) registerAdminTools() {
@@ -108,6 +118,18 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_create_beamhall",
 		Description: "IT only: create a beamhall (workspace) with an immutable hardening profile. runtime_class selects the isolation tier (runc default, or runsc/gVisor for regulated workloads).",
 	}, s.adminCreateBeamhall)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_list_beamhalls",
+		Description: "IT only: list every beamhall (workspace) on the appliance — appliance-wide, NOT membership-scoped (unlike list_beams). Shows slug, runtime tier, egress mode, quota, status, and beam/member counts.",
+	}, s.adminListBeamhalls)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_show_beamhall",
+		Description: "IT only: show one beamhall in detail — runtime tier, egress policy, quota, its members (with roles), and its beams (with state). Use admin_list_beamhalls to discover slugs.",
+	}, s.adminShowBeamhall)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_egress",
+		Description: "IT only: set a beamhall's egress policy. mode is deny_all (default isolation) or allowlist; allowlist is FQDN/CIDR[:port] entries reachable from beams in that workspace. Re-asserted on the next deploy (and immediately if egress sync is wired).",
+	}, s.adminSetEgress)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -215,6 +237,89 @@ func (s *Server) adminListIdentities(ctx context.Context, req *sdkmcp.CallToolRe
 		out = append(out, map[string]string{"identity_id": string(id.ID), "subject": id.ExternalSubject, "email": id.Email, "issuer": id.IdPIssuer})
 	}
 	return text(b.String()), map[string]any{"identities": out}, nil
+}
+
+func (s *Server) adminListBeamhalls(ctx context.Context, req *sdkmcp.CallToolRequest, args struct{}) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	halls, err := s.bp.AdminListBeamhalls(ctx, actor)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(halls) == 0 {
+		return text("no beamhalls (workspaces) exist yet. Create one with admin_create_beamhall."), nil, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d beamhall(s):\n", len(halls))
+	out := make([]map[string]any, 0, len(halls))
+	for _, h := range halls {
+		fmt.Fprintf(&b, "  - %s  status=%s  egress=%s  quota=%d beams/%d live/%d db\n",
+			h.Slug, h.Status, h.NetworkPolicy.EgressMode, h.Quota.MaxBeams, h.LiveSlotLimit, h.Quota.MaxDBCount)
+		out = append(out, map[string]any{
+			"slug": h.Slug, "display_name": h.DisplayName, "department": h.Department,
+			"status": string(h.Status), "egress_mode": string(h.NetworkPolicy.EgressMode),
+			"max_beams": h.Quota.MaxBeams, "max_live_slots": h.LiveSlotLimit, "max_databases": h.Quota.MaxDBCount,
+		})
+	}
+	return text(b.String()), map[string]any{"beamhalls": out}, nil
+}
+
+func (s *Server) adminShowBeamhall(ctx context.Context, req *sdkmcp.CallToolRequest, args showBeamhallArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	v, err := s.bp.AdminBeamhallView(ctx, actor, args.Slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "beamhall %q (status %s)\n", v.Slug, v.Status)
+	fmt.Fprintf(&b, "  egress: %s  allowlist=%v\n", v.NetworkPolicy.EgressMode, v.NetworkPolicy.EgressAllowlist)
+	fmt.Fprintf(&b, "  quota:  %d beams / %d live slots / %d databases\n", v.Quota.MaxBeams, v.LiveSlotLimit, v.Quota.MaxDBCount)
+	fmt.Fprintf(&b, "  members (%d):\n", len(v.Members))
+	mem := make([]map[string]string, 0, len(v.Members))
+	for _, m := range v.Members {
+		fmt.Fprintf(&b, "    - %s  role=%s  email=%s\n", m.Subject, m.Role, m.Email)
+		mem = append(mem, map[string]string{"subject": m.Subject, "email": m.Email, "role": m.Role, "identity_id": m.IdentityID})
+	}
+	fmt.Fprintf(&b, "  beams (%d):\n", len(v.Beams))
+	beams := make([]map[string]string, 0, len(v.Beams))
+	for _, bm := range v.Beams {
+		fmt.Fprintf(&b, "    - %s  state=%s  mode=%s  live=%s\n", bm.Slug, bm.State, bm.Mode, bm.LiveState)
+		beams = append(beams, map[string]string{"slug": bm.Slug, "state": bm.State, "mode": bm.Mode, "live_state": bm.LiveState})
+	}
+	return text(b.String()), map[string]any{
+		"slug": v.Slug, "status": string(v.Status), "egress_mode": string(v.NetworkPolicy.EgressMode),
+		"allowlist": v.NetworkPolicy.EgressAllowlist, "members": mem, "beams": beams,
+	}, nil
+}
+
+func (s *Server) adminSetEgress(ctx context.Context, req *sdkmcp.CallToolRequest, args setEgressArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	var mode domain.EgressMode
+	switch args.Mode {
+	case "deny_all", "":
+		mode = domain.EgressDenyAll
+	case "allowlist", "allow_set":
+		mode = domain.EgressAllowSet
+	default:
+		return nil, nil, fmt.Errorf("mode must be deny_all or allowlist, got %q", args.Mode)
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Slug)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.SetEgress(ctx, actor, bh.ID, mode, args.Allowlist); err != nil {
+		return nil, nil, err
+	}
+	return text(fmt.Sprintf("egress for %q set to %s (%d allowlist entr%s). Re-asserted on the next deploy.",
+		args.Slug, mode, len(args.Allowlist), map[bool]string{true: "y", false: "ies"}[len(args.Allowlist) == 1])), nil, nil
 }
 
 func (s *Server) adminCreateBeamhall(ctx context.Context, req *sdkmcp.CallToolRequest, args createBeamhallArgs) (*sdkmcp.CallToolResult, any, error) {

@@ -194,6 +194,70 @@ func (o *Orchestrator) SetEgress(ctx context.Context, actor Actor, beamhallID do
 	return o.itAudit(ctx, actor, "admin_set_egress", beamhallID, op())
 }
 
+// BeamhallView is the it_admin read model for one workspace: the beamhall plus
+// its members (with resolved IdP subjects) and its beams.
+type BeamhallView struct {
+	domain.Beamhall
+	Members []MemberView
+	Beams   []BeamView
+}
+
+// MemberView is one membership in a workspace, with the identity resolved.
+type MemberView struct {
+	IdentityID string
+	Subject    string
+	Email      string
+	Role       string
+}
+
+// BeamView is a beam's high-level state for the admin read model.
+type BeamView struct {
+	Slug      string
+	State     string
+	Mode      string
+	LiveState string
+}
+
+// AdminListBeamhalls returns every workspace on the appliance (IT-wide, not
+// membership-scoped). it_admin only.
+func (o *Orchestrator) AdminListBeamhalls(ctx context.Context, actor Actor) ([]domain.Beamhall, error) {
+	if err := o.requireIT(actor); err != nil {
+		return nil, err
+	}
+	return o.st.ListBeamhalls(ctx)
+}
+
+// AdminBeamhallView returns one workspace with its members and beams. it_admin only.
+func (o *Orchestrator) AdminBeamhallView(ctx context.Context, actor Actor, slug string) (*BeamhallView, error) {
+	if err := o.requireIT(actor); err != nil {
+		return nil, err
+	}
+	bh, err := o.st.GetBeamhallBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	v := &BeamhallView{Beamhall: bh}
+	mems, err := o.st.ListMembershipsByBeamhall(ctx, bh.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range mems {
+		mv := MemberView{IdentityID: string(m.IdentityID), Role: string(m.Role)}
+		if id, err := o.st.GetIdentity(ctx, m.IdentityID); err == nil {
+			mv.Subject, mv.Email = id.ExternalSubject, id.Email
+		}
+		v.Members = append(v.Members, mv)
+	}
+	beams, err := o.st.ListBeamsByBeamhall(ctx, bh.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range beams {
+		v.Beams = append(v.Beams, BeamView{Slug: b.Slug, State: string(b.State), Mode: string(b.Mode), LiveState: string(b.LiveState)})
+	}
+	return v, nil
+}
+
 // EnsureOperator resolves the logged-in operator to an Identity, creating one
 // on first login (the Admin console's bootstrap: the first IT person the IdP
 // grants admin:it becomes a registered identity). Not audited per call — it
