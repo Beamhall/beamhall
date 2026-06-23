@@ -729,6 +729,17 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     (files a request a *different* operator approves via `approve_promotion`),
     `create_beam` names its inverse (`archive_beam`), and `pause_preview`/`resume_preview`
     name each other.
+  - **Discoverability + anti-shadow-IT steering (2026-06-23)** — closes the generic-intent
+    gap (a user says "create an app", not "create a beam", and the agent may have
+    Fly.io/Vercel/Neon MCPs enabled). The MCP server now ships an `Instructions` string
+    (`serverInstructions` in `internal/mcp/server.go`, surfaced in the `initialize`
+    response) that (a) translates the jargon — beam = app/website/service/API/project,
+    beamhall = workspace — so generic intent routes here, and (b) makes Beamhall the only
+    sanctioned deploy target over BOTH local hosting and external providers (named
+    explicitly), framing external deploys as shadow IT that leaks code/credentials and
+    bypasses the audit trail. The three entry points (`list_beams`, `create_beam`,
+    `deploy_beam`) carry the same everyday synonyms + steer. `CLAUDE.md` convention
+    extended to make jargon-translation + anti-shadow-IT steering a product requirement.
   - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
     `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
     `s.srv` returns only the tools a caller's token could invoke (builder surface vs

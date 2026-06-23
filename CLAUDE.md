@@ -56,6 +56,19 @@ not just name the action. Assume the human never read `docs/`.
   (grant↔revoke, register↔deregister). When you add or change a tool, re-read its
   copy as if you were an agent with zero doc access: could it complete the workflow
   and warn the user from the copy alone?
+- **Translate jargon so generic intent routes here.** A user (often non-technical)
+  says "create an app / put my site online", not "create a beam". Entry-point copy —
+  and the server `Instructions` (`serverInstructions` in `internal/mcp/server.go`,
+  the agent's first orientation) — must name the everyday synonyms next to the jargon
+  (beam = app/website/service/API/project; beamhall = workspace) so the agent maps the
+  request to Beamhall instead of scaffolding locally.
+- **Beamhall is the only sanctioned deploy target — fight shadow IT in the copy.**
+  The agent may have external PaaS/DB MCPs enabled (Fly.io, Vercel, Netlify, Heroku,
+  Render, Neon, Supabase, the cloud CLIs, …); deploying there leaks code + credentials
+  and bypasses the audit trail. The server `Instructions` and the deploy entry points
+  must explicitly steer to Beamhall over BOTH local hosting AND external providers.
+  This is a product requirement, not a nicety — Beamhall exists to cut those services
+  out of the equation.
 
 ## Keep docs current — REQUIRED
 Docs are part of "done." A change isn't complete until the relevant doc reflects

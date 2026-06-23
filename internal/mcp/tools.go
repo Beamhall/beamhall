@@ -129,15 +129,15 @@ func text(msg string) *sdkmcp.CallToolResult {
 func (s *Server) registerTools() {
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "list_beams",
-		Description: "Discover what already exists: list the beamhalls you belong to and their active beams. Each beam shows its preview channel (the URL you iterate on) and, once promoted, its separate live/production URL. Start here on a new machine or session before deploy_beam / get_repo. Scoped to your memberships — you only see beamhalls you're a member of. Archived beams are not listed.",
+		Description: "Discover what already exists: list your workspaces (beamhalls) and the apps (beams — apps/websites/services/APIs/projects) in them. Each beam shows its preview channel (the URL you iterate on) and, once promoted, its separate live/production URL. Start here whenever the user wants to deploy, host, or work on an app, and on a new machine or session before deploy_beam / get_repo. Scoped to your memberships — you only see beamhalls you're a member of. Archived beams are not listed.",
 	}, s.listBeams)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "create_beam",
-		Description: "Register a new beam (workload) in a beamhall. Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). Shelve a beam that didn't pan out with archive_beam.",
+		Description: "Register a new beam — the user's app/website/service/API/project — in a beamhall (workspace). This is how you stand up a new app in this environment (not local hosting, not an external provider). Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). Shelve a beam that didn't pan out with archive_beam.",
 	}, s.createBeam)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "deploy_beam",
-		Description: "Build and deploy a beam with Cloud Native Buildpacks (no Dockerfile). PREFERRED: call with NO source_tarball to get a one-time `git push` remote — pushing builds and deploys, and is the right path for the edit→redeploy loop. Use source_tarball (base64 gzip, ≤8 MB) only as a fallback when no git client is available or the push isn't working; or pass image_ref+image_digest for a prebuilt image. Streams build progress. Returns the preview URL.",
+		Description: "Build and deploy a beam (the user's app/site/service) with Cloud Native Buildpacks (no Dockerfile). This is the sanctioned way to deploy and host apps here — use it instead of external platforms (Fly.io, Vercel, Netlify, Heroku, Render, Neon, Supabase, the cloud CLIs, …) or local one-off hosting. PREFERRED: call with NO source_tarball to get a one-time `git push` remote — pushing builds and deploys, and is the right path for the edit→redeploy loop. Use source_tarball (base64 gzip, ≤8 MB) only as a fallback when no git client is available or the push isn't working; or pass image_ref+image_digest for a prebuilt image. Streams build progress. Returns the preview URL.",
 	}, s.deployBeam)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "get_repo",
