@@ -193,7 +193,7 @@ type requestUpgradeArgs struct {
 func (s *Server) registerAdminTools() {
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_register_identity",
-		Description: "IT only: register an external identity (IdP issuer + subject) on this appliance so it can be granted beamhall memberships. Idempotent. Returns the identity id to pass to admin_grant_membership. This is the Beamhall-side registration; it is separate from creating an account in the bundled IdP (admin_create_user).",
+		Description: "IT only: register an external identity (IdP issuer + subject) on this appliance so it can be granted beamhall memberships. Registration alone grants NO access — it only makes the identity known; access requires a role via admin_grant_membership. Idempotent. Returns the identity id to pass to admin_grant_membership. This is the Beamhall-side registration; it is separate from creating an account in the bundled IdP (admin_create_user).",
 	}, s.adminRegisterIdentity)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_grant_membership",
@@ -205,7 +205,7 @@ func (s *Server) registerAdminTools() {
 	}, s.adminListIdentities)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_create_beamhall",
-		Description: "IT only: create a beamhall (workspace) with an immutable hardening profile. runtime_class selects the isolation tier (runc default, or runsc/gVisor for regulated workloads).",
+		Description: "IT only: create a beamhall (workspace) with an immutable hardening profile. A new workspace has NO members — nobody can act in it until you grant a registered identity a role with admin_grant_membership. runtime_class selects the isolation tier (runc default, or runsc/gVisor for regulated workloads).",
 	}, s.adminCreateBeamhall)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_list_beamhalls",
@@ -223,7 +223,7 @@ func (s *Server) registerAdminTools() {
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_create_user",
-		Description: "IT only: create a local user account in the bundled IdP (onboarding). Idempotent on username. Pair with admin_set_user_password to hand out a first password. Only available when Beamhall runs its bundled IdP — for a corporate IdP, create users there.",
+		Description: "IT only: create a local user account in the bundled IdP (onboarding). An account alone grants NO Beamhall access — this only creates a login; access requires registering the signed-in identity (admin_register_identity) and granting it a role (admin_grant_membership). Idempotent on username. Pair with admin_set_user_password to hand out a first password. Only available when Beamhall runs its bundled IdP — for a corporate IdP, create users there.",
 	}, s.adminCreateUser)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_list_users",

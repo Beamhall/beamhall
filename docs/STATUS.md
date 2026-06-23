@@ -717,6 +717,14 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     self-approve refused with the four-eyes message); audit chain `VERIFIED — intact`
     with the denials + request/approve pairs against distinct actor IDs. Native
     multi-proxy is primary; Apple `container` documented as an optional OS-level tier.
+  - **Self-teaching tool copy (2026-06-23, convention in `CLAUDE.md`)** — the agent
+    sees only a tool's `Description` + schema hints + result message, never `docs/`, so
+    entry-point tools now front-load the Beamhall-specific next step/gotcha in the
+    `Description` itself (not just the result tail): `admin_create_user`,
+    `admin_register_identity`, `admin_create_beamhall` each state up front that an IdP
+    account / registration / empty workspace grants **no access** until
+    `admin_register_identity` + `admin_grant_membership`. New requirement in `CLAUDE.md`
+    so contributors' assistants keep tool copy self-teaching.
   - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
     `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
     `s.srv` returns only the tools a caller's token could invoke (builder surface vs

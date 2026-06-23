@@ -36,6 +36,27 @@ plus the `bh-smoke-beam` test image.
   contract (PLAN §5.3, §5.7). Runtime is Docker-only behind the driver; gVisor
   `runsc` is a `runtime_class`, not a new driver (PLAN §3).
 
+## MCP tool copy is the agent's only manual — REQUIRED
+The operator/builder talks to Beamhall through an AI agent that sees **only** the
+tool `Description`, the input-schema `jsonschema` field hints, and the result
+message — never our docs. So that copy must *teach the Beamhall-specific workflow*,
+not just name the action. Assume the human never read `docs/`.
+- **Entry-point tools must front-load the next step and the gotcha.** Any tool that
+  begins a multi-step workflow states, in its `Description` (not only the result
+  message), what it does **not** do and what must follow. Canonical example: an IdP
+  account ≠ Beamhall access — `admin_create_user` / `admin_register_identity` /
+  `admin_create_beamhall` each say up front that access still needs
+  `admin_register_identity` + `admin_grant_membership`. Don't rely on the agent
+  reading its own result tail.
+- **Result messages remain breadcrumbs.** Keep the "...now do X with id Y" tail in
+  the success message too (defense in depth), and thread IDs through schema hints
+  (`identity_id` "from admin_register_identity", etc.) so the agent wires outputs to
+  inputs without guessing.
+- **Cross-reference sibling tools by name**, and name the inverse for lifecycle ops
+  (grant↔revoke, register↔deregister). When you add or change a tool, re-read its
+  copy as if you were an agent with zero doc access: could it complete the workflow
+  and warn the user from the copy alone?
+
 ## Keep docs current — REQUIRED
 Docs are part of "done." A change isn't complete until the relevant doc reflects
 it. Whenever you change code/design or learn something, update:
