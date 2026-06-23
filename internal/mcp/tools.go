@@ -133,7 +133,7 @@ func (s *Server) registerTools() {
 	}, s.listBeams)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "create_beam",
-		Description: "Register a new beam (workload) in a beamhall. Returns its state; deploy_beam ships code to it.",
+		Description: "Register a new beam (workload) in a beamhall. Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). Shelve a beam that didn't pan out with archive_beam.",
 	}, s.createBeam)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "deploy_beam",
@@ -157,15 +157,15 @@ func (s *Server) registerTools() {
 	}, s.showLogs)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "pause_preview",
-		Description: "Pause a preview beam: the workload freezes and its preview URL is retired.",
+		Description: "Pause a preview beam: the workload freezes and its preview URL is retired. The inverse is resume_preview, which wakes it on a NEW URL (the retired one stays dead).",
 	}, s.pausePreview)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "resume_preview",
-		Description: "Resume a paused preview beam. It gets a NEW random preview URL (the old one stays dead).",
+		Description: "Resume a paused preview beam (the inverse of pause_preview). It gets a NEW random preview URL (the old one stays dead).",
 	}, s.resumePreview)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "promote_to_live",
-		Description: "Ship the beam's CURRENT PREVIEW BUILD to production. Pins a separate live channel (stable URL, no auto-pause, its own database) to exactly what the preview is running now. Your preview channel keeps running and iterating — promote again to ship the next version (repeatable, zero-downtime; a failed promote leaves production untouched). Consumes one live slot on the first promote; typically IT-gated.",
+		Description: "Ship the beam's CURRENT PREVIEW BUILD to production. Pins a separate live channel (stable URL, no auto-pause, its own database) to exactly what the preview is running now. Your preview channel keeps running and iterating — promote again to ship the next version (repeatable, zero-downtime; a failed promote leaves production untouched). Consumes one live slot on the first promote. When the IT-approval gate is on this does NOT go live directly — it files a promotion request (the reply carries the request_id) that a DIFFERENT IT operator must approve via approve_promotion (four-eyes); the requester cannot approve their own.",
 	}, s.promoteToLive)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "rollback",
