@@ -50,6 +50,9 @@ type Provider interface {
 	// cannot authenticate — the offboarding control that stops short of deleting
 	// the user (and the audit/history linkage that deletion would orphan).
 	SetUserEnabled(ctx context.Context, userID string, enabled bool) error
+	// DeleteUser permanently removes a local account. Prefer SetUserEnabled for
+	// reversible offboarding; deletion is for genuine cleanup.
+	DeleteUser(ctx context.Context, userID string) error
 
 	// CreateGroup creates a group used to organize users. Idempotent on name.
 	CreateGroup(ctx context.Context, name string) (Group, error)
@@ -61,6 +64,9 @@ type Provider interface {
 	// RemoveUserFromGroup removes a user from a group (the AddUserToGroup
 	// inverse).
 	RemoveUserFromGroup(ctx context.Context, userID, groupID string) error
+	// DeleteGroup permanently removes a group (its members are not deleted, only
+	// un-grouped).
+	DeleteGroup(ctx context.Context, groupID string) error
 
 	// FederateDirectory configures an LDAP/Active Directory user-federation
 	// source on the owned IdP, so the customer's existing directory users
@@ -135,6 +141,8 @@ func (Disabled) SetTemporaryPassword(context.Context, string, string) error { re
 
 func (Disabled) SetUserEnabled(context.Context, string, bool) error { return ErrNotEnabled }
 
+func (Disabled) DeleteUser(context.Context, string) error { return ErrNotEnabled }
+
 func (Disabled) CreateGroup(context.Context, string) (Group, error) { return Group{}, ErrNotEnabled }
 
 func (Disabled) ListGroups(context.Context) ([]Group, error) { return nil, ErrNotEnabled }
@@ -142,6 +150,8 @@ func (Disabled) ListGroups(context.Context) ([]Group, error) { return nil, ErrNo
 func (Disabled) AddUserToGroup(context.Context, string, string) error { return ErrNotEnabled }
 
 func (Disabled) RemoveUserFromGroup(context.Context, string, string) error { return ErrNotEnabled }
+
+func (Disabled) DeleteGroup(context.Context, string) error { return ErrNotEnabled }
 
 func (Disabled) FederateDirectory(context.Context, DirectoryFederation) error { return ErrNotEnabled }
 

@@ -47,6 +47,7 @@ type fakeBackplane struct {
 	idpEnabled      bool
 	sensitiveTier   bool
 	backupEnabled   bool
+	upgradeEnabled  bool
 	auditIntact     bool // AdminVerifyAuditChain reports a clean chain when true
 }
 
@@ -218,6 +219,16 @@ func (f *fakeBackplane) SetEgress(ctx context.Context, actor orch.Actor, beamhal
 func (f *fakeBackplane) IdentityAdminEnabled() bool  { return f.idpEnabled }
 func (f *fakeBackplane) SensitiveAdminEnabled() bool { return f.sensitiveTier }
 func (f *fakeBackplane) BackupEnabled() bool         { return f.backupEnabled }
+func (f *fakeBackplane) UpgradeEnabled() bool        { return f.upgradeEnabled }
+
+func (f *fakeBackplane) RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error) {
+	f.record("RequestUpgrade:"+version, actor)
+	if f.failWith != nil {
+		return domain.AdminActionRequest{}, f.failWith
+	}
+	return domain.AdminActionRequest{ID: "areq-upgrade", ActionType: domain.AdminActionSelfUpgrade,
+		Summary: "upgrade to " + version, RequestedBy: actor.ID, Status: domain.AdminActionPending}, nil
+}
 
 func (f *fakeBackplane) AdminBackupNow(ctx context.Context, actor orch.Actor, now time.Time) (orch.BackupInfo, error) {
 	f.record("AdminBackupNow", actor)
@@ -382,6 +393,22 @@ func (f *fakeBackplane) SetMembershipRole(ctx context.Context, actor orch.Actor,
 
 func (f *fakeBackplane) AdminRemoveUserFromGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error {
 	f.record(fmt.Sprintf("AdminRemoveUserFromGroup:%s:%s", userID, groupID), actor)
+	if !f.idpEnabled {
+		return identityadmin.ErrNotEnabled
+	}
+	return nil
+}
+
+func (f *fakeBackplane) AdminDeleteUser(ctx context.Context, actor orch.Actor, userID string) error {
+	f.record("AdminDeleteUser:"+userID, actor)
+	if !f.idpEnabled {
+		return identityadmin.ErrNotEnabled
+	}
+	return nil
+}
+
+func (f *fakeBackplane) AdminDeleteGroup(ctx context.Context, actor orch.Actor, groupID string) error {
+	f.record("AdminDeleteGroup:"+groupID, actor)
 	if !f.idpEnabled {
 		return identityadmin.ErrNotEnabled
 	}

@@ -397,6 +397,7 @@ internal/resource/    managed-resource provisioners (Postgres: scoped role + db 
 internal/auth/        OAuth resource server: JWKS/iss/aud/exp/scope validation, Origin check
 internal/identityadmin/ owned-IdP administration seam (3rd stable seam): Provider iface + Keycloak Admin-REST impl + Disabled (BYO-IdP)
 internal/mcp/         agent-facing MCP server (official go-sdk, Streamable HTTP): tools (incl. admin_* family), per-caller tools/list filtering (visibility.go), progress, tarball transport
+internal/upgrade/     self-upgrade seam (Stager: Disabled default + Release impl): download + sha256-verify + stage a pinned release; operator-applied atomic swap
 internal/diagnose/    failure-signature catalog: infra denials → agent-actionable hints (build/run/exit)
 internal/web/         IT Admin console (/admin): OIDC login + session, views + audited IT actions
 internal/gitserver/   git smart-HTTP push transport (/git): receive-pack + one-time deploy tokens → build+deploy
@@ -681,13 +682,25 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     in-process overwrite). New seam methods `Provider.RemoveUserFromGroup`/`UnfederateDirectory`;
     new `WithBackup` orch option + `BEAMHALL_BACKUP_DIR` config. Sensitive-tier gate reuses
     `BEAMHALL_IDP_SENSITIVE_ADMIN` as the general four-eyes master switch. See
-    `docs/admin-over-mcp.md`. Still deferred: IdP user/group hard-delete, self-upgrade.
+    `docs/admin-over-mcp.md`.
+  - **IdP hard-delete + self-upgrade (0.1.10+, the last deferred items)** —
+    `admin_delete_user` / `admin_delete_group` (routine, irreversible; new
+    `Provider.DeleteUser`/`DeleteGroup`; live-verified on throwaways) and
+    `admin_request_upgrade` (the most-guarded action: fail-closed `upgrade.Stager`
+    seam — `internal/upgrade`, default `Disabled` — behind `BEAMHALL_SELF_UPGRADE=on`
+    + the sensitive tier + four-eyes; on approval it downloads the pinned release,
+    **sha256-verifies against checksums.txt**, stages + self-version-checks the new
+    binary, and returns the operator atomic apply/rollback runbook — never a live
+    self-replacing restart). `WithUpgrader` orch option; `BEAMHALL_SELF_UPGRADE` /
+    `BEAMHALL_RELEASE_BASE_URL` config. The admin-over-MCP surface is now complete
+    (36 admin tools).
   - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
     `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
     `s.srv` returns only the tools a caller's token could invoke (builder surface vs
     full `admin_*` menu), plus appliance-state gates (bundled-IdP tools hidden on
     BYO-IdP; the four-eyes sensitive tools hidden until the sensitive tier is on;
-    backup tools hidden unless a backup dir is configured). The
+    backup tools hidden unless a backup dir is configured; `admin_request_upgrade`
+    hidden unless self-upgrade is on). The
     token rides on `req.Extra` (Streamable HTTP attaches it to every request, incl.
     `tools/list`), so the same `TokenInfo` `resolveActor` reads is available at list
     time. **Discovery only** — handlers still enforce via `resolveActor` (filtering

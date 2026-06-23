@@ -26,6 +26,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/policy"
 	"github.com/Beamhall/beamhall/internal/secret"
 	"github.com/Beamhall/beamhall/internal/store"
+	"github.com/Beamhall/beamhall/internal/upgrade"
 )
 
 // GatewayAPI is the slice of the Caddy gateway the orchestrator drives.
@@ -97,6 +98,10 @@ type Orchestrator struct {
 	backupDataDir string
 	backupKeyPath string
 	backupDir     string
+
+	// upgrader stages self-upgrades (WithUpgrader). Defaults to upgrade.Disabled
+	// (fail-closed): self-upgrade is unavailable unless explicitly enabled.
+	upgrader upgrade.Stager
 }
 
 // startupPolls divides the startup grace into status checks.
@@ -188,6 +193,19 @@ func WithBackup(dataDir, keyPath, backupDir string) Option {
 	}
 }
 
+// WithUpgrader enables self-upgrade staging behind the four-eyes sensitive tier.
+// A nil stager keeps the fail-closed default (self-upgrade unavailable).
+func WithUpgrader(u upgrade.Stager) Option {
+	return func(o *Orchestrator) {
+		if u != nil {
+			o.upgrader = u
+		}
+	}
+}
+
+// UpgradeEnabled reports whether self-upgrade staging is available.
+func (o *Orchestrator) UpgradeEnabled() bool { return o.upgrader != nil && o.upgrader.Enabled() }
+
 // IdentityAdminEnabled reports whether this appliance administers its IdP (the
 // bundled Keycloak) — false for a bring-your-own-IdP deployment.
 func (o *Orchestrator) IdentityAdminEnabled() bool { return o.idp.Enabled() }
@@ -211,6 +229,7 @@ func New(st *store.Store, drv driver.RuntimeDriver, gw GatewayAPI, sched PauseSc
 		startupGrace:      2 * time.Second,
 		buildSem:          make(chan struct{}, 2),
 		idp:               identityadmin.Disabled{},
+		upgrader:          upgrade.Disabled{},
 	}
 	for _, opt := range opts {
 		opt(o)

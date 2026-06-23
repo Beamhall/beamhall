@@ -269,6 +269,39 @@ func (k *Keycloak) SetUserEnabled(ctx context.Context, userID string, enabled bo
 	return nil
 }
 
+// DeleteUser permanently removes a user account. The MCP layer steers operators
+// toward SetUserEnabled (reversible) first; this is for genuine cleanup.
+func (k *Keycloak) DeleteUser(ctx context.Context, userID string) error {
+	if userID == "" {
+		return fmt.Errorf("userID is required")
+	}
+	resp, err := k.do(ctx, http.MethodDelete, "/users/"+url.PathEscape(userID), nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete user: HTTP %d (%s)", resp.StatusCode, snippet(resp))
+	}
+	return nil
+}
+
+// DeleteGroup permanently removes a group; its members are un-grouped, not deleted.
+func (k *Keycloak) DeleteGroup(ctx context.Context, groupID string) error {
+	if groupID == "" {
+		return fmt.Errorf("groupID is required")
+	}
+	resp, err := k.do(ctx, http.MethodDelete, "/groups/"+url.PathEscape(groupID), nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete group: HTTP %d (%s)", resp.StatusCode, snippet(resp))
+	}
+	return nil
+}
+
 func (k *Keycloak) CreateGroup(ctx context.Context, name string) (Group, error) {
 	if name == "" {
 		return Group{}, fmt.Errorf("group name is required")

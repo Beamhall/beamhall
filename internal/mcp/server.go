@@ -75,6 +75,8 @@ type Backplane interface {
 	AdminBackupNow(ctx context.Context, actor orch.Actor, now time.Time) (orch.BackupInfo, error)
 	AdminListBackups(ctx context.Context, actor orch.Actor) ([]orch.BackupInfo, error)
 	RequestRestoreBackup(ctx context.Context, actor orch.Actor, name string) (domain.AdminActionRequest, error)
+	UpgradeEnabled() bool
+	RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error)
 	AdminCreateUser(ctx context.Context, actor orch.Actor, u identityadmin.NewUser) (identityadmin.User, error)
 	AdminListUsers(ctx context.Context, actor orch.Actor, query string, max int) ([]identityadmin.User, error)
 	AdminSetUserPassword(ctx context.Context, actor orch.Actor, userID, password string) error
@@ -83,6 +85,8 @@ type Backplane interface {
 	AdminListGroups(ctx context.Context, actor orch.Actor) ([]identityadmin.Group, error)
 	AdminAddUserToGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
 	AdminRemoveUserFromGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
+	AdminDeleteUser(ctx context.Context, actor orch.Actor, userID string) error
+	AdminDeleteGroup(ctx context.Context, actor orch.Actor, groupID string) error
 	// SENSITIVE tier (four-eyes): federation files a request a different IT
 	// operator must approve before it executes (PLAN §5.9).
 	RequestFederateDirectory(ctx context.Context, actor orch.Actor, d identityadmin.DirectoryFederation) (domain.AdminActionRequest, error)

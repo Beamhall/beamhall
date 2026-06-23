@@ -29,6 +29,10 @@ type Config struct {
 	// BackupDir is where admin_backup_now writes appliance backups (and
 	// admin_list_backups reads them). Empty falls back to <DataDir>/backups.
 	BackupDir string
+	// SelfUpgrade enables the four-eyes self-upgrade tool (fail-closed default).
+	SelfUpgrade bool
+	// ReleaseBaseURL is the release-asset base for self-upgrade downloads.
+	ReleaseBaseURL string
 	// LogLevel is one of debug|info|warn|error.
 	LogLevel string
 
@@ -131,12 +135,14 @@ type Config struct {
 // Load reads configuration from the environment, applying defaults.
 func Load() (Config, error) {
 	c := Config{
-		HTTPAddr:      envOr("BEAMHALL_HTTP_ADDR", ":8443"),
-		BaseDomain:    envOr("BEAMHALL_BASE_DOMAIN", "beamhall.internal"),
-		DataDir:       envOr("BEAMHALL_DATA_DIR", "/var/lib/beamhall"),
-		LogLevel:      strings.ToLower(envOr("BEAMHALL_LOG_LEVEL", "info")),
-		SecretKeyFile: os.Getenv("BEAMHALL_SECRET_KEY_FILE"),
-		BackupDir:     os.Getenv("BEAMHALL_BACKUP_DIR"),
+		HTTPAddr:       envOr("BEAMHALL_HTTP_ADDR", ":8443"),
+		BaseDomain:     envOr("BEAMHALL_BASE_DOMAIN", "beamhall.internal"),
+		DataDir:        envOr("BEAMHALL_DATA_DIR", "/var/lib/beamhall"),
+		LogLevel:       strings.ToLower(envOr("BEAMHALL_LOG_LEVEL", "info")),
+		SecretKeyFile:  os.Getenv("BEAMHALL_SECRET_KEY_FILE"),
+		BackupDir:      os.Getenv("BEAMHALL_BACKUP_DIR"),
+		SelfUpgrade:    envOr("BEAMHALL_SELF_UPGRADE", "off") == "on",
+		ReleaseBaseURL: envOr("BEAMHALL_RELEASE_BASE_URL", "https://github.com/Beamhall/beamhall/releases/download"),
 
 		AuditRetentionDays: envInt("BEAMHALL_AUDIT_RETENTION_DAYS", 0),
 

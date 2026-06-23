@@ -13,13 +13,15 @@ import (
 // fakeProvider records IdP-admin calls so the orchestrator's tiering/audit
 // behavior is tested without a live Keycloak.
 type fakeProvider struct {
-	createdUser    string
-	federated      string
+	createdUser      string
+	federated        string
 	bindCredential   string
 	userEnabled      bool
 	userEnabledID    string
 	removedFromGroup string
 	unfederated      string
+	deletedUser      string
+	deletedGroup     string
 }
 
 func (f *fakeProvider) Enabled() bool { return true }
@@ -43,6 +45,14 @@ func (f *fakeProvider) ListGroups(context.Context) ([]identityadmin.Group, error
 func (f *fakeProvider) AddUserToGroup(context.Context, string, string) error      { return nil }
 func (f *fakeProvider) RemoveUserFromGroup(_ context.Context, userID, groupID string) error {
 	f.removedFromGroup = userID + ":" + groupID
+	return nil
+}
+func (f *fakeProvider) DeleteUser(_ context.Context, userID string) error {
+	f.deletedUser = userID
+	return nil
+}
+func (f *fakeProvider) DeleteGroup(_ context.Context, groupID string) error {
+	f.deletedGroup = groupID
 	return nil
 }
 func (f *fakeProvider) UnfederateDirectory(_ context.Context, name string) error {

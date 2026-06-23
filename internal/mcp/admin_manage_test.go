@@ -158,6 +158,9 @@ func TestNewAdminToolsRequireAdminScope(t *testing.T) {
 		"admin_backup_now":             {},
 		"admin_list_backups":           {},
 		"admin_restore_backup":         {"name": "b.tar.gz"},
+		"admin_delete_user":            {"user_id": "u-1"},
+		"admin_delete_group":           {"group_id": "g-1"},
+		"admin_request_upgrade":        {"version": "v0.1.11"},
 	} {
 		_, txt := h.call(t, cs, tool, args, true)
 		if !strings.Contains(txt, "insufficient_scope") {
@@ -324,6 +327,59 @@ func TestAdminBackupTools(t *testing.T) {
 	assertCalled(t, h, "RequestRestoreBackup:beamhall-20260102T000000Z.tar.gz")
 }
 
+func TestAdminDeleteUserAndGroupTools(t *testing.T) {
+	h := newHarness(t)
+	h.bp.idpEnabled = true
+	cs := h.connect(t, auth.ScopeAdminIT, nil)
+	_, txt := h.call(t, cs, "admin_delete_user", map[string]any{"user_id": "u-9"}, false)
+	if !strings.Contains(txt, "permanently deleted") {
+		t.Fatalf("delete_user reply: %q", txt)
+	}
+	assertCalled(t, h, "AdminDeleteUser:u-9")
+	_, txt = h.call(t, cs, "admin_delete_group", map[string]any{"group_id": "g-9"}, false)
+	if !strings.Contains(txt, "permanently deleted") {
+		t.Fatalf("delete_group reply: %q", txt)
+	}
+	assertCalled(t, h, "AdminDeleteGroup:g-9")
+
+	// BYO-IdP → actionable hint.
+	h2 := newHarness(t)
+	cs2 := h2.connect(t, auth.ScopeAdminIT, nil)
+	_, txt = h2.call(t, cs2, "admin_delete_user", map[string]any{"user_id": "u-9"}, true)
+	if !strings.Contains(txt, "external IdP") {
+		t.Fatalf("BYO-IdP delete_user: want hint, got %q", txt)
+	}
+}
+
+func TestAdminRequestUpgradeFourEyes(t *testing.T) {
+	h := newHarness(t)
+	h.bp.sensitiveTier = true
+	h.bp.upgradeEnabled = true
+	cs := h.connect(t, auth.ScopeAdminIT, nil)
+	_, txt := h.call(t, cs, "admin_request_upgrade", map[string]any{"version": "v0.1.11"}, false)
+	if !strings.Contains(txt, "DIFFERENT IT operator") || !strings.Contains(txt, "admin_approve_request") {
+		t.Fatalf("upgrade four-eyes reply: %q", txt)
+	}
+	assertCalled(t, h, "RequestUpgrade:v0.1.11")
+}
+
+func TestToolListUpgradeGating(t *testing.T) {
+	// Self-upgrade disabled → admin_request_upgrade off the menu even with the
+	// sensitive tier on.
+	h := newHarness(t)
+	h.bp.sensitiveTier = true
+	if listToolNames(t, h.connect(t, auth.ScopeAdminIT, nil))["admin_request_upgrade"] {
+		t.Error("admin_request_upgrade shown when self-upgrade is disabled")
+	}
+	// Enabled (+ sensitive on) → it appears.
+	h2 := newHarness(t)
+	h2.bp.sensitiveTier = true
+	h2.bp.upgradeEnabled = true
+	if !listToolNames(t, h2.connect(t, auth.ScopeAdminIT, nil))["admin_request_upgrade"] {
+		t.Error("admin_request_upgrade hidden when self-upgrade is enabled")
+	}
+}
+
 func TestToolListBackupGating(t *testing.T) {
 	// Backups unconfigured → the backup tools stay off the menu.
 	h := newHarness(t)
@@ -373,12 +429,13 @@ func TestToolVisibilityTableMatchesRegistry(t *testing.T) {
 		}
 	}
 
-	// A maximally-privileged it_admin (all scopes + admin:it, IdP + sensitive +
-	// backup on) must see exactly the full registry.
+	// A maximally-privileged it_admin (all scopes + admin:it, every appliance-
+	// state gate on) must see exactly the full registry.
 	full := newHarness(t)
 	full.bp.idpEnabled = true
 	full.bp.sensitiveTier = true
 	full.bp.backupEnabled = true
+	full.bp.upgradeEnabled = true
 	token := strings.Join(auth.AllScopes(), ",") + "," + auth.ScopeAdminIT
 	seen := listToolNames(t, full.connect(t, token, nil))
 	for name := range all {

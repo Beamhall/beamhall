@@ -40,6 +40,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/scheduler"
 	"github.com/Beamhall/beamhall/internal/secret"
 	"github.com/Beamhall/beamhall/internal/store"
+	"github.com/Beamhall/beamhall/internal/upgrade"
 	"github.com/Beamhall/beamhall/internal/web"
 )
 
@@ -346,6 +347,18 @@ func run() error {
 			},
 		}),
 		orch.WithRepoRetirer(repos.Retire),
+	}
+	if cfg.SelfUpgrade {
+		installPath, _ := os.Executable()
+		opts = append(opts, orch.WithUpgrader(upgrade.Release{
+			BaseURL:     cfg.ReleaseBaseURL,
+			InstallPath: installPath,
+			StagingDir:  filepath.Join(cfg.DataDir, "upgrades"),
+			GOOS:        runtime.GOOS,
+			GOARCH:      runtime.GOARCH,
+			Current:     version,
+		}))
+		logger.Info("self-upgrade enabled (four-eyes; staged, operator-applied)", "release_base", cfg.ReleaseBaseURL)
 	}
 	if cfg.PGAdminDSN != "" {
 		opts = append(opts, orch.WithDatabaseProvisioner(&resource.PostgresProvisioner{

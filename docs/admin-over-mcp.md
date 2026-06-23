@@ -70,6 +70,7 @@ For many users a week, drive these from the agent in a loop, or use the
 | `admin_create_group` / `admin_list_groups` | routine | organize bundled-IdP users |
 | `admin_add_user_to_group` / `admin_remove_user_from_group` | routine | manage group membership in the bundled IdP |
 | `admin_set_user_enabled` | routine | enable/disable a bundled-IdP account (offboarding without deletion) |
+| `admin_delete_user` / `admin_delete_group` | routine (irreversible) | permanently delete a bundled-IdP account / group (prefer disable for reversible offboarding) |
 | `admin_federate_directory` / `admin_unfederate_directory` | **sensitive** | connect/disconnect the bundled IdP to/from LDAP/Active Directory |
 
 ### Workspace + membership lifecycle (read/update/offboard)
@@ -102,6 +103,30 @@ For many users a week, drive these from the agent in a loop, or use the
 | `admin_list_backups` | routine (read) | list backups (newest first) with size, contents, and integrity-verification status |
 | `admin_restore_backup` | **sensitive** | restore from a named backup (overwrites the whole control plane). Four-eyes; never applied live — on approval the archive is verified and you get the exact stop→restore→start command (restore is a stop-the-world operation) |
 
+### Self-upgrade (the most-guarded action)
+
+| Tool | Tier | Effect |
+|---|---|---|
+| `admin_request_upgrade` | **sensitive** | upgrade the appliance to a target release (e.g. `v0.1.11`) — replaces the policy-enforcing binary |
+
+Self-upgrade is the control plane modifying the binary that enforces policy, so
+it carries **four** independent gates: it is **fail-closed** (off unless
+`BEAMHALL_SELF_UPGRADE=on`, and then only the *staging* runs in-process), behind
+the **sensitive tier**, behind **four-eyes** approval, and the final irreversible
+**swap + restart is an operator step**, never autonomous. On approval the backplane
+downloads the pinned release, **verifies its sha256 against `checksums.txt`**, stages
+the new binary (and sanity-checks that it runs and self-reports the target version),
+then hands back the exact atomic apply + rollback commands:
+
+```
+admin_request_upgrade version=v0.1.11        # operator A files it
+admin_approve_request request_id=<id>        # operator B approves → stages + verifies
+# then on the host (atomic swap + restart; the current binary is kept as rollback):
+cp /usr/local/bin/beamhalld /usr/local/bin/beamhalld.rollback \
+  && mv <staged> /usr/local/bin/beamhalld && systemctl restart beamhalld
+# rollback: mv /usr/local/bin/beamhalld.rollback /usr/local/bin/beamhalld && systemctl restart beamhalld
+```
+
 The owned-IdP tools require Beamhall to be running its **bundled** IdP. On a
 bring-your-own-IdP deployment they return a clear notice telling you to manage
 users in your own IdP — Beamhall validates your tokens but does not administer a
@@ -125,14 +150,16 @@ IdP later wouldn't change the tools.
 - **Routine** ops (onboarding: users, passwords, groups, identities, memberships)
   run autonomously and are audited.
 - **Sensitive** ops change *who can sign in*, the *isolation posture*, *tamper-evidence*,
-  or *all appliance state*: `admin_federate_directory` / `admin_unfederate_directory`,
-  `admin_set_security_context` (runtime-class), `admin_prune_audit`, and
-  `admin_restore_backup` (self-upgrade will join them). These go through a
+  *all appliance state*, or *the policy-enforcing binary itself*:
+  `admin_federate_directory` / `admin_unfederate_directory`,
+  `admin_set_security_context` (runtime-class), `admin_prune_audit`,
+  `admin_restore_backup`, and `admin_request_upgrade`. These go through a
   **four-eyes approval flow** (below): the requesting operator never executes them;
   a *different* IT operator must approve. The master switch
   `BEAMHALL_IDP_SENSITIVE_ADMIN=on` controls whether sensitive actions can be
   requested at all — with it off they fail closed and stay off the tool menu.
-  (`admin_restore_backup` also needs a backup directory configured.)
+  (`admin_restore_backup` also needs a backup directory; `admin_request_upgrade`
+  also needs `BEAMHALL_SELF_UPGRADE=on` — both are additionally fail-closed.)
 
 Why this matters: an `admin:it` agent that can create identities and grant
 memberships can *manufacture access*. `admin:it` is a master key — keep it
@@ -203,11 +230,12 @@ cheap, fail-closed axes (no extra DB read):
   exactly: a tool is shown **iff** the caller would pass its scope/role check.
 - **Appliance state** — bundled-IdP tools are hidden on a bring-your-own-IdP
   deployment; the four-eyes sensitive tools are hidden until the sensitive tier is
-  enabled; the backup tools are hidden unless a backup directory is configured. (No
-  point offering a tool that can only answer "not enabled.") This was observed live:
-  redeploying with the sensitive tier off kept `admin_set_security_context` /
-  `admin_unfederate_directory` / `admin_prune_audit` / `admin_restore_backup` off the
-  menu, while the routine tools and the configured-backup tools appeared.
+  enabled; the backup tools are hidden unless a backup directory is configured; and
+  `admin_request_upgrade` is hidden unless self-upgrade is turned on. (No point
+  offering a tool that can only answer "not enabled.") This was observed live:
+  redeploying with the sensitive tier off, and self-upgrade off, kept the four-eyes
+  tools and `admin_request_upgrade` off the menu, while the routine tools and the
+  configured-backup tools appeared.
 
 This is **discovery, not authorization** — every handler still calls
 `resolveActor`, so a hidden tool invoked directly is still refused. When the

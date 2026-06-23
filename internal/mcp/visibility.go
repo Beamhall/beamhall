@@ -79,6 +79,8 @@ var toolScope = map[string]string{
 	"admin_list_groups":            auth.ScopeAdminIT,
 	"admin_add_user_to_group":      auth.ScopeAdminIT,
 	"admin_remove_user_from_group": auth.ScopeAdminIT,
+	"admin_delete_user":            auth.ScopeAdminIT,
+	"admin_delete_group":           auth.ScopeAdminIT,
 	"admin_federate_directory":     auth.ScopeAdminIT,
 	"admin_unfederate_directory":   auth.ScopeAdminIT,
 	"admin_set_security_context":   auth.ScopeAdminIT,
@@ -86,6 +88,7 @@ var toolScope = map[string]string{
 	"admin_backup_now":             auth.ScopeAdminIT,
 	"admin_list_backups":           auth.ScopeAdminIT,
 	"admin_restore_backup":         auth.ScopeAdminIT,
+	"admin_request_upgrade":        auth.ScopeAdminIT,
 	"admin_list_pending_requests":  auth.ScopeAdminIT,
 	"admin_approve_request":        auth.ScopeAdminIT,
 	"admin_reject_request":         auth.ScopeAdminIT,
@@ -111,6 +114,8 @@ var idpAdminTools = map[string]bool{
 	"admin_list_groups":            true,
 	"admin_add_user_to_group":      true,
 	"admin_remove_user_from_group": true,
+	"admin_delete_user":            true,
+	"admin_delete_group":           true,
 	"admin_federate_directory":     true,
 	"admin_unfederate_directory":   true,
 }
@@ -125,6 +130,7 @@ var sensitiveTierTools = map[string]bool{
 	"admin_set_security_context": true,
 	"admin_prune_audit":          true,
 	"admin_restore_backup":       true,
+	"admin_request_upgrade":      true,
 }
 
 // backupTools require the appliance to have a backup directory configured
@@ -136,12 +142,20 @@ var backupTools = map[string]bool{
 	"admin_restore_backup": true,
 }
 
+// upgradeTools require self-upgrade to be enabled (WithUpgrader / fail-closed by
+// default), so the most-guarded action stays off the menu unless deliberately
+// turned on.
+var upgradeTools = map[string]bool{
+	"admin_request_upgrade": true,
+}
+
 // applianceState is the cheap, per-list snapshot of deployment capabilities the
 // filter consults in addition to the caller's token (no DB read).
 type applianceState struct {
 	idpEnabled       bool
 	sensitiveEnabled bool
 	backupEnabled    bool
+	upgradeEnabled   bool
 }
 
 // toolVisible reports whether a caller with the given token should see the named
@@ -173,6 +187,9 @@ func toolVisible(name string, info *sdkauth.TokenInfo, adminRole string, st appl
 	if backupTools[name] && !st.backupEnabled {
 		return false
 	}
+	if upgradeTools[name] && !st.upgradeEnabled {
+		return false
+	}
 	return true
 }
 
@@ -199,6 +216,7 @@ func (s *Server) installToolFilter() {
 				idpEnabled:       s.bp.IdentityAdminEnabled(),
 				sensitiveEnabled: s.bp.SensitiveAdminEnabled(),
 				backupEnabled:    s.bp.BackupEnabled(),
+				upgradeEnabled:   s.bp.UpgradeEnabled(),
 			}
 			kept := make([]*sdkmcp.Tool, 0, len(lt.Tools))
 			for _, t := range lt.Tools {

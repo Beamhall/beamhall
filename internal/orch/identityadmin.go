@@ -92,6 +92,25 @@ func (o *Orchestrator) AdminRemoveUserFromGroup(ctx context.Context, actor Actor
 	return o.itAudit(ctx, actor, "admin_remove_user_from_group", "", o.idp.RemoveUserFromGroup(ctx, userID, groupID))
 }
 
+// AdminDeleteUser permanently removes a bundled-IdP account. Prefer
+// AdminSetUserEnabled (reversible) for offboarding; this is genuine cleanup.
+// it_admin only.
+func (o *Orchestrator) AdminDeleteUser(ctx context.Context, actor Actor, userID string) error {
+	if err := o.requireIT(actor); err != nil {
+		return o.itAudit(ctx, actor, "admin_delete_user", "", err)
+	}
+	return o.itAudit(ctx, actor, "admin_delete_user", "", o.idp.DeleteUser(ctx, userID))
+}
+
+// AdminDeleteGroup permanently removes a bundled-IdP group (members are
+// un-grouped, not deleted). it_admin only.
+func (o *Orchestrator) AdminDeleteGroup(ctx context.Context, actor Actor, groupID string) error {
+	if err := o.requireIT(actor); err != nil {
+		return o.itAudit(ctx, actor, "admin_delete_group", "", err)
+	}
+	return o.itAudit(ctx, actor, "admin_delete_group", "", o.idp.DeleteGroup(ctx, groupID))
+}
+
 // --- SENSITIVE tier: four-eyes approval (PLAN §5.9) ---------------------------
 //
 // A sensitive admin action (today: directory federation; later: restore/upgrade)
@@ -364,6 +383,8 @@ func (o *Orchestrator) executeAdminAction(ctx context.Context, approver domain.I
 		return fmt.Sprintf("pruned %d audit row(s) through seq %d; retention checkpoint written", n, p.ThroughSeq), nil
 	case domain.AdminActionRestoreBackup:
 		return o.executeRestoreBackup(payload)
+	case domain.AdminActionSelfUpgrade:
+		return o.executeSelfUpgrade(ctx, payload)
 	default:
 		return "", fmt.Errorf("unknown sensitive admin action %q", typ)
 	}

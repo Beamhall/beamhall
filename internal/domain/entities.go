@@ -305,6 +305,7 @@ const (
 	AdminActionSetSecurityContext  AdminActionType = "set_security_context"
 	AdminActionPruneAudit          AdminActionType = "prune_audit"
 	AdminActionRestoreBackup       AdminActionType = "restore_backup"
+	AdminActionSelfUpgrade         AdminActionType = "self_upgrade"
 )
 
 // AdminActionRequest records a SENSITIVE admin action awaiting a second IT

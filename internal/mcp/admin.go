@@ -159,6 +159,14 @@ type removeUserFromGroupArgs struct {
 	GroupID string `json:"group_id" jsonschema:"the bundled-IdP group id (from admin_list_groups)"`
 }
 
+type deleteUserArgs struct {
+	UserID string `json:"user_id" jsonschema:"the bundled-IdP user id to permanently delete (from admin_list_users)"`
+}
+
+type deleteGroupArgs struct {
+	GroupID string `json:"group_id" jsonschema:"the bundled-IdP group id to permanently delete (from admin_list_groups)"`
+}
+
 type setSecurityContextArgs struct {
 	Slug         string `json:"slug" jsonschema:"workspace slug"`
 	RuntimeClass string `json:"runtime_class" jsonschema:"isolation tier: runc | runsc (gVisor, regulated)"`
@@ -174,6 +182,10 @@ type pruneAuditArgs struct {
 
 type restoreBackupArgs struct {
 	Name string `json:"name" jsonschema:"the backup archive name to restore from (from admin_list_backups)"`
+}
+
+type requestUpgradeArgs struct {
+	Version string `json:"version" jsonschema:"the target release version to upgrade to, e.g. v0.1.11"`
 }
 
 // registerAdminTools registers the admin:it tool family. Called from
@@ -293,6 +305,14 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_remove_user_from_group",
 		Description: "IT only: remove a bundled-IdP user from a group (the admin_add_user_to_group inverse). Only available when Beamhall runs its bundled IdP.",
 	}, s.adminRemoveUserFromGroup)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_delete_user",
+		Description: "IT only: PERMANENTLY delete a bundled-IdP account. This is irreversible — prefer admin_set_user_enabled (disable) for offboarding, which is reversible and keeps the account's linkage; use delete only for genuine cleanup (e.g. a mistakenly-created account). Only available when Beamhall runs its bundled IdP.",
+	}, s.adminDeleteUser)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_delete_group",
+		Description: "IT only: PERMANENTLY delete a bundled-IdP group. Members are un-grouped, not deleted. Only available when Beamhall runs its bundled IdP.",
+	}, s.adminDeleteGroup)
 
 	// SENSITIVE management actions — four-eyes (a DIFFERENT IT operator approves
 	// via admin_approve_request). They mutate isolation posture, sign-in, or
@@ -323,6 +343,10 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_restore_backup",
 		Description: "IT only, SENSITIVE (four-eyes): restore the appliance from a named backup (overwrites the WHOLE control plane). It is never applied live — it files a request a DIFFERENT IT operator must approve; on approval the backup is verified and you get the exact stop→restore→start command to run on the host (restore is a stop-the-world operation). Requires the sensitive tier. Use admin_list_backups for the name.",
 	}, s.adminRestoreBackup)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_request_upgrade",
+		Description: "IT only, SENSITIVE (four-eyes): upgrade the appliance to a target release version (e.g. v0.1.11) — this replaces the policy-enforcing binary, so it is the most-guarded action. It files a request a DIFFERENT IT operator must approve; on approval the release is downloaded, its checksum verified, and the new binary STAGED (never applied live). You then get the exact atomic apply + rollback commands to run on the host. Requires self-upgrade to be enabled (BEAMHALL_SELF_UPGRADE=on) and the sensitive tier.",
+	}, s.adminRequestUpgrade)
 }
 
 func (s *Server) adminRegisterIdentity(ctx context.Context, req *sdkmcp.CallToolRequest, args registerIdentityArgs) (*sdkmcp.CallToolResult, any, error) {
@@ -516,7 +540,7 @@ func (s *Server) adminCreateBeamhall(ctx context.Context, req *sdkmcp.CallToolRe
 		return nil, nil, err
 	}
 	return text(fmt.Sprintf("beamhall %q created (runtime_class %s; quota %d beams / %d live / %d databases). Grant builders access with admin_grant_membership.",
-		bh.Slug, rc, q.MaxBeams, q.MaxLiveSlots, q.MaxDBCount)),
+			bh.Slug, rc, q.MaxBeams, q.MaxLiveSlots, q.MaxDBCount)),
 		map[string]string{"beamhall": bh.Slug}, nil
 }
 
@@ -734,6 +758,30 @@ func (s *Server) adminRemoveUserFromGroup(ctx context.Context, req *sdkmcp.CallT
 	return text(fmt.Sprintf("user %s removed from group %s.", args.UserID, args.GroupID)), nil, nil
 }
 
+func (s *Server) adminDeleteUser(ctx context.Context, req *sdkmcp.CallToolRequest, args deleteUserArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.AdminDeleteUser(ctx, actor, args.UserID); err != nil {
+		return nil, nil, idpErr(err)
+	}
+	return text(fmt.Sprintf("bundled-IdP user %s permanently deleted.", args.UserID)),
+		map[string]string{"user_id": args.UserID}, nil
+}
+
+func (s *Server) adminDeleteGroup(ctx context.Context, req *sdkmcp.CallToolRequest, args deleteGroupArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.AdminDeleteGroup(ctx, actor, args.GroupID); err != nil {
+		return nil, nil, idpErr(err)
+	}
+	return text(fmt.Sprintf("bundled-IdP group %s permanently deleted.", args.GroupID)),
+		map[string]string{"group_id": args.GroupID}, nil
+}
+
 // sensitiveRequestReply renders the four-eyes "request filed, a different
 // operator must approve" response shared by the sensitive management tools.
 func sensitiveRequestReply(ar domain.AdminActionRequest) *sdkmcp.CallToolResult {
@@ -834,6 +882,18 @@ func (s *Server) adminRestoreBackup(ctx context.Context, req *sdkmcp.CallToolReq
 		return nil, nil, err
 	}
 	ar, err := s.bp.RequestRestoreBackup(ctx, actor, args.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sensitiveRequestReply(ar), map[string]string{"request_id": string(ar.ID)}, nil
+}
+
+func (s *Server) adminRequestUpgrade(ctx context.Context, req *sdkmcp.CallToolRequest, args requestUpgradeArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	ar, err := s.bp.RequestUpgrade(ctx, actor, args.Version)
 	if err != nil {
 		return nil, nil, err
 	}
