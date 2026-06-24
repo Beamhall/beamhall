@@ -407,12 +407,15 @@ scripts/              preflight, runsc-smoke, lab-bootstrap
 scripts/agent-conformance/  four-persona MCP conformance suite (bh-mcp-proxy.py +
                       provision/verify/gates/teardown/bh-call) — see docs/agent-conformance.md
 .mcp.json + .claude/agents/bh-*.md  the four authenticated personas (2 admin, 2 builder)
+.claude/agents/       specialist subagents: release-guardian (owns releases) +
+                      website-steward (owns website/) — main context delegates to them (see CLAUDE.md)
+CHANGELOG.md + WORKFLOW.md  release notes (Keep a Changelog) + the release-process pointer
 docs/                 PLAN.md, STATUS.md (this), lab-phase0-validation.md, threat-model.md,
                       beamhall-for-it.md (IT overview + planning surface),
                       getting-started.md (IT admin's step-by-step first-hour play),
                       admin-over-mcp.md, agent-conformance.md, idp-setup.md, air-gapped.md
-.github/workflows/    ci.yml (build/vet/test + website) + release.yml (tag → GoReleaser → published release)
-website/              public marketing + docs site (Astro + Starlight → Cloudflare Pages)
+.github/workflows/    ci.yml (build/vet/test + website) + release.yml (tag → GoReleaser → release; body from CHANGELOG)
+website/              public marketing site (single-page Astro → Cloudflare); owned by the website-steward agent
 ```
 
 ## Key design decisions (pointers)
