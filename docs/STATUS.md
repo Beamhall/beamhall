@@ -750,11 +750,15 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     load-bearing invariant (an app-client token is **401'd by `/mcp`** — proven live);
     exact redirect URIs auto-synced across preview rotation; admin-curated group exposure
     (separation of duties); scope boundary = corporate SSO, NOT public self-signup (that
-    stays app-managed). **Lab-verified end-to-end** (`scripts/agent-conformance/auth-isolation.sh`):
-    audience-isolation 401 + positive control, provision→show→archive-reclaim, group
-    allowlist, menu 16→18 builder / 30→31 admin; all Keycloak REST shaping worked first-try
-    (`docs/lab-phase0-validation.md`). Deferred (designed): gateway forward-auth, isolated
-    end-user realms, `rotate_auth`, and a live deploy→resume→promote redirect-sync pass.
+    stays app-managed). **Lab-verified end-to-end** — two re-runnable conformance scripts:
+    `auth-isolation.sh` (audience-isolation 401 + positive control, provision→show→
+    archive-reclaim, group allowlist, menu 16→18 builder / 30→31 admin) and
+    `auth-redirect-sync.sh` (the **full live deploy→pause→resume→promote→destroy lifecycle**:
+    redirects sync to the live host on deploy, empty on pause, re-sync to the rotated host on
+    resume, promote **mirrors a distinct live client** with its own audience + own secret +
+    the carried group allowlist on the stable live host, destroy reclaims **both** channel
+    clients). All Keycloak REST shaping worked first-try (`docs/lab-phase0-validation.md`).
+    Deferred (designed, not built): gateway forward-auth, isolated end-user realms, `rotate_auth`.
   - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
     `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
     `s.srv` returns only the tools a caller's token could invoke (builder surface vs

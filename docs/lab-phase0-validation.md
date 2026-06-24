@@ -1058,7 +1058,33 @@ audience-isolation 401 is the regulated sign-off proof).
 toggles it on only long enough to mint a representative app-`aud` token, then
 reverts.
 
-**Deferred to a later lab pass:** the redirect-sync hooks on deploy/resume/promote
-and the live-client mirror on first promote — these reuse the already-verified
-`CreateClient`/`SyncRedirectURIs` REST and are unit-tested in `internal/orch`, but
-a full build→deploy→resume→promote run hasn't been driven live yet.
+## Provisioned auth — full lifecycle hooks, lab-verified 2026-06-24 (PLAN §5.10)
+
+Closed the deferred item below: drove the **complete deploy→pause→resume→promote→
+destroy lifecycle** live and read every OIDC client back from Keycloak Admin REST at
+each step. Artifact: `scripts/agent-conformance/auth-redirect-sync.sh` (re-runnable).
+
+Deploy is **build-free**: the redirect-sync/live-mirror hooks fire on route/host
+assignment, not on what the app does, so the beam pins an already-built, secret-free
+in-hall image (`team-blue/blue-web`, resolved by digest from the loopback registry).
+No `pack` build needed — the build daemon stayed inactive.
+
+| Hook / step | Result |
+|---|---|
+| `provision_auth` before any deploy → preview client, **empty** redirect allowlist, audience = own clientId | PASS |
+| `deploy_beam` → `finalizeActiveRelease` syncs preview redirects + web-origin to the live host | PASS (`…preview.beamhall.internal`) |
+| `admin_set_auth_groups [hr]` → preview client carries the `hr` allowlist (client role) | PASS |
+| `pause_preview` → redirect allowlist + web-origins **emptied** (dead URL has no callback) | PASS |
+| `resume_preview` → host **rotated** + redirects re-synced to the new host, no redeploy | PASS (host A → host B) |
+| `promote_to_live` (IT) → `mirrorLiveAuthClient` mints a **distinct** live client: stable live host, own audience (not the resource URI), **secret ≠ preview's**, `hr` allowlist **carried to production** | PASS |
+| `destroy_beam` (IT) → **both** preview and live clients reclaimed (no orphans) | PASS |
+
+Two script bugs found + fixed while writing it (product was correct throughout):
+the registry-API URL double-counted the repo path, and the audience post-assert must
+read the client's **own** protocol mappers (`/clients/{uuid}/protocol-mappers/models`)
+— the audience mapper is client-level, so `evaluate-scopes` does not surface it (note:
+`auth-isolation.sh` uses `evaluate-scopes` only to assert *absence* of the resource URI,
+which still holds). Cleanup verified: live slot freed, 0 leftover `authsync` clients.
+
+**Still deferred (designed, not built):** gateway forward-auth tier, isolated
+end-user realms, `rotate_auth`.

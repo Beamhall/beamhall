@@ -158,6 +158,10 @@ over MCP as a persona.
 - `scripts/agent-conformance/auth-isolation.sh` — proves provisioned-auth (PLAN §5.10) audience
   isolation end-to-end: a beam's own OIDC-client token is **401'd by `/mcp`** (with a positive
   control), plus the provision→show→archive-reclaim lifecycle and the group allowlist.
+- `scripts/agent-conformance/auth-redirect-sync.sh` — proves the provisioned-auth **lifecycle
+  hooks** live: redirects sync to the host on deploy, empty on pause, re-sync to the rotated host
+  on resume; promote mirrors a **distinct** live client (own audience + own secret + carried group
+  allowlist); destroy reclaims both channel clients. Deploys build-free by pinning an in-hall image.
 - `scripts/agent-conformance/env.example` — secrets template (the real `.env` is gitignored).
 - `.mcp.json` — the four persona servers.
 - `.claude/agents/bh-{admin-alice,admin-bob,builder-carol,builder-dave}.md` — the personas.
