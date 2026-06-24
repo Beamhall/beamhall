@@ -151,6 +151,7 @@ Every "mitigation" below is enforced in code and exercised by a test; the
 | **Privilege/posture tampering** | No agent-facing tool mutates seccomp/caps/quota/egress; `SecurityContext` immutable; forbidden actions are named and audited on attempt | — | — | `TestAgentCannot/MutateSecurityPosture` |
 | **SSRF / metadata theft** | Always-deny `169.254.0.0/16` (incl. cloud metadata) + host IP + mgmt subnet, independent of any allowlist | — | L7 proxy | `TestAgentCannot/ExfiltrateData` |
 | **Confused deputy / token replay** | `aud` == Beamhall resource URI; `iss` pinned; `Origin` checked (DNS rebinding); RS256/ES256 only (no `none`/HMAC) | — | — | `internal/auth` suite (forged alg, wrong aud/iss all rejected) |
+| **App-token replay against the backplane** (provisioned auth, §5.10) | A beam's own OIDC client mints tokens with `aud` = its own client id only; Beamhall never attaches the resource-URI audience to app clients, and `CreateClient` post-asserts no effective mapper injects it (refusing otherwise) | — | — | `internal/identityadmin` post-assert unit test; **lab: an app-client token is 401'd by `/mcp`** while a correctly-scoped token gets 200 (`auth-isolation.sh`) |
 | **Audit tampering** | Hash-chained, append-only audit log; boot-time `Verify`; JSON-Lines export to an off-box SIEM anchors the truncation blind spot | An attacker with DB write + the ability to recompute the whole chain forward could rewrite history; the off-box SIEM cursor detects divergence | WORM/remote-attested log sink | audit chain unit + lab Verify |
 
 ## 7. Network egress model

@@ -740,18 +740,21 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     bypasses the audit trail. The three entry points (`list_beams`, `create_beam`,
     `deploy_beam`) carry the same everyday synonyms + steer. `CLAUDE.md` convention
     extended to make jargon-translation + anti-shadow-IT steering a product requirement.
-  - **Provisioned auth — beam SSO (2026-06-23, IN DEVELOPMENT)** — a beam reuses the
+  - **Provisioned auth — beam SSO (2026-06-23, BUILT + lab-verified)** — a beam reuses the
     bundled Keycloak so its app inherits company sign-in, ergonomics mirroring
     `create_database` (no IdP config, no credential to the agent). Full design in **PLAN
-    §5.10** (+ §10 entry). v1 = in-app library mode, bundled-IdP only; per-channel OIDC
-    clients; **audience isolation** as the load-bearing invariant (app token can't hit
-    `/mcp`); exact redirect URIs auto-synced across preview rotation; admin-curated group
-    exposure (`admin_set_auth_groups`, separation of duties); scope boundary = corporate
-    SSO, NOT public self-signup (that stays app-managed). Extends the `identityadmin`
-    seam (6 client methods), adds `domain.ResourceAuthClient` + `orch/auth.go` +
-    `provision_auth`/`show_auth` MCP tools. Phased: P1 identityadmin → P2 domain/policy
-    → P3 orch → P4 MCP → P5 tests+conformance-persona → P6 lab. Gateway forward-auth +
-    isolated end-user realms designed but deferred.
+    §5.10** (+ §10 entry); shipped in `internal/identityadmin` (6 OIDC-client methods +
+    `keycloak_clients.go`), `internal/orch/auth.go` (+ lifecycle hooks), and MCP tools
+    `provision_auth`/`show_auth` (builder) + `admin_set_auth_groups` (IT). v1 = in-app
+    library mode, bundled-IdP only; per-channel OIDC clients; **audience isolation** as the
+    load-bearing invariant (an app-client token is **401'd by `/mcp`** — proven live);
+    exact redirect URIs auto-synced across preview rotation; admin-curated group exposure
+    (separation of duties); scope boundary = corporate SSO, NOT public self-signup (that
+    stays app-managed). **Lab-verified end-to-end** (`scripts/agent-conformance/auth-isolation.sh`):
+    audience-isolation 401 + positive control, provision→show→archive-reclaim, group
+    allowlist, menu 16→18 builder / 30→31 admin; all Keycloak REST shaping worked first-try
+    (`docs/lab-phase0-validation.md`). Deferred (designed): gateway forward-auth, isolated
+    end-user realms, `rotate_auth`, and a live deploy→resume→promote redirect-sync pass.
   - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
     `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
     `s.srv` returns only the tools a caller's token could invoke (builder surface vs

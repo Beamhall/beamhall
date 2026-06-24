@@ -1030,3 +1030,35 @@ steps), the `curl | bash` install **silently stopped after `SUBSTRATE 4/4`** —
 Also done this session: docs/install now fetch the bootstrap scripts from
 `releases/latest/download/<script>` (GoReleaser `release.extra_files`) — the latest
 **release**, not the dev `main` branch — so the commands never need per-version edits.
+
+## Provisioned auth (beam SSO) — lab-verified 2026-06-23 (PLAN §5.10)
+
+Deployed the provisioned-auth build to the appliance (cross-compiled, backed up
+`beamhalld.rollback`, swapped, restarted clean) and drove it over MCP through the
+conformance personas. **All Keycloak Admin-REST shaping worked first-try against
+real Keycloak — no gotchas** (the shapes flagged as lab-verify-needed:
+`evaluate-scopes/protocol-mappers` for the audience post-assertion, and the
+client-roles-from-groups path for the group allowlist).
+
+| Check | Result |
+|---|---|
+| `provision_auth` returns the OIDC key set, never a secret value | PASS |
+| App-client token (its own `aud`) → `/mcp` | PASS — **HTTP 401** (audience isolation; cannot reach the backplane) |
+| Positive control: correctly-scoped builder token → `/mcp` | PASS — HTTP 200 (so the 401 is specifically the `aud` gate) |
+| App client's effective mappers exclude the Beamhall resource URI | PASS (live `evaluate-scopes` post-assertion) |
+| Per-caller menu | PASS — builders **16 → 18** (`provision_auth`+`show_auth`), admins **30 → 31** (`admin_set_auth_groups`), builders **0** `admin_*` |
+| `admin_set_auth_groups [hr]` → `show_auth` reflects `groups=hr` | PASS — client-role + group-role-mapping + `groups` claim mapper applied |
+| `archive_beam` reclaims the OIDC client | PASS — client verified absent in Keycloak |
+
+Artifact: `scripts/agent-conformance/auth-isolation.sh` (re-runnable; the
+audience-isolation 401 is the regulated sign-off proof).
+
+**Gotcha (script, not product):** ROPC against a beam's OIDC client needs
+`directAccessGrantsEnabled` (off by design for an auth-code client); the check
+toggles it on only long enough to mint a representative app-`aud` token, then
+reverts.
+
+**Deferred to a later lab pass:** the redirect-sync hooks on deploy/resume/promote
+and the live-client mirror on first promote — these reuse the already-verified
+`CreateClient`/`SyncRedirectURIs` REST and are unit-tested in `internal/orch`, but
+a full build→deploy→resume→promote run hasn't been driven live yet.
