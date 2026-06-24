@@ -66,6 +66,9 @@ func (o *Orchestrator) pause(ctx context.Context, beamID domain.ID, ev domain.Ev
 	// The preview URL dies on pause; resume mints a fresh one (the rotation
 	// that makes a leaked/idle preview link stop working).
 	beam.PreviewHost = ""
+	// Empty the preview OIDC client's redirect allowlist while idle (no valid
+	// callback until resume re-syncs) — PLAN §5.10.
+	o.syncAuthRedirects(ctx, beamID, domain.ChannelPreview, "")
 	return o.st.UpdateBeam(ctx, &beam)
 }
 
@@ -111,6 +114,9 @@ func (o *Orchestrator) resume(ctx context.Context, beamID domain.ID) (string, er
 	if err := o.sched.Arm(ctx, string(beam.ID), beam.ResumedAt.Add(o.pauseAfter(beam))); err != nil {
 		return "", err
 	}
+	// Resume rotated the preview URL — re-point the OIDC client's redirect
+	// allowlist to the new host so sign-in keeps working (no redeploy) — PLAN §5.10.
+	o.syncAuthRedirects(ctx, beam.ID, domain.ChannelPreview, hostname)
 	return hostname, o.st.UpdateBeam(ctx, &beam)
 }
 

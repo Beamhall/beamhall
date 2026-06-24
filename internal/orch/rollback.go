@@ -192,6 +192,10 @@ func (o *Orchestrator) reclaimResources(ctx context.Context, beamID domain.ID) {
 				o.log.Warn("dropping database on destroy", "beam", beamID, "database", r.Spec["database"], "err", err)
 			}
 		}
+		if r.Type == domain.ResourceAuthClient {
+			// Delete the beam's OIDC client + its sealed secrets — no orphans (PLAN §5.10).
+			o.reclaimAuthClient(ctx, r)
+		}
 		if err := o.st.DeleteResource(ctx, r.ID); err != nil {
 			o.log.Warn("deleting resource row on destroy", "beam", beamID, "resource", r.ID, "err", err)
 		}

@@ -338,6 +338,9 @@ func (o *Orchestrator) finalizeActiveRelease(ctx context.Context, beam *domain.B
 	if err := o.st.UpdateBeam(ctx, beam); err != nil {
 		return "", err
 	}
+	// Keep the preview OIDC client's redirect allowlist current with this host
+	// (no-op unless the beam has provisioned auth) — PLAN §5.10.
+	o.syncAuthRedirects(ctx, beam.ID, domain.ChannelPreview, hostname)
 	return hostname, nil
 }
 

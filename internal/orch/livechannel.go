@@ -148,6 +148,9 @@ func (o *Orchestrator) finalizeLiveRelease(ctx context.Context, beam *domain.Bea
 
 	beam.LiveReleaseID = relID
 	beam.LiveState = domain.StateLive
+	// Re-assert the live OIDC client's redirect to the stable production host
+	// (idempotent across re-promote and rollback) — PLAN §5.10.
+	o.syncAuthRedirects(ctx, beam.ID, domain.ChannelLive, hostname)
 	return hostname, o.st.UpdateBeam(ctx, beam)
 }
 
@@ -192,6 +195,12 @@ func (o *Orchestrator) releaseSlot(ctx context.Context, beam *domain.Beam) {
 // production data across version bumps).
 func (o *Orchestrator) reconcileLiveResources(ctx context.Context, actor Actor, bh domain.Beamhall,
 	beamSlug string, beamID domain.ID) error {
+	// Mirror the preview OIDC client to a distinct live client (own secret, own
+	// aud, stable live redirect) on first promote — PLAN §5.10. Independent of the
+	// database provisioner, so it runs even on a backplane without one.
+	if err := o.mirrorLiveAuthClient(ctx, actor, bh, beamSlug, beamID); err != nil {
+		return err
+	}
 	if o.dbProv == nil {
 		return nil
 	}

@@ -93,6 +93,14 @@ type Orchestrator struct {
 	idp          identityadmin.Provider
 	idpSensitive bool
 
+	// Provisioned auth (PLAN §5.10): the OIDC issuer injected into a beam's app
+	// (the discovery base) and the Beamhall resource URI that app clients must NOT
+	// carry in `aud` (the audience-isolation invariant: an app token must not be
+	// replayable against the MCP backplane). Both come from the appliance OAuth
+	// config; set via WithProvisionedAuth.
+	authIssuer   string
+	authAudience string
+
 	// Backup config (WithBackup): the data dir + key to archive and where
 	// admin_backup_now writes. Empty backupDir = backups disabled.
 	backupDataDir string
@@ -178,6 +186,17 @@ func WithIdentityAdmin(p identityadmin.Provider, sensitive bool) Option {
 			o.idp = p
 		}
 		o.idpSensitive = sensitive
+	}
+}
+
+// WithProvisionedAuth supplies the values provision_auth needs (PLAN §5.10): the
+// OIDC issuer injected into beams (the discovery base their app points at) and the
+// Beamhall resource URI (cfg.OAuthAudience) that app clients must never carry as
+// `aud`. Both flow from the appliance OAuth config.
+func WithProvisionedAuth(issuer, audience string) Option {
+	return func(o *Orchestrator) {
+		o.authIssuer = issuer
+		o.authAudience = audience
 	}
 }
 

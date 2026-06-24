@@ -396,6 +396,9 @@ func run() error {
 	} else {
 		logger.Info("BEAMHALL_IDP_ADMIN_CLIENT_ID unset — owned-IdP administration disabled (BYO-IdP); admin_* IdP tools return a BYO-IdP notice")
 	}
+	// provision_auth (PLAN §5.10) injects this issuer into beams and enforces that
+	// app clients never carry the Beamhall resource URI as their token audience.
+	opts = append(opts, orch.WithProvisionedAuth(cfg.OAuthIssuer, cfg.OAuthAudience))
 	orchestrator := orch.New(st, drv, gw, sched, vault, pep, auditLog, cfg.BaseDomain, opts...)
 	pauseFn = orchestrator.PauseFunc()
 
