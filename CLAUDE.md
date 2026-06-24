@@ -82,3 +82,22 @@ it. Whenever you change code/design or learn something, update:
 
 Prefer a short pointer/bullet over prose — enough for the next agent to follow a
 coherent train of thought, not a re-explanation of how everything works.
+
+## Release discipline — be the release guardian — REQUIRED
+CI tests `main`; it does **not** release it. A GitHub Release ships only when a
+`vX.Y.Z` tag is pushed (tag-triggered GoReleaser). The risk is shipped, verified
+features sitting unreleased on `main` forever. **`WORKFLOW.md` is the playbook**
+(when/how to cut, versioning, the Keep-a-Changelog release-notes format, the
+website sync). Read it before cutting a release. Two standing duties:
+- **Changelog is part of "done."** Any user- or operator-facing change adds its
+  line under `## [Unreleased]` in `CHANGELOG.md` in the same change that lands it,
+  grouped Added/Changed/Fixed/Security — written for the operator, not the
+  committer. Don't defer this to release day.
+- **Guardian check at stopping points.** After fast-forwarding a feature into
+  `main` (and whenever the operator asks "anything else?"), run `git log
+  $(git describe --tags --abbrev=0)..HEAD --oneline`; if it holds a completed,
+  verified, user-facing change, **proactively tell the operator it's time to cut a
+  release** — name the unreleased highlights, the recommended version (patch by
+  default; minor only for a milestone/breaking-seam change), and the website
+  sync. Never push a `vX.Y.Z` tag without explicit operator confirmation (it
+  publishes public binaries); every other release step is an ordinary repo change.

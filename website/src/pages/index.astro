@@ -129,7 +129,7 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li><b>Runtime</b> <span class="c-dim">— hardened, isolated compute (runc / gVisor runsc), built from source, no Dockerfile.</span></li>
                 <li><b>Data &amp; secrets</b> <span class="c-dim">— a managed Postgres database per beam and a write-only secret vault, injected at runtime.</span></li>
                 <li><b>Networking</b> <span class="c-dim">— routing + TLS at the gateway, default-deny egress, per-workspace isolation.</span></li>
-                <li><b>Identity</b> <span class="c-amber">(coming)</span> <span class="c-dim">— apps inherit Beamhall's IdP configuration; end-user authentication works with zero setup.</span></li>
+                <li><b>Identity</b> <span class="c-dim">— apps inherit Beamhall's IdP: one call wires company sign-in (OIDC), end-user authentication works with zero setup, and no credentials ever reach the agent.</span></li>
                 <li><b>Connectors</b> <span class="c-amber">(coming)</span> <span class="c-dim">— a brokered, governed path to internal systems (ERP databases, integrations) — without the beam ever holding their credentials.</span></li>
               </ul>
 

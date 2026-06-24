@@ -23,9 +23,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Use the curated CHANGELOG section for this tag as the release body (the
+      # human source of truth, per WORKFLOW.md). If the version has no section
+      # (or it's empty), fall back to GoReleaser's git-derived changelog.
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            index($0, "## [" ver "]") == 1 { grab=1; next }
+            grab && index($0, "## [") == 1 { exit }
+            grab { print }
+          ' CHANGELOG.md > .release-notes.md
+          if grep -q '[^[:space:]]' .release-notes.md; then
+            echo "args=release --clean --release-notes=.release-notes.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "no CHANGELOG section for $version — falling back to git changelog"
+            echo "args=release --clean" >> "$GITHUB_OUTPUT"
+          fi
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
+          args: ${{ steps.notes.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
