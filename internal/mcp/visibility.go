@@ -40,6 +40,8 @@ var toolScope = map[string]string{
 	"deploy_beam":     auth.ScopeBeamsDeploy,
 	"get_repo":        auth.ScopeBeamsWrite,
 	"create_database": auth.ScopeResourcesWrite,
+	"provision_auth":  auth.ScopeResourcesWrite,
+	"show_auth":       auth.ScopeBeamhallsRead,
 	"set_secret":      auth.ScopeSecretsWrite,
 	"show_logs":       auth.ScopeLogsRead,
 	"pause_preview":   auth.ScopeBeamsOperate,
@@ -68,6 +70,7 @@ var toolScope = map[string]string{
 	"admin_show_beamhall":          auth.ScopeAdminIT,
 	"admin_update_beamhall":        auth.ScopeAdminIT,
 	"admin_set_egress":             auth.ScopeAdminIT,
+	"admin_set_auth_groups":        auth.ScopeAdminIT,
 	"admin_list_releases":          auth.ScopeAdminIT,
 	"admin_query_audit":            auth.ScopeAdminIT,
 	"admin_verify_audit_chain":     auth.ScopeAdminIT,
@@ -106,6 +109,11 @@ var alwaysVisible = map[string]bool{
 // bring-your-own-IdP deployment these only ever return ErrNotEnabled, so they're
 // kept off the menu there instead of advertising dead capabilities.
 var idpAdminTools = map[string]bool{
+	// Provisioned auth (PLAN §5.10) only works when Beamhall administers its own
+	// IdP; on BYO-IdP these only return ErrNotEnabled, so keep them off the menu.
+	"provision_auth":               true,
+	"show_auth":                    true,
+	"admin_set_auth_groups":        true,
 	"admin_create_user":            true,
 	"admin_list_users":             true,
 	"admin_set_user_password":      true,

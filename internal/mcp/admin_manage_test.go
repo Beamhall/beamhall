@@ -448,6 +448,33 @@ func TestToolVisibilityTableMatchesRegistry(t *testing.T) {
 	}
 }
 
+func TestProvisionedAuthToolVisibility(t *testing.T) {
+	builderScopes := strings.Join(auth.AllScopes(), ",") // capability scopes, no admin:it
+
+	// Bundled IdP: a builder sees provision_auth + show_auth, never the IT group tool.
+	h := newHarness(t)
+	h.bp.idpEnabled = true
+	seen := listToolNames(t, h.connect(t, builderScopes, nil))
+	if !seen["provision_auth"] || !seen["show_auth"] {
+		t.Fatalf("builder should see provision_auth + show_auth (provision=%v show=%v)", seen["provision_auth"], seen["show_auth"])
+	}
+	if seen["admin_set_auth_groups"] {
+		t.Fatal("builder must NOT see admin_set_auth_groups (IT-only)")
+	}
+	itSeen := listToolNames(t, h.connect(t, builderScopes+","+auth.ScopeAdminIT, nil))
+	if !itSeen["admin_set_auth_groups"] {
+		t.Fatal("it_admin should see admin_set_auth_groups")
+	}
+
+	// BYO-IdP: the provisioned-auth tools are off the menu entirely.
+	byo := newHarness(t)
+	byo.bp.idpEnabled = false
+	bseen := listToolNames(t, byo.connect(t, builderScopes, nil))
+	if bseen["provision_auth"] || bseen["show_auth"] {
+		t.Fatal("BYO-IdP must hide provision_auth/show_auth")
+	}
+}
+
 func keys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

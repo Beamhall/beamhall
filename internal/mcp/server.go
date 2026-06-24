@@ -35,6 +35,9 @@ type Backplane interface {
 	DeployBeamFromSource(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, srcDir string) (*domain.Beam, error)
 	SetSecret(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, key string, value []byte) error
 	CreateDatabase(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, name string) (string, error)
+	// Provisioned auth (PLAN §5.10): give a beam company sign-in via the owned IdP.
+	ProvisionAuth(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) ([]string, error)
+	ShowAuth(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.AuthInfo, error)
 	ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error)
 	PausePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ResumePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (string, error)
@@ -85,6 +88,9 @@ type Backplane interface {
 	AdminListGroups(ctx context.Context, actor orch.Actor) ([]identityadmin.Group, error)
 	AdminAddUserToGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
 	AdminRemoveUserFromGroup(ctx context.Context, actor orch.Actor, userID, groupID string) error
+	// SetAuthGroups curates which realm groups a beam's app tokens may expose
+	// (admin-curated allowlist, separation of duties — PLAN §5.10).
+	SetAuthGroups(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, groups []string) error
 	AdminDeleteUser(ctx context.Context, actor orch.Actor, userID string) error
 	AdminDeleteGroup(ctx context.Context, actor orch.Actor, groupID string) error
 	// SENSITIVE tier (four-eyes): federation files a request a different IT

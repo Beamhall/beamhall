@@ -100,6 +100,21 @@ func (f *fakeBackplane) CreateDatabase(ctx context.Context, actor orch.Actor, be
 	return "MAIN_URL", nil
 }
 
+func (f *fakeBackplane) ProvisionAuth(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) ([]string, error) {
+	f.record("ProvisionAuth", actor)
+	return []string{"OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"}, nil
+}
+
+func (f *fakeBackplane) ShowAuth(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.AuthInfo, error) {
+	f.record("ShowAuth", actor)
+	return orch.AuthInfo{}, nil
+}
+
+func (f *fakeBackplane) SetAuthGroups(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, groups []string) error {
+	f.record("SetAuthGroups", actor)
+	return nil
+}
+
 func (f *fakeBackplane) ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error) {
 	f.record(fmt.Sprintf("ShowLogs:%d", opts.TailN), actor)
 	if f.logs != nil {

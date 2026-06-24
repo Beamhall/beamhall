@@ -81,6 +81,12 @@ type addUserToGroupArgs struct {
 	GroupID string `json:"group_id" jsonschema:"the IdP group id from admin_create_group / admin_list_groups"`
 }
 
+type setAuthGroupsArgs struct {
+	Beamhall string   `json:"beamhall" jsonschema:"beamhall slug"`
+	Beam     string   `json:"beam" jsonschema:"beam slug whose company sign-in to configure"`
+	Groups   []string `json:"groups" jsonschema:"the FULL set of employee groups this beam's sign-in tokens may carry (set-and-replace); pass an empty list to expose none"`
+}
+
 type federateDirectoryArgs struct {
 	Name          string `json:"name" jsonschema:"a label for the federation source, e.g. corp-ad"`
 	Vendor        string `json:"vendor,omitempty" jsonschema:"directory kind: ad (Active Directory) | other (generic LDAP)"`
@@ -219,6 +225,10 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_set_egress",
 		Description: "IT only: set a beamhall's egress policy. mode is deny_all (default isolation) or allowlist; allowlist is FQDN/CIDR[:port] entries reachable from beams in that workspace. Re-asserted on the next deploy (and immediately if egress sync is wired).",
 	}, s.adminSetEgress)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_auth_groups",
+		Description: "IT only: choose which employee groups (e.g. finance, hr, legal) a beam's company sign-in (provision_auth) may expose in its tokens, so the app can do role-based access from a groups claim. This is an IT decision — the builder cannot widen it (separation of duties). Set-and-replace: pass the full allowed set each time; pass an empty list to expose none. Applies to the beam's preview and production logins. Only available on the bundled IdP; the beam must already have provision_auth.",
+	}, s.adminSetAuthGroups)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -1133,4 +1143,37 @@ func idpErr(err error) error {
 		return fmt.Errorf("%w — this appliance uses an external IdP; manage users/groups in that IdP, or run Beamhall's bundled Keycloak to administer identities here", err)
 	}
 	return err
+}
+
+// authBYOErr turns the BYO-IdP ErrNotEnabled from provision_auth/show_auth into
+// the actionable set_secret fallback recipe (PLAN §5.10), so the agent wires
+// sign-in against the corporate IdP itself instead of looping on a dead tool.
+func authBYOErr(err error) error {
+	if err != nil && strings.Contains(err.Error(), identityadmin.ErrNotEnabled.Error()) {
+		return fmt.Errorf("%w — this Beamhall authenticates against an external corporate IdP it does not administer, so it cannot create a login for this beam. Ask IT to register an OIDC client for the beam in that IdP, then deliver its issuer/client_id/client_secret to the beam with set_secret as OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET; your app validates tokens against that issuer normally", err)
+	}
+	return err
+}
+
+func (s *Server) adminSetAuthGroups(ctx context.Context, req *sdkmcp.CallToolRequest, args setAuthGroupsArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.SetAuthGroups(ctx, actor, bh.ID, beam.ID, args.Groups); err != nil {
+		return nil, nil, idpErr(err)
+	}
+	if len(args.Groups) == 0 {
+		return text(fmt.Sprintf("beam %q sign-in now exposes no employee groups.", beam.Slug)), map[string]any{"groups": []string{}}, nil
+	}
+	return text(fmt.Sprintf("beam %q sign-in may now carry groups: %s.", beam.Slug, strings.Join(args.Groups, ", "))),
+		map[string]any{"groups": args.Groups}, nil
 }

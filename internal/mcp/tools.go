@@ -148,6 +148,14 @@ func (s *Server) registerTools() {
 		Description: "Provision a managed PostgreSQL database for a beam. Returns the secret key whose file (/run/secrets/<key>) holds the connection string inside the workload after the next deploy — the connection string itself is never returned.",
 	}, s.createDatabase)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "provision_auth",
+		Description: "Give this beam COMPANY SIGN-IN using the same employee directory your Beamhall already uses — users log in with the accounts they have here, you configure NO identity-provider settings, and you NEVER see any secret (exactly like create_database hands you a database whose password you never see). SCOPE: this is for INTERNAL/employee SSO only — it is NOT a way to build public or customer self-signup. For an app where outside users create their OWN accounts (a signup form, a customer/candidate portal), build that yourself: keep those users in your own database (create_database) with your own login flow; do NOT use provision_auth for them. After the next deploy_beam your app reads three files — /run/secrets/OIDC_ISSUER, /run/secrets/OIDC_CLIENT_ID, /run/secrets/OIDC_CLIENT_SECRET — and runs a standard OpenID Connect code+PKCE flow with any off-the-shelf library. Derive your redirect URL from the incoming request Host and read the client id from its FILE (never hardcode) so one image works on every preview URL and in production. Beamhall keeps your login URLs correct automatically as the preview URL changes, and gives preview and production fully isolated credentials. Idempotent. If this Beamhall uses an external corporate IdP it does not administer, this tool is unavailable and tells you how to wire sign-in with set_secret instead. Credentials appear only AFTER the next deploy_beam (no hot reload).",
+	}, s.provisionAuth)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "show_auth",
+		Description: "Read-only: show whether this beam has company sign-in provisioned, in which mode, which channels (preview/production) have a login, the audience each mints, the login URLs Beamhall is keeping in sync, and which employee groups an admin has allowed into its tokens — without ever revealing a secret value. Use it to inspect the wiring or debug a callback. The group allowlist is set by IT (admin_set_auth_groups), not the builder.",
+	}, s.showAuth)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "set_secret",
 		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back.",
 	}, s.setSecret)
@@ -480,6 +488,64 @@ func (s *Server) createDatabase(ctx context.Context, req *sdkmcp.CallToolRequest
 	}
 	return text(fmt.Sprintf("database %q provisioned. After the next deploy_beam, the PostgreSQL connection URL is the content of the file /run/secrets/%s inside the workload — read it from there; it is never shown here.",
 		args.Name, key)), map[string]string{"secret_key": key, "secret_file": "/run/secrets/" + key}, nil
+}
+
+func (s *Server) provisionAuth(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeResourcesWrite)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys, err := s.bp.ProvisionAuth(ctx, actor, bh.ID, beam.ID)
+	if err != nil {
+		return nil, nil, authBYOErr(err)
+	}
+	files := make([]string, len(keys))
+	for i, k := range keys {
+		files[i] = "/run/secrets/" + k
+	}
+	msg := fmt.Sprintf("company sign-in provisioned for beam %q (mode: library). After the next deploy_beam your app reads %s and runs a standard OpenID Connect code+PKCE flow — derive the redirect URL from the request Host and read OIDC_CLIENT_ID from its file (don't hardcode) so one image works in preview and production. No secret value is ever shown; the login URLs are kept correct for you across preview-URL changes.",
+		beam.Slug, strings.Join(files, ", "))
+	return text(msg), map[string]any{"auth_mode": "library", "secret_keys": keys, "secret_files": files}, nil
+}
+
+func (s *Server) showAuth(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamhallsRead)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := s.bp.ShowAuth(ctx, actor, bh.ID, beam.ID)
+	if err != nil {
+		return nil, nil, authBYOErr(err)
+	}
+	if !info.Provisioned {
+		return text(fmt.Sprintf("beam %q has no company sign-in provisioned — call provision_auth to add it.", beam.Slug)), info, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "beam %q sign-in (mode %s, issuer %s):\n", beam.Slug, info.Mode, info.Issuer)
+	for _, c := range info.Channels {
+		fmt.Fprintf(&b, "  - %s: client_id=%s audience=%s", c.Channel, c.ClientID, c.Audience)
+		if len(c.Groups) > 0 {
+			fmt.Fprintf(&b, " groups=%s", strings.Join(c.Groups, ","))
+		}
+		b.WriteString("\n")
+	}
+	return text(b.String()), info, nil
 }
 
 func (s *Server) setSecret(ctx context.Context, req *sdkmcp.CallToolRequest, args setSecretArgs) (*sdkmcp.CallToolResult, any, error) {
