@@ -77,6 +77,40 @@ type Provider interface {
 	// UnfederateDirectory removes a federation source by name (the
 	// FederateDirectory inverse) — also SENSITIVE (it changes who can sign in).
 	UnfederateDirectory(ctx context.Context, name string) error
+
+	// --- OIDC relying-party (per-beam app SSO) administration (PLAN §5.10) ---
+	// These let a beam reuse the owned IdP for its own end-user sign-in, the way
+	// CreateUser/groups let an operator manage people. The agent never sees the
+	// client secret; Beamhall seals it like a database DSN.
+
+	// CreateClient provisions a per-beam OIDC relying party (a confidential
+	// client) in the owned IdP and returns its handle + generated secret.
+	// Idempotent on ClientID. The returned token audience is the client's OWN id;
+	// implementations MUST NOT inject the Beamhall resource URI (ForbiddenAudience)
+	// into the client's tokens, and MUST refuse (deleting the half-created client)
+	// if any effective mapper/scope would — that audience isolation is what stops
+	// an app token from being replayed against the Beamhall backplane (PLAN §5.10).
+	CreateClient(ctx context.Context, spec ClientSpec) (Client, error)
+	// GetClientSecret reads a client's current secret backplane-side (for sealing
+	// into the vault); it is never returned to the agent.
+	GetClientSecret(ctx context.Context, clientUUID string) (string, error)
+	// RotateClientSecret regenerates a client's secret (incident response) and
+	// returns the new value for re-sealing.
+	RotateClientSecret(ctx context.Context, clientUUID string) (string, error)
+	// SyncRedirectURIs replaces a client's redirect-URI / web-origin allowlist
+	// with the given EXACT sets (no wildcards). Set-and-replace, so a stale rotated
+	// preview host stops being a valid callback. Takes effect immediately (no
+	// redeploy) — the allowlist lives in the IdP, not the injected secret.
+	SyncRedirectURIs(ctx context.Context, clientUUID string, redirectURIs, webOrigins []string) error
+	// SetClientGroupRoles curates which realm groups a client's tokens may expose
+	// (the admin-curated allowlist, IT decision — separation of duties). It is
+	// leak-proof by construction: each allowed group becomes a client role mapped
+	// from that group and surfaced as a flat `groups` claim, so the client only
+	// ever learns groups IT mapped to it. Set-and-replace.
+	SetClientGroupRoles(ctx context.Context, clientUUID string, groups []string) error
+	// DeleteClient removes a client (archive/destroy cleanup). Idempotent: an
+	// already-absent client is success.
+	DeleteClient(ctx context.Context, clientUUID string) error
 }
 
 // NewUser is the input to CreateUser.
@@ -124,6 +158,33 @@ type DirectoryFederation struct {
 	BindCredential string
 }
 
+// ClientSpec is the IdP-neutral input to CreateClient — a per-beam OIDC relying
+// party. RedirectURIs/WebOrigins are EXACT (no wildcards); the caller keeps them
+// current via SyncRedirectURIs across the beam's URL lifecycle.
+type ClientSpec struct {
+	// ClientID is the stable per-beam-channel identifier, e.g.
+	// "beam-<beamhall>-<beam>-preview". The client's tokens carry this as `aud`.
+	ClientID string
+	// RedirectURIs / WebOrigins are exact callback URLs / CORS origins.
+	RedirectURIs []string
+	WebOrigins   []string
+	// AccessTokenTTLSeconds bounds the client's access-token lifespan (0 = realm
+	// default); the regulated profile uses a short value.
+	AccessTokenTTLSeconds int
+	// ForbiddenAudience is the Beamhall resource URI (cfg.Audience) that must NOT
+	// appear in this client's `aud`. CreateClient post-asserts its absence and
+	// refuses otherwise — the audience-isolation invariant (PLAN §5.10).
+	ForbiddenAudience string
+}
+
+// Client is a created relying party. Secret is the confidential client secret,
+// read backplane-side for sealing and never returned to the agent.
+type Client struct {
+	UUID     string // the IdP's internal client id, for subsequent admin calls
+	ClientID string
+	Secret   string
+}
+
 // Disabled is the no-op Provider for deployments that bring their own IdP (or
 // configure none): authentication still works against the customer's tokens,
 // but Beamhall administers nothing.
@@ -156,3 +217,19 @@ func (Disabled) DeleteGroup(context.Context, string) error { return ErrNotEnable
 func (Disabled) FederateDirectory(context.Context, DirectoryFederation) error { return ErrNotEnabled }
 
 func (Disabled) UnfederateDirectory(context.Context, string) error { return ErrNotEnabled }
+
+func (Disabled) CreateClient(context.Context, ClientSpec) (Client, error) {
+	return Client{}, ErrNotEnabled
+}
+
+func (Disabled) GetClientSecret(context.Context, string) (string, error) { return "", ErrNotEnabled }
+
+func (Disabled) RotateClientSecret(context.Context, string) (string, error) { return "", ErrNotEnabled }
+
+func (Disabled) SyncRedirectURIs(context.Context, string, []string, []string) error {
+	return ErrNotEnabled
+}
+
+func (Disabled) SetClientGroupRoles(context.Context, string, []string) error { return ErrNotEnabled }
+
+func (Disabled) DeleteClient(context.Context, string) error { return ErrNotEnabled }

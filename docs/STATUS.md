@@ -740,6 +740,18 @@ bundled Keycloak (Phase 4 packaging; `bh-devidp` covers the lab until then).
     bypasses the audit trail. The three entry points (`list_beams`, `create_beam`,
     `deploy_beam`) carry the same everyday synonyms + steer. `CLAUDE.md` convention
     extended to make jargon-translation + anti-shadow-IT steering a product requirement.
+  - **Provisioned auth — beam SSO (2026-06-23, IN DEVELOPMENT)** — a beam reuses the
+    bundled Keycloak so its app inherits company sign-in, ergonomics mirroring
+    `create_database` (no IdP config, no credential to the agent). Full design in **PLAN
+    §5.10** (+ §10 entry). v1 = in-app library mode, bundled-IdP only; per-channel OIDC
+    clients; **audience isolation** as the load-bearing invariant (app token can't hit
+    `/mcp`); exact redirect URIs auto-synced across preview rotation; admin-curated group
+    exposure (`admin_set_auth_groups`, separation of duties); scope boundary = corporate
+    SSO, NOT public self-signup (that stays app-managed). Extends the `identityadmin`
+    seam (6 client methods), adds `domain.ResourceAuthClient` + `orch/auth.go` +
+    `provision_auth`/`show_auth` MCP tools. Phased: P1 identityadmin → P2 domain/policy
+    → P3 orch → P4 MCP → P5 tests+conformance-persona → P6 lab. Gateway forward-auth +
+    isolated end-user realms designed but deferred.
   - **Per-caller `tools/list` filtering (multi-level menu, 0.1.9+mcpadmin)** —
     `internal/mcp/visibility.go`: a `tools/list` receiving middleware on the shared
     `s.srv` returns only the tools a caller's token could invoke (builder surface vs

@@ -38,6 +38,12 @@ const (
 	ActionRequestPromote Action = "request_promotion"
 	ActionArchiveBeam    Action = "archive_beam"
 	ActionDestroyBeam    Action = "destroy_beam"
+	// Provisioned auth (PLAN §5.10): a per-beam managed primitive, like a database.
+	// provision_auth is a builder write; show_auth is a read. The IT-curated group
+	// allowlist (admin_set_auth_groups) is an admin:it action via requireIT/itAudit,
+	// not a role-matrix entry.
+	ActionProvisionAuth Action = "provision_auth"
+	ActionShowAuth      Action = "show_auth"
 )
 
 // Forbidden actions: hard-denied for every role, including it_admin, on the
@@ -70,6 +76,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionReadBeamhall: true,
 		ActionShowLogs:     true,
 		ActionShowMetrics:  true,
+		ActionShowAuth:     true,
 	},
 	domain.RoleBuilder: {
 		ActionReadBeamhall:   true,
@@ -89,6 +96,9 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		// May *request* promotion (the IT-approval gate); the actual promote
 		// stays IT/admin-gated and a different operator must approve.
 		ActionRequestPromote: true,
+		// May give their beam company sign-in (provision_auth) and inspect it.
+		ActionProvisionAuth: true,
+		ActionShowAuth:      true,
 	},
 	domain.RoleBeamhallAdmin: {
 		ActionReadBeamhall:   true,
@@ -105,6 +115,8 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionPromoteToLive:  true,
 		ActionRequestPromote: true,
 		ActionDestroyBeam:    true,
+		ActionProvisionAuth:  true,
+		ActionShowAuth:       true,
 	},
 }
 

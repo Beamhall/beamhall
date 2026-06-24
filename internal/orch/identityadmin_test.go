@@ -13,6 +13,11 @@ import (
 // fakeProvider records IdP-admin calls so the orchestrator's tiering/audit
 // behavior is tested without a live Keycloak.
 type fakeProvider struct {
+	// Embed Disabled so the OIDC-client methods (PLAN §5.10) are satisfied by
+	// no-ops; the user/group/federation methods below override it. Phase-3 auth
+	// tests add a richer fake when they need to control client provisioning.
+	identityadmin.Disabled
+
 	createdUser      string
 	federated        string
 	bindCredential   string

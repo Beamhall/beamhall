@@ -406,6 +406,11 @@ const (
 	ResourceDatabase    ResourceType = "database"     // Postgres (MVP)
 	ResourceObjectStore ResourceType = "object_store" // MinIO (fast-follow)
 	ResourceQueue       ResourceType = "queue"        // fast-follow
+	// ResourceAuthClient is a per-beam OIDC relying party in the owned IdP — the
+	// beam's company sign-in (PLAN §5.10). One row per channel; BackingHandle is
+	// the IdP client UUID; ConnectionSecretRef points at the channel's sealed
+	// OIDC_CLIENT_SECRET. Provisioned by provision_auth, mirrored to live on promote.
+	ResourceAuthClient ResourceType = "auth_client"
 )
 
 type ResourceStatus string
