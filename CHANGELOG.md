@@ -15,6 +15,11 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-24
+
+The **Identity pillar** ships: a beam can now inherit company sign-in the same
+way it inherits a database — one MCP call, no IdP setup, no credential to the agent.
+
 ### Added
 - **Provisioned auth (beam SSO).** A builder gives a beam **company sign-in** with
   one MCP call (`provision_auth`), the same way `create_database` gives it a
@@ -53,4 +58,5 @@ their auto-generated notes.
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Beamhall/beamhall/compare/v0.1.11...v0.2.0
