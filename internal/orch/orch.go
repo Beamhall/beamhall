@@ -75,6 +75,7 @@ type Orchestrator struct {
 	alog       *audit.Logger
 	builder    Builder
 	dbProv     DatabaseProvisioner
+	emailProv  EmailProvisioner
 	repoRetire func(beamhallSlug, beamSlug, id string) error
 	log        *slog.Logger
 
@@ -100,6 +101,13 @@ type Orchestrator struct {
 	// config; set via WithProvisionedAuth.
 	authIssuer   string
 	authAudience string
+
+	// Email delivery facility (PLAN §5.12): the bh-mail broker control-channel
+	// client (emailProv) plus its config — broker beam-host/port beams dial, the
+	// south-side smarthost provider (from BEAMHALL_MAIL_* env), and default
+	// per-beam limits. emailEnabled = a provider smarthost is configured.
+	emailCfg     EmailConfig
+	emailEnabled bool
 
 	// Backup config (WithBackup): the data dir + key to archive and where
 	// admin_backup_now writes. Empty backupDir = backups disabled.

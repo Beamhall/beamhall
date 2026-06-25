@@ -15,6 +15,30 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Added
+- **Email delivery facility (`provision_email`).** A builder gives a beam
+  **outbound email** with one MCP call, the same way `create_database` gives it a
+  database: no mail-provider setup, and **no credential the agent or the app can
+  use outside the hall**. The app reads `/run/secrets/SMTP_HOST/PORT/USER/PASS`
+  (plus `SMTP_CA`, the broker's STARTTLS certificate) and sends with any stock SMTP
+  library — connect, STARTTLS verifying `SMTP_CA`, then AUTH; Beamhall relays to the
+  company's real mail provider (Mailgun/SES/internal smarthost), which the app never learns.
+  `show_email` reports the wiring without revealing the password. IT curates which
+  From addresses/domains a beam may send as with **`admin_set_email_senders`**
+  (separation of duties — anti-spoof across beams); the relay also rate-limits per
+  beam and **audits every message** (envelope only) to the hash chain. Delivery
+  runs through a shared **`bh-mail` broker container** on each beamhall bridge
+  (container-to-container, no host exposure, no beam egress hole) — the first
+  instance of the **facility-broker pattern** the S3 broker will reuse. The
+  smarthost is configured by the operator via `BEAMHALL_MAIL_*` env (like
+  `BEAMHALL_PG_ADMIN_DSN`); where it's unset, `provision_email` steps aside with a
+  `set_secret` fallback recipe. (PLAN §5.11, §5.12)
+
+### Changed
+- **Anti-shadow-IT copy now covers email.** The MCP server instructions name
+  email providers (Mailgun, SendGrid, Amazon SES, Postmark) among the external
+  services to route through Beamhall instead of wiring into the app directly.
+
 ## [0.2.0] - 2026-06-24
 
 The **Identity pillar** ships: a beam can now inherit company sign-in the same

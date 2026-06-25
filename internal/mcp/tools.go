@@ -156,6 +156,14 @@ func (s *Server) registerTools() {
 		Description: "Read-only: show whether this beam has company sign-in provisioned, in which mode, which channels (preview/production) have a login, the audience each mints, the login URLs Beamhall is keeping in sync, and which employee groups an admin has allowed into its tokens — without ever revealing a secret value. Use it to inspect the wiring or debug a callback. The group allowlist is set by IT (admin_set_auth_groups), not the builder.",
 	}, s.showAuth)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "provision_email",
+		Description: "Give this beam OUTBOUND EMAIL so your app can send mail (sign-up/verification links, notifications, password resets) — you configure NO mail provider and NEVER see any credential (exactly like create_database hands you a database whose password you never see). Send through Beamhall; do NOT wire Mailgun/SendGrid/SES/Postmark or raw SMTP into the app yourself — that leaks a credential and bypasses the audit trail. After the next deploy_beam your app reads five files — /run/secrets/SMTP_HOST, /run/secrets/SMTP_PORT, /run/secrets/SMTP_USER, /run/secrets/SMTP_PASS, and /run/secrets/SMTP_CA — and sends with any standard SMTP library; Beamhall relays to the company's real mail provider for you. Connect to SMTP_HOST:SMTP_PORT, issue STARTTLS verifying against SMTP_CA (the broker's certificate), then AUTH with SMTP_USER/SMTP_PASS — STARTTLS is required by strict clients like Go's net/smtp before they will authenticate. IMPORTANT: a newly provisioned beam may send from NO addresses until an IT admin allows a sender domain/address with admin_set_email_senders (separation of duties) — until then the relay rejects sends; ask IT for the From address you need. Idempotent. If this appliance has no mail provider configured, this tool is unavailable and tells you how to wire SMTP with set_secret instead. Credentials appear only AFTER the next deploy_beam (no hot reload).",
+	}, s.provisionEmail)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "show_email",
+		Description: "Read-only: show whether this beam has outbound email provisioned, the in-hall SMTP host/port it sends through, its sender username, which From addresses/domains IT has allowed it to send as, and its per-day rate limit — without ever revealing the SMTP password. Use it to inspect the wiring or debug a rejected send. The sender allowlist is set by IT (admin_set_email_senders), not the builder.",
+	}, s.showEmail)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "set_secret",
 		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back.",
 	}, s.setSecret)
@@ -546,6 +554,61 @@ func (s *Server) showAuth(ctx context.Context, req *sdkmcp.CallToolRequest, args
 		b.WriteString("\n")
 	}
 	return text(b.String()), info, nil
+}
+
+func (s *Server) provisionEmail(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeResourcesWrite)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys, err := s.bp.ProvisionEmail(ctx, actor, bh.ID, beam.ID)
+	if err != nil {
+		return nil, nil, emailDisabledErr(err)
+	}
+	files := make([]string, len(keys))
+	for i, k := range keys {
+		files[i] = "/run/secrets/" + k
+	}
+	msg := fmt.Sprintf("outbound email provisioned for beam %q. After the next deploy_beam your app reads %s and sends with any standard SMTP library — Beamhall relays to the company mail provider. NOTE: until an IT admin allows a sender with admin_set_email_senders, sends are rejected — ask IT for the From address/domain you need. No credential value is ever shown.",
+		beam.Slug, strings.Join(files, ", "))
+	return text(msg), map[string]any{"secret_keys": keys, "secret_files": files}, nil
+}
+
+func (s *Server) showEmail(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamhallsRead)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := s.bp.ShowEmail(ctx, actor, bh.ID, beam.ID)
+	if err != nil {
+		return nil, nil, emailDisabledErr(err)
+	}
+	if !info.Provisioned {
+		return text(fmt.Sprintf("beam %q has no outbound email provisioned — call provision_email to add it.", beam.Slug)), info, nil
+	}
+	senders := "none yet (ask IT to allow one with admin_set_email_senders — until then sends are rejected)"
+	if len(info.AllowedSenders) > 0 {
+		senders = strings.Join(info.AllowedSenders, ", ")
+	}
+	msg := fmt.Sprintf("beam %q email: sends via %s:%d as user %s; allowed senders: %s; rate limit: %d/day.",
+		beam.Slug, info.Host, info.Port, info.Username, senders, info.RateLimitPerDay)
+	return text(msg), info, nil
 }
 
 func (s *Server) setSecret(ctx context.Context, req *sdkmcp.CallToolRequest, args setSecretArgs) (*sdkmcp.CallToolResult, any, error) {

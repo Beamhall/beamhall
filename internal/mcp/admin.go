@@ -87,6 +87,12 @@ type setAuthGroupsArgs struct {
 	Groups   []string `json:"groups" jsonschema:"the FULL set of employee groups this beam's sign-in tokens may carry (set-and-replace); pass an empty list to expose none"`
 }
 
+type setEmailSendersArgs struct {
+	Beamhall string   `json:"beamhall" jsonschema:"beamhall slug"`
+	Beam     string   `json:"beam" jsonschema:"beam slug whose outbound email to configure"`
+	Senders  []string `json:"senders" jsonschema:"the FULL set of From addresses or domains this beam may send as (set-and-replace), e.g. noreply@app.example.com or the whole domain app.example.com; pass an empty list to block all sending"`
+}
+
 type federateDirectoryArgs struct {
 	Name          string `json:"name" jsonschema:"a label for the federation source, e.g. corp-ad"`
 	Vendor        string `json:"vendor,omitempty" jsonschema:"directory kind: ad (Active Directory) | other (generic LDAP)"`
@@ -229,6 +235,10 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_set_auth_groups",
 		Description: "IT only: choose which employee groups (e.g. finance, hr, legal) a beam's company sign-in (provision_auth) may expose in its tokens, so the app can do role-based access from a groups claim. This is an IT decision — the builder cannot widen it (separation of duties). Set-and-replace: pass the full allowed set each time; pass an empty list to expose none. Applies to the beam's preview and production logins. Only available on the bundled IdP; the beam must already have provision_auth.",
 	}, s.adminSetAuthGroups)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_email_senders",
+		Description: "IT only: choose which From addresses or domains a beam's outbound email (provision_email) may send as, so a beam can't spoof another team or the company at large. This is an IT decision — the builder cannot widen it (separation of duties). Set-and-replace: pass the FULL allowed set each time (full addresses like noreply@app.example.com, or whole domains like app.example.com); pass an empty list to block all sending. The beam must already have provision_email. Inverse of itself — re-run with the new full set to change it.",
+	}, s.adminSetEmailSenders)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -1153,6 +1163,39 @@ func authBYOErr(err error) error {
 		return fmt.Errorf("%w — this Beamhall authenticates against an external corporate IdP it does not administer, so it cannot create a login for this beam. Ask IT to register an OIDC client for the beam in that IdP, then deliver its issuer/client_id/client_secret to the beam with set_secret as OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET; your app validates tokens against that issuer normally", err)
 	}
 	return err
+}
+
+// emailDisabledErr turns the unconfigured-facility error from provision_email/
+// show_email/admin_set_email_senders into the actionable set_secret fallback
+// (PLAN §5.12), so the agent wires SMTP directly instead of looping on a dead tool.
+func emailDisabledErr(err error) error {
+	if err != nil && strings.Contains(err.Error(), "no delivery provider configured") {
+		return fmt.Errorf("%w — this appliance has no mail provider configured, so Beamhall cannot send for this beam. Ask IT to set the BEAMHALL_MAIL_* smarthost, or wire SMTP yourself by delivering SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS to the beam with set_secret and pointing your app's mailer at them", err)
+	}
+	return err
+}
+
+func (s *Server) adminSetEmailSenders(ctx context.Context, req *sdkmcp.CallToolRequest, args setEmailSendersArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.SetEmailSenders(ctx, actor, bh.ID, beam.ID, args.Senders); err != nil {
+		return nil, nil, emailDisabledErr(err)
+	}
+	if len(args.Senders) == 0 {
+		return text(fmt.Sprintf("beam %q may now send from no addresses (all outbound mail blocked).", beam.Slug)), map[string]any{"senders": []string{}}, nil
+	}
+	return text(fmt.Sprintf("beam %q may now send email as: %s.", beam.Slug, strings.Join(args.Senders, ", "))),
+		map[string]any{"senders": args.Senders}, nil
 }
 
 func (s *Server) adminSetAuthGroups(ctx context.Context, req *sdkmcp.CallToolRequest, args setAuthGroupsArgs) (*sdkmcp.CallToolResult, any, error) {

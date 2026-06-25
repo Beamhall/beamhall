@@ -196,6 +196,10 @@ func (o *Orchestrator) reclaimResources(ctx context.Context, beamID domain.ID) {
 			// Delete the beam's OIDC client + its sealed secrets — no orphans (PLAN §5.10).
 			o.reclaimAuthClient(ctx, r)
 		}
+		if r.Type == domain.ResourceEmail {
+			// Deregister at the bh-mail broker + delete sealed SMTP secrets (PLAN §5.12).
+			o.reclaimEmail(ctx, r)
+		}
 		if err := o.st.DeleteResource(ctx, r.ID); err != nil {
 			o.log.Warn("deleting resource row on destroy", "beam", beamID, "resource", r.ID, "err", err)
 		}

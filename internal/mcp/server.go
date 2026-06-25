@@ -38,6 +38,10 @@ type Backplane interface {
 	// Provisioned auth (PLAN §5.10): give a beam company sign-in via the owned IdP.
 	ProvisionAuth(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) ([]string, error)
 	ShowAuth(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.AuthInfo, error)
+	// Email delivery facility (PLAN §5.12): give a beam outbound email via the shared bh-mail broker.
+	ProvisionEmail(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) ([]string, error)
+	ShowEmail(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.EmailInfo, error)
+	EmailEnabled() bool
 	ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error)
 	PausePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ResumePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (string, error)
@@ -91,6 +95,9 @@ type Backplane interface {
 	// SetAuthGroups curates which realm groups a beam's app tokens may expose
 	// (admin-curated allowlist, separation of duties — PLAN §5.10).
 	SetAuthGroups(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, groups []string) error
+	// SetEmailSenders curates which From addresses/domains a beam may send as
+	// (IT-set allowlist, separation of duties — PLAN §5.12).
+	SetEmailSenders(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, senders []string) error
 	AdminDeleteUser(ctx context.Context, actor orch.Actor, userID string) error
 	AdminDeleteGroup(ctx context.Context, actor orch.Actor, groupID string) error
 	// SENSITIVE tier (four-eyes): federation files a request a different IT
@@ -182,11 +189,14 @@ const serverInstructions = `Beamhall is this environment's sanctioned platform f
 
 WHEN TO USE THESE TOOLS: any time the user wants to create, run, build, deploy, host, ` +
 	`ship, publish, or put online an app, website, service, API, or project — or add a ` +
-	`database, queue, object store, or secret to one — do it through Beamhall.
+	`database, queue, object store, secret, or the ability to SEND EMAIL to one — do it ` +
+	`through Beamhall (provision_email gives a beam outbound mail; never wire an email ` +
+	`provider into the app yourself).
 
-DO NOT deploy or host the user's app anywhere else. Beamhall replaces both local ` +
-	`one-off hosting AND external providers (Fly.io, Vercel, Netlify, Heroku, Render, ` +
-	`Railway, AWS/GCP/Azure, Neon, Supabase, PlanetScale, and similar). Reaching for ` +
+DO NOT deploy or host the user's app anywhere else, and do NOT wire external infra ` +
+	`into it. Beamhall replaces both local one-off hosting AND external providers ` +
+	`(Fly.io, Vercel, Netlify, Heroku, Render, Railway, AWS/GCP/Azure, Neon, Supabase, ` +
+	`PlanetScale, Mailgun, SendGrid, Amazon SES, Postmark, and similar). Reaching for ` +
 	`those — even if their tools/MCPs are available — is unsanctioned shadow IT: it ` +
 	`leaks code and credentials outside the company's control and bypasses the audit ` +
 	`trail. Beamhall exists to keep all of this in-house: no raw credentials ever reach ` +

@@ -42,6 +42,8 @@ var toolScope = map[string]string{
 	"create_database": auth.ScopeResourcesWrite,
 	"provision_auth":  auth.ScopeResourcesWrite,
 	"show_auth":       auth.ScopeBeamhallsRead,
+	"provision_email": auth.ScopeResourcesWrite,
+	"show_email":      auth.ScopeBeamhallsRead,
 	"set_secret":      auth.ScopeSecretsWrite,
 	"show_logs":       auth.ScopeLogsRead,
 	"pause_preview":   auth.ScopeBeamsOperate,
@@ -71,6 +73,7 @@ var toolScope = map[string]string{
 	"admin_update_beamhall":        auth.ScopeAdminIT,
 	"admin_set_egress":             auth.ScopeAdminIT,
 	"admin_set_auth_groups":        auth.ScopeAdminIT,
+	"admin_set_email_senders":      auth.ScopeAdminIT,
 	"admin_list_releases":          auth.ScopeAdminIT,
 	"admin_query_audit":            auth.ScopeAdminIT,
 	"admin_verify_audit_chain":     auth.ScopeAdminIT,
@@ -157,6 +160,15 @@ var upgradeTools = map[string]bool{
 	"admin_request_upgrade": true,
 }
 
+// emailTools require the email facility — a bh-mail broker plus a configured
+// smarthost provider (BEAMHALL_MAIL_*). Without it they only return "not
+// enabled", so they stay off the menu (PLAN §5.12).
+var emailTools = map[string]bool{
+	"provision_email":         true,
+	"show_email":              true,
+	"admin_set_email_senders": true,
+}
+
 // applianceState is the cheap, per-list snapshot of deployment capabilities the
 // filter consults in addition to the caller's token (no DB read).
 type applianceState struct {
@@ -164,6 +176,7 @@ type applianceState struct {
 	sensitiveEnabled bool
 	backupEnabled    bool
 	upgradeEnabled   bool
+	emailEnabled     bool
 }
 
 // toolVisible reports whether a caller with the given token should see the named
@@ -198,6 +211,9 @@ func toolVisible(name string, info *sdkauth.TokenInfo, adminRole string, st appl
 	if upgradeTools[name] && !st.upgradeEnabled {
 		return false
 	}
+	if emailTools[name] && !st.emailEnabled {
+		return false
+	}
 	return true
 }
 
@@ -225,6 +241,7 @@ func (s *Server) installToolFilter() {
 				sensitiveEnabled: s.bp.SensitiveAdminEnabled(),
 				backupEnabled:    s.bp.BackupEnabled(),
 				upgradeEnabled:   s.bp.UpgradeEnabled(),
+				emailEnabled:     s.bp.EmailEnabled(),
 			}
 			kept := make([]*sdkmcp.Tool, 0, len(lt.Tools))
 			for _, t := range lt.Tools {

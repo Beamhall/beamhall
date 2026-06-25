@@ -436,6 +436,7 @@ func TestToolVisibilityTableMatchesRegistry(t *testing.T) {
 	full.bp.sensitiveTier = true
 	full.bp.backupEnabled = true
 	full.bp.upgradeEnabled = true
+	full.bp.emailEnabled = true
 	token := strings.Join(auth.AllScopes(), ",") + "," + auth.ScopeAdminIT
 	seen := listToolNames(t, full.connect(t, token, nil))
 	for name := range all {

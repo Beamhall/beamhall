@@ -48,6 +48,7 @@ type fakeBackplane struct {
 	sensitiveTier   bool
 	backupEnabled   bool
 	upgradeEnabled  bool
+	emailEnabled    bool
 	auditIntact     bool // AdminVerifyAuditChain reports a clean chain when true
 }
 
@@ -112,6 +113,21 @@ func (f *fakeBackplane) ShowAuth(ctx context.Context, actor orch.Actor, beamhall
 
 func (f *fakeBackplane) SetAuthGroups(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, groups []string) error {
 	f.record("SetAuthGroups", actor)
+	return nil
+}
+
+func (f *fakeBackplane) ProvisionEmail(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) ([]string, error) {
+	f.record("ProvisionEmail", actor)
+	return []string{"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS"}, nil
+}
+
+func (f *fakeBackplane) ShowEmail(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.EmailInfo, error) {
+	f.record("ShowEmail", actor)
+	return orch.EmailInfo{}, nil
+}
+
+func (f *fakeBackplane) SetEmailSenders(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, senders []string) error {
+	f.record("SetEmailSenders", actor)
 	return nil
 }
 
@@ -235,6 +251,7 @@ func (f *fakeBackplane) IdentityAdminEnabled() bool  { return f.idpEnabled }
 func (f *fakeBackplane) SensitiveAdminEnabled() bool { return f.sensitiveTier }
 func (f *fakeBackplane) BackupEnabled() bool         { return f.backupEnabled }
 func (f *fakeBackplane) UpgradeEnabled() bool        { return f.upgradeEnabled }
+func (f *fakeBackplane) EmailEnabled() bool          { return f.emailEnabled }
 
 func (f *fakeBackplane) RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error) {
 	f.record("RequestUpgrade:"+version, actor)

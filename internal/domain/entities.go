@@ -411,6 +411,12 @@ const (
 	// the IdP client UUID; ConnectionSecretRef points at the channel's sealed
 	// OIDC_CLIENT_SECRET. Provisioned by provision_auth, mirrored to live on promote.
 	ResourceAuthClient ResourceType = "auth_client"
+	// ResourceEmail is a beam's outbound-email binding at the shared bh-mail
+	// broker (PLAN §5.12). ChannelShared (one row, both channels); BackingHandle
+	// is the per-beam SMTP username; ConnectionSecretRef points at the sealed
+	// SMTP_PASS; Spec holds username/pass_hash/senders/limits to rebuild the
+	// broker registry on boot. Provisioned by provision_email.
+	ResourceEmail ResourceType = "email"
 )
 
 type ResourceStatus string

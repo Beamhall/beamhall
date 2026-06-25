@@ -1088,3 +1088,83 @@ which still holds). Cleanup verified: live slot freed, 0 leftover `authsync` cli
 
 **Still deferred (designed, not built):** gateway forward-auth tier, isolated
 end-user realms, `rotate_auth`.
+
+## Email delivery facility — full lab pass (2026-06-25, appliance `10.255.255.153`)
+
+First live exercise of the **facility-broker pattern** (PLAN §5.11) and its first
+instance, **email delivery** (§5.12). The shared `bh-mail` broker is the
+`beamhalld` binary in `mail-relay` mode, run as a container attached to the
+beam bridges; beamhalld drives it over the loopback control channel.
+
+**Topology stood up (reproducible):**
+- `docker network create mail-egress-net` — the broker's south-side egress path.
+- `mail-sink` container (a ~70-line raw-SMTP sink) on `mail-egress-net` — stands in
+  for the external smarthost; logs each received message.
+- `bh-mail` container (`bh-mail-img:lab` = `FROM scratch` + the static `beamhalld`,
+  `ENTRYPOINT ["/beamhalld","mail-relay"]`) on `mail-egress-net`, control port
+  published `-p 127.0.0.1:2526:2526`, `BEAMHALL_MAIL_CONTROL_TOKEN` set. beamhalld
+  attaches it to each beam bridge at **provision** time (the `beamhall-postgres`
+  precedent — `docker network connect`).
+- `beamhall.env` gained `BEAMHALL_MAIL_CONTROL_URL=http://127.0.0.1:2526`,
+  `_CONTROL_TOKEN`, `_BEAM_HOST=bh-mail`, `_BEAM_PORT=587`,
+  `_SMARTHOST=mail-sink:2525`, `_STARTTLS=off`. The prior binary was preserved at
+  `/usr/local/bin/beamhalld.pre-mail`.
+
+**Results (all PASS):**
+
+| Step | Result |
+|---|---|
+| Control auth: `GET /control/status` with a bad bearer token | 401 |
+| Boot: beamhalld `ReconcileEmail` pushes the provider → broker `/control/status` | `enabled:true` (was `false` pre-push) |
+| `provision_email` (builder carol) → 4 secret keys, broker registration pushed, `bh-mail` attached to the team-blue bridge | PASS |
+| `show_email` before senders | `allowed senders: none yet` |
+| `admin_set_email_senders [app.example.com]` (IT alice) → broker updated + persisted in the resource row | PASS |
+| `deploy_beam` (image pin) → `SMTP_HOST/PORT/USER/PASS` injected as `/run/secrets/*` files in the beam | PASS (`bh-mail`,`587`,`beam-…`,hex) |
+| Send with an **allowed** sender via `bh-mail:587` (beam's real creds, same bridge) → relay forwards to the sink | PASS (`SENT ok`; sink logged `RECV-MESSAGE`) |
+| Send with a **disallowed** sender (`evil@other.com`) | `550 sender address not permitted for this beam` |
+| **Isolation:** beam bridge → smarthost IP `:2525` directly | **BLOCKED** (i/o timeout — egress default-deny + cross-bridge) |
+| Sanctioned path: beam bridge → `bh-mail:587` | REACHABLE |
+| Audit-pull → hash chain: the sent + rejected messages | `email_send result=sent` / `decision=deny result=rejected`; `admin_verify_audit_chain` **intact** |
+| `destroy_beam` (IT) → broker deregisters the beam | old creds → `535 Authentication failed`; resource gone |
+
+**Findings (gotchas the unit tests could not see):**
+1. **Go `net/smtp` refuses plaintext AUTH off-localhost.** `PlainAuth` aborts on a
+   non-TLS connection whose host isn't `localhost`, so a beam written in Go that
+   uses stock `net/smtp` cannot authenticate to `bh-mail` over the bridge as-is
+   (nodemailer / Python `smtplib` are fine). The lab `smtp-send` helper used a
+   manual PLAIN auth to bypass it. **Fast-follow:** give the broker **STARTTLS**
+   (an internal cert) so strict libraries authenticate cleanly, or document the
+   "allow plaintext AUTH on the in-hall bridge" knob. Tracked for §5.12 v1.1.
+2. **Beams have a read-only, `noexec` rootfs** (the hardening baseline), so a test
+   binary cannot be `docker cp`'d + exec'd inside a beam — the send was driven from
+   a throwaway container on the *same* beam bridge with the beam's real injected
+   creds (equivalent for the networking proof; injection itself was verified by
+   listing `/run/secrets`). Test-method note, not a product issue.
+3. The `image_digest` arg to `deploy_beam` must be the **full** `repo@sha256:…`
+   pull ref, not the bare digest (a bare `sha256:…` makes the daemon treat the
+   digest as a repository → `pull access denied`). Matches `auth-redirect-sync.sh`.
+
+Appliance left **email-enabled** (the new build is now the validated one) with the
+`bh-mail`/`mail-sink` topology running; revert via `beamhalld.pre-mail` + remove the
+`BEAMHALL_MAIL_*` env, or the Proxmox clean-snapshot rollback.
+
+### STARTTLS fix + committed conformance (same day)
+
+Finding #1 above resolved: the broker now offers **STARTTLS** with a persisted
+self-signed cert (volume `bh-mail-tls` — verified stable across a `docker restart
+bh-mail`, identical sha256), and beamhalld injects the cert to beams as a 5th
+secret **`SMTP_CA`**. Re-verified live: a **strict Go `net/smtp` client** does
+`STARTTLS` (verifying `SMTP_CA`) → **stock `PlainAuth`** → send → delivered to the
+sink (no manual-auth bypass this time). `AllowInsecureAuth` stays on, so
+nodemailer / Python `smtplib` still work plaintext on the bridge.
+
+Committed + re-runnable:
+- `scripts/mail-broker-setup.sh` stands up the `bh-mail` topology from the
+  installed `beamhalld` (`--lab-sink` adds a test smarthost) and prints the
+  `BEAMHALL_MAIL_*` env block. The appliance is now set up via this path.
+- `scripts/agent-conformance/email-delivery.sh` drives the full conformance test
+  over MCP (provision → IT senders → deploy → STARTTLS send → sink → 550 on a
+  spoofed sender → isolation (beam→smarthost BLOCKED, beam→`bh-mail` REACHABLE) →
+  destroy→deregister 535). **Passes live, 8 steps.** Two script bugs fixed while
+  writing it (product correct throughout): a missing heredoc terminator, and a
+  `→` glyph adjacent to `$var` tripping `set -u`.

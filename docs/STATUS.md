@@ -394,6 +394,7 @@ internal/policy/      PEP: role/action matrix, forbidden list, quota gates (audi
 internal/orch/        orchestrator: lifecycle reconciler wiring driver+gateway+scheduler+vault+audit behind the PEP (livechannel.go = the pinned live channel: promote/rollback/reconcile)
 internal/build/       source→image pipeline: managed go-git repos + pack (build daemon) + registry digest
 internal/resource/    managed-resource provisioners (Postgres: scoped role + db per beam)
+internal/facility/mail/  email delivery facility (PLAN §5.12): go-smtp broker engine + control channel (broker server + beamhalld client). The bh-mail service container runs `beamhalld mail-relay`.
 internal/auth/        OAuth resource server: JWKS/iss/aud/exp/scope validation, Origin check
 internal/identityadmin/ owned-IdP administration seam (3rd stable seam): Provider iface + Keycloak Admin-REST impl + Disabled (BYO-IdP)
 internal/mcp/         agent-facing MCP server (official go-sdk, Streamable HTTP): tools (incl. admin_* family), per-caller tools/list filtering (visibility.go), progress, tarball transport
@@ -456,6 +457,55 @@ website/              public marketing site (single-page Astro → Cloudflare); 
 - Driver places workloads on a per-Beamhall bridge, exposes `BackendAddr` (no
   host-port publish); gateway routes to it. Egress `-i bridge` only affects
   container-originated traffic, so host→container (gateway) and host SSH are safe.
+- **Facility brokers (the connector model)** — design captured **PLAN §5.11**
+  (2026-06-24). Generalizes the `DatabaseProvisioner`/provisioned-auth pattern to
+  managed primitives whose backend can live off-box (another IT box, or a governed
+  relay to an external provider). Invariant: the beam always talks to an **in-hall
+  endpoint** with a capability **meaningless outside the hall** (north side stable);
+  *where* the backend lives + its privileged credential + egress are **admin-config
+  pluggable** (south side) — **no SDK / no third-party ABI**. Per-facility decision:
+  in-path relay (policy+audit chokepoint) vs out-of-path scoped-cred+egress.
+  **Realization (operator, 2026-06-24): a shared service container per broker** —
+  one `bh-mail`/`bh-s3` container attached to each beamhall bridge (the `bh-postgres`
+  precedent: container-to-container, no host exposure, no beam-bridge egress hole),
+  running Beamhall's own engine, driven beamhalld→broker only over a control channel
+  (config-push provider+registrations to the broker's loopback port; audit-pull events
+  into the hash chain). The S3 broker reuses this verbatim. See **PLAN §5.11**.
+
+  **Email delivery facility (PLAN §5.12) — code-complete 2026-06-24, lab-pending.**
+  Built + unit/race-tested:
+  - `internal/facility/mail` — the go-smtp v0.24 submission engine (PLAIN+LOGIN auth,
+    per-beam sender allowlist, token-bucket rate limit, SMTP-smarthost forwarder,
+    degrade-closed), plus the control channel: `control.go` (broker HTTP API + audit
+    ring) and `client.go` (beamhalld side); round-trip tested.
+  - `internal/orch/email.go` — `ProvisionEmail`/`ShowEmail`/`SetEmailSenders` (+ audit
+    pairs), ChannelShared secret sealing (`SMTP_HOST/PORT/USER/PASS`), `domain.ResourceEmail`,
+    `reclaimEmail` (in `reclaimResources`), `ReconcileEmail` + `DrainEmailAudit`
+    (self-healing push + audit pull). Bridge attach via the `bh-postgres` precedent.
+  - MCP: `provision_email`/`show_email` (builder) + `admin_set_email_senders` (IT) in
+    `tools.go`/`admin.go`, `visibility.go` gates (emailTools, `emailEnabled` state),
+    server `Instructions` anti-shadow-IT copy. `policy.ActionProvisionEmail`/`ActionShowEmail`.
+  - `cmd/beamhalld` — the `mail-relay` subcommand (the `bh-mail` container entrypoint) +
+    `WithEmail` wiring + the reconcile/audit-drain loop. Config: `BEAMHALL_MAIL_*`
+    (`internal/config`). **Provider is env config (`BEAMHALL_MAIL_SMARTHOST` etc.), like
+    `BEAMHALL_PG_ADMIN_DSN` — `admin_set_email_provider` was dropped** (a global cred
+    would leak via the shared-secret table or need a migration).
+  - **Lab-verified 2026-06-25** (appliance `10.255.255.153`, full pass in
+    `docs/lab-phase0-validation.md`): control channel (provider push → broker
+    `enabled:true`, registration push, audit-pull), `provision_email`→bridge-attach,
+    `admin_set_email_senders`, deploy→`SMTP_*` injected, **send delivered to the sink**,
+    disallowed sender → 550, **isolation** (beam→smarthost direct = BLOCKED, beam→`bh-mail`
+    = REACHABLE), audit chain intact (`email_send` sent + rejected), destroy→broker
+    deregister (old creds 535). **STARTTLS shipped + re-verified 2026-06-25:** the broker
+    offers STARTTLS with a persisted self-signed cert (volume `bh-mail-tls`; stable across
+    restarts), injected to beams as a 5th secret **SMTP_CA**; a strict Go `net/smtp` client
+    does STARTTLS(verify SMTP_CA)→stock `PlainAuth`→send (proven live). `AllowInsecureAuth`
+    stays on so nodemailer/Python smtplib also work plaintext. **Committed artifacts:**
+    `scripts/mail-broker-setup.sh` (stands up the `bh-mail` topology from the installed
+    binary; `--lab-sink` runs a test smarthost) and `scripts/agent-conformance/email-delivery.sh`
+    (re-runnable conformance test — **passes live**, 8 steps). CHANGELOG `[Unreleased]` updated.
+    **Remaining:** fold the broker into the production installer/packaging (today
+    `mail-broker-setup.sh` stands it up; the appliance is set up this way).
 
 ## Remaining work
 

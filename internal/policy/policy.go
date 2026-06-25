@@ -44,6 +44,12 @@ const (
 	// not a role-matrix entry.
 	ActionProvisionAuth Action = "provision_auth"
 	ActionShowAuth      Action = "show_auth"
+	// Email delivery facility (PLAN §5.12): a per-beam managed primitive, like a
+	// database. provision_email is a builder write; show_email is a read. The
+	// IT-curated sender allowlist (admin_set_email_senders) is an admin:it action
+	// via requireIT/itAudit, not a role-matrix entry.
+	ActionProvisionEmail Action = "provision_email"
+	ActionShowEmail      Action = "show_email"
 )
 
 // Forbidden actions: hard-denied for every role, including it_admin, on the
@@ -77,6 +83,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionShowLogs:     true,
 		ActionShowMetrics:  true,
 		ActionShowAuth:     true,
+		ActionShowEmail:    true,
 	},
 	domain.RoleBuilder: {
 		ActionReadBeamhall:   true,
@@ -97,8 +104,10 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		// stays IT/admin-gated and a different operator must approve.
 		ActionRequestPromote: true,
 		// May give their beam company sign-in (provision_auth) and inspect it.
-		ActionProvisionAuth: true,
-		ActionShowAuth:      true,
+		ActionProvisionAuth:  true,
+		ActionShowAuth:       true,
+		ActionProvisionEmail: true,
+		ActionShowEmail:      true,
 	},
 	domain.RoleBeamhallAdmin: {
 		ActionReadBeamhall:   true,
@@ -117,6 +126,8 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionDestroyBeam:    true,
 		ActionProvisionAuth:  true,
 		ActionShowAuth:       true,
+		ActionProvisionEmail: true,
+		ActionShowEmail:      true,
 	},
 }
 
