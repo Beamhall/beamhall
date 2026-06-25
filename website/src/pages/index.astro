@@ -129,7 +129,7 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li><b>Runtime</b> <span class="c-dim">— hardened, isolated compute (runc / gVisor runsc), built from source, no Dockerfile.</span></li>
                 <li><b>Data &amp; secrets</b> <span class="c-dim">— a managed Postgres database per beam and a write-only secret vault, injected at runtime.</span></li>
                 <li><b>Networking</b> <span class="c-dim">— routing + TLS at the gateway, default-deny egress, per-workspace isolation.</span></li>
-                <li><b>Identity</b> <span class="c-dim">— apps inherit Beamhall's IdP: one call wires company sign-in (OIDC), end-user authentication works with zero setup, and no credentials ever reach the agent.</span></li>
+                <li><b>Identity</b> <span class="c-dim">— one call gives a beam company sign-in: it becomes an OIDC relying party on Beamhall's bundled IdP, so employees log in with the accounts they already have — no IdP config, no credential reaching the agent, and audience-isolated so an app token can't reach the backplane.</span></li>
                 <li><b>Connectors</b> <span class="c-amber">(coming)</span> <span class="c-dim">— a brokered, governed path to internal systems (ERP databases, integrations) — without the beam ever holding their credentials.</span></li>
               </ul>
 
@@ -377,8 +377,8 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                       <td class="skip">Vault · CI secrets · rotation glue</td>
                     </tr>
                     <tr>
-                      <td class="get"><b>One IdP</b> — bring Okta / Entra / Keycloak, or use the bundled one</td>
-                      <td class="skip">Per-app SSO setup · service accounts</td>
+                      <td class="get"><b>Company sign-in</b> — one call makes an app an OIDC relying party on the bundled IdP; employees log in with the accounts they already have</td>
+                      <td class="skip">Per-app SSO setup · OIDC client config · service accounts</td>
                     </tr>
                   </tbody>
                 </table>
@@ -389,6 +389,7 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li><b>Set the rules once, per workspace.</b> <span class="c-dim">Where it runs (private VM, dedicated VPC, or on-prem), how much it can use (CPU / memory / storage quotas), how isolated (hardened or gVisor), and what it can reach (default-deny network, allowlist only if you choose).</span></li>
                 <li><b>Decide who can do what.</b> <span class="c-dim">Deploy, promote to production, and destroy are role-based — and an agent can never exceed the role you granted it.</span></li>
                 <li><b>Require a human for production.</b> <span class="c-dim">Optional four-eyes approval: a different person signs off before anything goes live.</span></li>
+                <li><b>Curate who an app can let in.</b> <span class="c-dim">When a beam gets company sign-in, IT chooses which employee groups its tokens may carry — the builder exposes none by default. Preview and production get separate credentials, so a leaked preview secret can't touch production.</span></li>
                 <li><b>Govern every team from one console.</b> <span class="c-dim">All workspaces, apps, and deploys in one place — with idle previews pausing themselves to reclaim resources.</span></li>
                 <li><b>Prove what happened.</b> <span class="c-dim">Every action, and every denied attempt, on a tamper-evident, append-only record tied to an identity.</span></li>
                 <li><b>Recover from anything.</b> <span class="c-dim">Back up and restore the whole appliance — keys included — to a byte-identical state.</span></li>
@@ -407,8 +408,8 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
               </ul>
 
               <p class="meta-line">
-                Built-in user authentication and secure connectors to internal
-                systems are next — see the <b>roadmap</b>.
+                Company sign-in ships today; secure connectors to internal systems
+                are next — see the <b>roadmap</b>.
               </p>
             </div>
           </section>
@@ -475,6 +476,22 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                   injected straight into the running app and stripped out of any logs
                   the agent sees. Nothing sensitive passes through the model or its
                   chat history.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">If an app gets company sign-in, can its login token be turned around to attack the platform?</div>
+                <div class="worry-a">
+                  No. When a beam is given company sign-in, it's issued its own
+                  sign-in credentials, scoped only to itself — separate ones for
+                  preview and production. A token minted for one of your apps is
+                  <span class="c-strong">audience-isolated</span>: it's only valid
+                  for that app, and is rejected outright if it's replayed against
+                  the Beamhall control plane or another app. The agent never sees
+                  those credentials, IT chooses which employee groups an app's
+                  tokens may carry, and the isolation is proven live in our test
+                  suite — a real app token is rejected by the control plane while a
+                  properly-scoped one is accepted.
                 </div>
               </div>
 
@@ -554,11 +571,11 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li>age vault, hash-chained audit + retention, managed Postgres</li>
                 <li>backup/restore (with DR proof), admin console, BYO-OIDC + bundled IdP</li>
                 <li>four-eyes promote gate, air-gapped builds, one-command installer</li>
+                <li>provisioned auth <span class="c-dim">— one call gives a beam company sign-in (OIDC), audience-isolated, lab-verified</span></li>
               </ul>
 
               <h3>planned — expanding what a beam inherits</h3>
               <ul class="list todo">
-                <li><b>Built-in authentication (identity inheritance)</b> <span class="c-dim">— agent-built apps inherit Beamhall's IdP configuration; end-user auth with zero setup.</span></li>
                 <li><b>Secure connectors</b> <span class="c-dim">— brokered, governed paths from a beam to internal systems (ERP databases, integrations) with no credential held by the app.</span></li>
                 <li><b>Firecracker / microVM driver</b> <span class="c-dim">— behind the existing RuntimeDriver interface, if a review demands hardware-virt isolation.</span></li>
                 <li><b>L7 egress proxy</b> <span class="c-dim">with content inspection.</span></li>
