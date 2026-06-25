@@ -31,3 +31,7 @@ __pycache__/
 dist/
 /bh-devidp
 beamhall_business_idea_mvp.md
+
+# Release pipeline: notes extracted from CHANGELOG at release time (release.yml).
+# Untracked, must be ignored so GoReleaser's git-clean check does not abort.
+.release-notes.md
