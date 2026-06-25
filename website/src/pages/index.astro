@@ -130,7 +130,8 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li><b>Data &amp; secrets</b> <span class="c-dim">— a managed Postgres database per beam and a write-only secret vault, injected at runtime.</span></li>
                 <li><b>Networking</b> <span class="c-dim">— routing + TLS at the gateway, default-deny egress, per-workspace isolation.</span></li>
                 <li><b>Identity</b> <span class="c-dim">— one call gives a beam company sign-in: it becomes an OIDC relying party on Beamhall's bundled IdP, so employees log in with the accounts they already have — no IdP config, no credential reaching the agent, and audience-isolated so an app token can't reach the backplane.</span></li>
-                <li><b>Connectors</b> <span class="c-amber">(coming)</span> <span class="c-dim">— a brokered, governed path to internal systems (ERP databases, integrations) — without the beam ever holding their credentials.</span></li>
+                <li><b>Email</b> <span class="c-dim">— one call gives a beam outbound email through a shared in-hall broker: it sends with any SMTP library, while the mail-provider credential stays in the broker — never in the beam or the agent — with a per-beam sender allowlist, STARTTLS, and every message audited.</span></li>
+                <li><b>Connectors</b> <span class="c-dim">— email ships today as the first; </span><span class="c-amber">(coming)</span> <span class="c-dim">object storage, queues, and brokered paths to internal systems (ERP databases, integrations) — without the beam ever holding their credentials.</span></li>
               </ul>
 
               <h3>a reliable path — not improvised infrastructure</h3>
@@ -380,6 +381,10 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                       <td class="get"><b>Company sign-in</b> — one call makes an app an OIDC relying party on the bundled IdP; employees log in with the accounts they already have</td>
                       <td class="skip">Per-app SSO setup · OIDC client config · service accounts</td>
                     </tr>
+                    <tr>
+                      <td class="get"><b>Outbound email</b> — one call gives an app SMTP send through an in-hall broker; the mail-provider credential never reaches the app or the agent</td>
+                      <td class="skip">Mailgun / SES / SendGrid account · SMTP keys in the app</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -408,8 +413,9 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
               </ul>
 
               <p class="meta-line">
-                Company sign-in ships today; secure connectors to internal systems
-                are next — see the <b>roadmap</b>.
+                Company sign-in and outbound email ship today; object storage,
+                queues, and more secure connectors to internal systems are next —
+                see the <b>roadmap</b>.
               </p>
             </div>
           </section>
@@ -496,6 +502,23 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
               </div>
 
               <div class="worry">
+                <div class="worry-q">If an app can send email, can it spoof other teams or leak our mail-provider keys?</div>
+                <div class="worry-a">
+                  No. An app sends through a shared in-hall mail broker, not your
+                  provider directly — and the
+                  <span class="c-strong">provider credential lives only in that
+                  broker</span>, never in the app or the agent. The app holds only a
+                  broker-scoped login that's useless outside Beamhall. IT curates
+                  which From addresses and domains each app may send as, so one team's
+                  app can't send as another team or as the company. The broker
+                  rate-limits each app to blunt mail-bombing and reputation abuse, and
+                  <span class="c-strong">audits every message</span> (envelope only) to
+                  the same tamper-evident record. Apps can reach only the broker;
+                  turning the provider on never widens an app's network access.
+                </div>
+              </div>
+
+              <div class="worry">
                 <div class="worry-q">It's AI-written code on our hardware — can it break out and reach the host?</div>
                 <div class="worry-a">
                   Every app runs locked down: least privilege, read-only filesystem,
@@ -572,11 +595,12 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li>backup/restore (with DR proof), admin console, BYO-OIDC + bundled IdP</li>
                 <li>four-eyes promote gate, air-gapped builds, one-command installer</li>
                 <li>provisioned auth <span class="c-dim">— one call gives a beam company sign-in (OIDC), audience-isolated, lab-verified</span></li>
+                <li>email facility <span class="c-dim">— one call gives a beam outbound email via a shared in-hall broker (the first connector); per-beam sender allowlist, STARTTLS, per-message audit, lab-verified</span></li>
               </ul>
 
               <h3>planned — expanding what a beam inherits</h3>
               <ul class="list todo">
-                <li><b>Secure connectors</b> <span class="c-dim">— brokered, governed paths from a beam to internal systems (ERP databases, integrations) with no credential held by the app.</span></li>
+                <li><b>More secure connectors</b> <span class="c-dim">— building on the shipped email facility, the same brokered pattern extended to internal systems (ERP databases, integrations) with no credential held by the app.</span></li>
                 <li><b>Firecracker / microVM driver</b> <span class="c-dim">— behind the existing RuntimeDriver interface, if a review demands hardware-virt isolation.</span></li>
                 <li><b>L7 egress proxy</b> <span class="c-dim">with content inspection.</span></li>
                 <li><b>SBOM + CVE gate before promote;</b> <span class="c-dim">SLSA provenance.</span></li>
