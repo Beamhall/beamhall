@@ -15,6 +15,8 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-25
+
 ### Added
 - **Email delivery facility (`provision_email`).** A builder gives a beam
   **outbound email** with one MCP call, the same way `create_database` gives it a
@@ -86,5 +88,6 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Beamhall/beamhall/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Beamhall/beamhall/compare/v0.1.11...v0.2.0
