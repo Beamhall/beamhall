@@ -42,6 +42,10 @@ type Backplane interface {
 	ProvisionEmail(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) ([]string, error)
 	ShowEmail(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.EmailInfo, error)
 	EmailEnabled() bool
+	EmailBrokerWired() bool
+	// SetEmailProvider configures the outbound mail smarthost at runtime
+	// (admin_set_email_provider, IT). The broker holds + persists the credential.
+	SetEmailProvider(ctx context.Context, actor orch.Actor, smarthost, username, password string, startTLS bool) error
 	ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error)
 	PausePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ResumePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (string, error)

@@ -1168,3 +1168,27 @@ Committed + re-runnable:
   destroy→deregister 535). **Passes live, 8 steps.** Two script bugs fixed while
   writing it (product correct throughout): a missing heredoc terminator, and a
   `→` glyph adjacent to `$var` tripping `set -u`.
+
+### Provider config moved to runtime MCP + installer (2026-06-25)
+
+Per the operator's "install does the minimum; admins configure at runtime via MCP"
+model (memory `facility-config-via-mcp`): the smarthost provider is no longer an
+env var. The installer stands up the broker **plumbing only** (control channel,
+no provider); an IT admin sets the smarthost at runtime with
+**`admin_set_email_provider`**, and the **broker persists it** (root-only
+`provider.json` in its volume). Re-verified live:
+
+| Check | Result |
+|---|---|
+| Boot: broker wired but no provider → `/control/status` | `enabled:false` |
+| `admin_set_email_provider` (IT) → status | `enabled:true` |
+| `provision_email` before a provider is set (builder) | degrades closed ("ask IT to set the company mail provider with admin_set_email_provider") |
+| Provider **persists** across `docker restart bh-mail` | `enabled:true` → still `enabled:true` |
+| beamhalld restart → relearns enabled from the broker | yes (`ReconcileEmail` reads `/control/status`) |
+| Clear provider (empty smarthost) → builder provision | degrades closed again |
+| Full `email-delivery.sh` conformance (now incl. the `admin_set_email_provider` step) | PASS (8 steps) |
+
+`install.sh` stands the broker up by default (`--no-mail` to skip);
+`scripts/mail-broker-setup.sh` is now a GoReleaser release asset. The earlier
+env-provider approach (`BEAMHALL_MAIL_SMARTHOST`) and the "dropped
+admin_set_email_provider" note are superseded.

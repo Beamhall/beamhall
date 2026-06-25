@@ -49,10 +49,13 @@ func enableEmail(w *world, fe *fakeEmailProv) {
 	WithEmail(fe, EmailConfig{
 		BeamHost: "bh-mail",
 		BeamPort: 587,
-		Provider: mail.ProviderConfig{Smarthost: "smtp.example.com:587", Username: "u", Password: "p"},
 		Limits:   mail.Limits{PerDay: 300, Burst: 20},
 		Attach:   func(_ context.Context, _ string) error { return nil },
 	})(w.o)
+	// IT configures the provider at runtime (the installer ships it unconfigured).
+	if err := w.o.SetEmailProvider(context.Background(), Actor{ITAdmin: true}, "smtp.example.com:587", "u", "p", true); err != nil {
+		panic(err)
+	}
 }
 
 func TestProvisionEmailSealsCredsAndInjects(t *testing.T) {
@@ -191,19 +194,44 @@ func TestDestroyReclaimsEmail(t *testing.T) {
 	}
 }
 
-func TestProvisionEmailDegradesClosed(t *testing.T) {
+func TestEmailBrokerWiredButUnconfigured(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	// Wired broker but no smarthost configured → facility disabled.
+	// Installer wired the broker, but IT hasn't configured a provider yet.
 	WithEmail(&fakeEmailProv{}, EmailConfig{BeamHost: "bh-mail", BeamPort: 587})(w.o)
+	if !w.o.EmailBrokerWired() {
+		t.Fatal("broker should be wired")
+	}
 	if w.o.EmailEnabled() {
-		t.Fatal("email should be disabled without a smarthost")
+		t.Fatal("email should be disabled until IT configures a provider")
 	}
 	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// provision_email degrades closed until configured.
 	if _, err := w.o.ProvisionEmail(ctx, w.build, w.bh.ID, beam.ID); !errors.Is(err, mail.ErrNotEnabled) {
-		t.Fatalf("want mail.ErrNotEnabled, got %v", err)
+		t.Fatalf("want mail.ErrNotEnabled before provider set, got %v", err)
+	}
+	// A builder cannot configure the provider.
+	if err := w.o.SetEmailProvider(ctx, w.build, "smtp.x:587", "u", "p", true); err == nil {
+		t.Fatal("builder must not set the email provider")
+	}
+	// IT configures it → facility enabled, provision works.
+	if err := w.o.SetEmailProvider(ctx, Actor{ITAdmin: true}, "smtp.x:587", "u", "p", true); err != nil {
+		t.Fatalf("IT SetEmailProvider: %v", err)
+	}
+	if !w.o.EmailEnabled() {
+		t.Fatal("email should be enabled after IT configures a provider")
+	}
+	if _, err := w.o.ProvisionEmail(ctx, w.build, w.bh.ID, beam.ID); err != nil {
+		t.Fatalf("provision after enable: %v", err)
+	}
+	// Clearing the smarthost disables again.
+	if err := w.o.SetEmailProvider(ctx, Actor{ITAdmin: true}, "", "", "", true); err != nil {
+		t.Fatalf("clear provider: %v", err)
+	}
+	if w.o.EmailEnabled() {
+		t.Fatal("email should be disabled after clearing the smarthost")
 	}
 }

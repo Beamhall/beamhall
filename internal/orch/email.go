@@ -53,13 +53,12 @@ type EmailProvisioner interface {
 }
 
 // EmailConfig carries the non-per-beam email facility settings: the broker's
-// in-bridge address beams dial (SMTP_HOST/PORT), the south-side smarthost
-// provider (from BEAMHALL_MAIL_* env, like BEAMHALL_PG_ADMIN_DSN), and the
-// default per-beam limits.
+// in-bridge address beams dial (SMTP_HOST/PORT) and the default per-beam limits.
+// The smarthost provider is NOT here — it's set at runtime by an IT admin
+// (admin_set_email_provider) and persisted by the broker itself.
 type EmailConfig struct {
 	BeamHost string
 	BeamPort int
-	Provider mail.ProviderConfig
 	Limits   mail.Limits
 	// Attach connects the shared bh-mail broker container to a beamhall bridge so
 	// the beam reaches it as <BeamHost>:<BeamPort> (the bh-postgres precedent).
@@ -67,7 +66,9 @@ type EmailConfig struct {
 	Attach func(ctx context.Context, network string) error
 }
 
-// WithEmail enables the email facility behind the bh-mail broker.
+// WithEmail wires the bh-mail broker (the installer stands it up). The facility
+// stays unconfigured until an IT admin sets the provider; emailEnabled is learned
+// from the broker at boot (ReconcileEmail).
 func WithEmail(p EmailProvisioner, cfg EmailConfig) Option {
 	return func(o *Orchestrator) {
 		o.emailProv = p
@@ -78,16 +79,19 @@ func WithEmail(p EmailProvisioner, cfg EmailConfig) Option {
 			cfg.BeamPort = 587
 		}
 		o.emailCfg = cfg
-		o.emailEnabled = cfg.Provider.Smarthost != ""
 	}
 }
 
-// EmailEnabled reports whether outbound email is available (a broker is wired
-// and a smarthost provider is configured). The MCP layer uses it to keep the
-// email tools off the menu when unconfigured, and to degrade provision_email
-// closed.
+// EmailBrokerWired reports whether a bh-mail broker is wired (the installer stood
+// one up). admin_set_email_provider is available when this is true, even before a
+// provider is configured.
+func (o *Orchestrator) EmailBrokerWired() bool { return o.emailProv != nil }
+
+// EmailEnabled reports whether outbound email is usable — a broker is wired AND an
+// IT admin has configured a provider. Gates provision_email / show_email and
+// degrades them closed otherwise.
 func (o *Orchestrator) EmailEnabled() bool {
-	return o.emailProv != nil && o.emailEnabled
+	return o.emailProv != nil && o.emailEnabled.Load()
 }
 
 // ProvisionEmail gives a beam outbound email: mints per-beam SMTP submission
@@ -277,6 +281,39 @@ func (o *Orchestrator) setEmailSenders(ctx context.Context, beamID domain.ID, se
 	return fmt.Errorf("beam has no provisioned email — call provision_email first")
 }
 
+// SetEmailProvider configures the appliance's outbound mail smarthost at runtime
+// (admin_set_email_provider) — the installer ships the broker unconfigured; this
+// is how IT turns email on. The broker holds + persists the credential (never the
+// vault, never a beam); an empty smarthost disables delivery. IT-only, audited,
+// routine (no four-eyes — it's provider plumbing, not appliance-wide auth topology).
+func (o *Orchestrator) SetEmailProvider(ctx context.Context, actor Actor, smarthost, username, password string, startTLS bool) error {
+	if err := o.requireIT(actor); err != nil {
+		return o.itAudit(ctx, actor, "admin_set_email_provider", "", err)
+	}
+	return o.itAudit(ctx, actor, "admin_set_email_provider", "",
+		o.setEmailProvider(ctx, smarthost, username, password, startTLS))
+}
+
+func (o *Orchestrator) setEmailProvider(ctx context.Context, smarthost, username, password string, startTLS bool) error {
+	if o.emailProv == nil {
+		return fmt.Errorf("no mail broker is configured on this appliance")
+	}
+	smarthost = strings.TrimSpace(smarthost)
+	if err := o.emailProv.SetProvider(ctx, mail.ProviderConfig{
+		Smarthost:       smarthost,
+		Username:        username,
+		Password:        password,
+		DisableStartTLS: !startTLS,
+	}); err != nil {
+		return err
+	}
+	o.emailEnabled.Store(smarthost != "")
+	return nil
+}
+
+// EmailProviderConfigured reports whether IT has set a smarthost (for show/report).
+func (o *Orchestrator) EmailProviderConfigured() bool { return o.EmailEnabled() }
+
 // reclaimEmail deregisters a beam at the broker and deletes its sealed SMTP
 // secrets on archive/destroy (no orphans). Called from reclaimResources.
 func (o *Orchestrator) reclaimEmail(ctx context.Context, r domain.Resource) {
@@ -293,16 +330,22 @@ func (o *Orchestrator) reclaimEmail(ctx context.Context, r domain.Resource) {
 	}
 }
 
-// ReconcileEmail (re)pushes the provider config and every beam's registration to
-// the broker. Idempotent and self-healing — run at boot and periodically so a
-// restarted broker (which holds its registry in memory) is rebuilt from the
-// authoritative resource rows. Best-effort: failures log and are retried next tick.
+// ReconcileEmail learns whether the broker has a provider configured (it owns +
+// persists that itself, so beamhalld picks it up across restarts) and re-pushes
+// every beam's registration so a restarted broker is rebuilt from the
+// authoritative resource rows. Idempotent + self-healing; run at boot and on a
+// tick. The provider config is NOT pushed from here — only the broker owns it.
 func (o *Orchestrator) ReconcileEmail(ctx context.Context) error {
-	if !o.EmailEnabled() {
+	if !o.EmailBrokerWired() {
 		return nil
 	}
-	if err := o.emailProv.SetProvider(ctx, o.emailCfg.Provider); err != nil {
-		return fmt.Errorf("push provider to broker: %w", err)
+	enabled, _, err := o.emailProv.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("email broker status: %w", err)
+	}
+	o.emailEnabled.Store(enabled)
+	if !enabled {
+		return nil // broker present but no provider configured yet
 	}
 	halls, err := o.st.ListBeamhalls(ctx)
 	if err != nil {
@@ -337,7 +380,7 @@ func (o *Orchestrator) ReconcileEmail(ctx context.Context) error {
 // initialise the pull cursor at boot so the backlog already in the broker ring
 // isn't re-appended to the chain.
 func (o *Orchestrator) EmailAuditCursor(ctx context.Context) (int64, error) {
-	if !o.EmailEnabled() {
+	if !o.EmailBrokerWired() {
 		return 0, nil
 	}
 	_, next, err := o.emailProv.Status(ctx)
@@ -349,7 +392,7 @@ func (o *Orchestrator) EmailAuditCursor(ctx context.Context) (int64, error) {
 // Audit residual (documented): events buffered in the broker between pulls are
 // lost if the broker crashes before the next pull — bounded by the pull interval.
 func (o *Orchestrator) DrainEmailAudit(ctx context.Context, after int64) (int64, error) {
-	if !o.EmailEnabled() {
+	if !o.EmailBrokerWired() {
 		return after, nil
 	}
 	events, next, err := o.emailProv.PullEvents(ctx, after)

@@ -34,6 +34,7 @@ RELEASE_VERSION=""          # --version vX.Y.Z (empty => latest published releas
 REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
 RESOLVED_TAG=""
 SETUP_IDP="ask"             # ask | bundled | corporate | skip (--idp)
+SETUP_MAIL=1                # stand up the email broker plumbing (--no-mail to skip)
 while [ $# -gt 0 ]; do
   case "$1" in
     --group)       GROUP="$2"; shift 2 ;;
@@ -43,6 +44,7 @@ while [ $# -gt 0 ]; do
     --version)     RELEASE_VERSION="$2"; shift 2 ;;
     --repo)        REPO_SLUG="$2"; shift 2 ;;
     --idp)         SETUP_IDP="$2"; shift 2 ;;
+    --no-mail)     SETUP_MAIL=0; shift ;;
     --yes|-y)      BEAMHALL_YES=1; shift ;;
     --no-start)    AUTO_START=0; shift ;;
     -*)            echo "unknown flag: $1" >&2; exit 2 ;;
@@ -368,6 +370,43 @@ fetch_release_binary() {
   BIN_SRC="${tmp}/beamhalld"
 }
 
+# Stand up the shared bh-mail email broker (PLAN §5.11/§5.12) — the MINIMUM to make
+# the facility configurable. No provider: an IT admin turns email on at runtime with
+# admin_set_email_provider (the smarthost + credential are held + persisted by the
+# broker itself, never here). Needs the installed beamhalld binary (mail-relay mode).
+setup_mail_broker() {
+  local TOK NET="mail-egress-net" IMG="bh-mail-img:beamhall" d
+  install -d -m 0750 -o root -g beamhall /etc/beamhall
+  [ -s /etc/beamhall/mail-control.token ] || (umask 077; openssl rand -hex 24 > /etc/beamhall/mail-control.token)
+  TOK="$(cat /etc/beamhall/mail-control.token)"
+  d="$(mktemp -d)"; cp /usr/local/bin/beamhalld "$d/beamhalld"
+  printf 'FROM scratch\nCOPY beamhalld /beamhalld\nENTRYPOINT ["/beamhalld","mail-relay"]\n' > "$d/Dockerfile"
+  run_step "Building the bh-mail broker image" docker build -q -t "$IMG" "$d"
+  rm -rf "$d"
+  docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
+  docker volume create bh-mail-tls >/dev/null 2>&1 || true
+  if ! docker ps --format '{{.Names}}' | grep -qx bh-mail; then
+    docker rm -f bh-mail >/dev/null 2>&1 || true
+    run_step "Starting the bh-mail broker (no provider yet)" docker run -d --restart=always --name bh-mail \
+      --network "$NET" -p 127.0.0.1:2526:2526 -v bh-mail-tls:/tls \
+      -e BEAMHALL_MAIL_CONTROL_TOKEN="$TOK" -e BEAMHALL_MAIL_SMTP_ADDR=:587 \
+      -e BEAMHALL_MAIL_CONTROL_ADDR=:2526 -e BEAMHALL_MAIL_BEAM_HOST=bh-mail \
+      -e BEAMHALL_MAIL_TLS_DIR=/tls "$IMG"
+  fi
+  if ! grep -q '^BEAMHALL_MAIL_CONTROL_URL=' /etc/beamhall/beamhall.env 2>/dev/null; then
+    cat >> /etc/beamhall/beamhall.env <<EOF
+
+# Email broker (provision_email, PLAN §5.12). The broker is wired; an IT admin turns
+# email ON at runtime with admin_set_email_provider — the smarthost + credential are
+# held + persisted by the broker, not here. Remove these lines to drop the facility.
+BEAMHALL_MAIL_CONTROL_URL=http://127.0.0.1:2526
+BEAMHALL_MAIL_CONTROL_TOKEN=${TOK}
+BEAMHALL_MAIL_BEAM_HOST=bh-mail
+EOF
+  fi
+  ok "bh-mail broker ready — IT enables email with admin_set_email_provider"
+}
+
 group_appliance() {
   phase "The Beamhall appliance"
   if [ -n "$BIN_SRC" ] && [ -x "$BIN_SRC" ]; then ok "using provided binary: $BIN_SRC"
@@ -424,6 +463,8 @@ EOF
     chmod 0640 /etc/beamhall/beamhall.env; chown root:beamhall /etc/beamhall/beamhall.env
     ok "wrote /etc/beamhall/beamhall.env (base domain ${BASE_DOMAIN})"
   else ok "beamhall.env exists — left unchanged"; fi
+
+  if [ "$SETUP_MAIL" = 1 ]; then setup_mail_broker; else ok "email broker skipped (--no-mail)"; fi
 
   cat > /etc/systemd/system/beamhalld.service <<EOF
 [Unit]

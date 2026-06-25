@@ -30,9 +30,13 @@ their auto-generated notes.
   runs through a shared **`bh-mail` broker container** on each beamhall bridge
   (container-to-container, no host exposure, no beam egress hole) — the first
   instance of the **facility-broker pattern** the S3 broker will reuse. The
-  smarthost is configured by the operator via `BEAMHALL_MAIL_*` env (like
-  `BEAMHALL_PG_ADMIN_DSN`); where it's unset, `provision_email` steps aside with a
-  `set_secret` fallback recipe. (PLAN §5.11, §5.12)
+  installer stands the broker up by default (`install.sh --no-mail` to skip); an
+  **IT admin turns email on at runtime with `admin_set_email_provider`** (the
+  smarthost + credential are held and persisted by the broker, never in a beam or
+  the agent's reach), then allows each beam's senders. Until a provider is
+  configured, `provision_email` steps aside with a `set_secret` fallback recipe.
+  Outbound email uses STARTTLS (the broker's cert is injected as `SMTP_CA`).
+  (PLAN §5.11, §5.12)
 
 ### Changed
 - **Anti-shadow-IT copy now covers email.** The MCP server instructions name

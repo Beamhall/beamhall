@@ -93,6 +93,13 @@ type setEmailSendersArgs struct {
 	Senders  []string `json:"senders" jsonschema:"the FULL set of From addresses or domains this beam may send as (set-and-replace), e.g. noreply@app.example.com or the whole domain app.example.com; pass an empty list to block all sending"`
 }
 
+type setEmailProviderArgs struct {
+	Smarthost string `json:"smarthost" jsonschema:"the company's outbound mail relay as host:port, e.g. smtp.mailgun.org:587 or an internal smarthost; pass an empty string to turn email delivery off"`
+	Username  string `json:"username,omitempty" jsonschema:"SMTP username for the smarthost (omit for an open internal relay); held by Beamhall, never returned"`
+	Password  string `json:"password,omitempty" jsonschema:"SMTP password for the smarthost; held by Beamhall, never returned"`
+	StartTLS  *bool  `json:"starttls,omitempty" jsonschema:"upgrade to TLS via STARTTLS before AUTH (default true; set false only for a trusted internal relay that doesn't offer it)"`
+}
+
 type federateDirectoryArgs struct {
 	Name          string `json:"name" jsonschema:"a label for the federation source, e.g. corp-ad"`
 	Vendor        string `json:"vendor,omitempty" jsonschema:"directory kind: ad (Active Directory) | other (generic LDAP)"`
@@ -239,6 +246,10 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_set_email_senders",
 		Description: "IT only: choose which From addresses or domains a beam's outbound email (provision_email) may send as, so a beam can't spoof another team or the company at large. This is an IT decision — the builder cannot widen it (separation of duties). Set-and-replace: pass the FULL allowed set each time (full addresses like noreply@app.example.com, or whole domains like app.example.com); pass an empty list to block all sending. The beam must already have provision_email. Inverse of itself — re-run with the new full set to change it.",
 	}, s.adminSetEmailSenders)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_email_provider",
+		Description: "IT only: configure (or disable) the company's outbound mail provider for this appliance — the smarthost that Beamhall's mail broker relays through (Mailgun/SendGrid/Amazon SES/Postmark, or an internal corporate relay). This is the one-time setup that turns the email facility ON; until you run it, provision_email is unavailable to builders. The credential is held by the broker and never returned or exposed to any beam. Set-and-replace: pass the full smarthost (host:port) + optional username/password each time; pass an empty smarthost to turn email delivery off. Then builders use provision_email and you allow per-beam senders with admin_set_email_senders.",
+	}, s.adminSetEmailProvider)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -1170,9 +1181,29 @@ func authBYOErr(err error) error {
 // (PLAN §5.12), so the agent wires SMTP directly instead of looping on a dead tool.
 func emailDisabledErr(err error) error {
 	if err != nil && strings.Contains(err.Error(), "no delivery provider configured") {
-		return fmt.Errorf("%w — this appliance has no mail provider configured, so Beamhall cannot send for this beam. Ask IT to set the BEAMHALL_MAIL_* smarthost, or wire SMTP yourself by delivering SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS to the beam with set_secret and pointing your app's mailer at them", err)
+		return fmt.Errorf("%w — email isn't configured on this appliance yet. Ask an IT admin to set the company mail provider with admin_set_email_provider; once they do, provision_email works. (Or wire SMTP yourself by delivering SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS to the beam with set_secret and pointing your app's mailer at them.)", err)
 	}
 	return err
+}
+
+func (s *Server) adminSetEmailProvider(ctx context.Context, req *sdkmcp.CallToolRequest, args setEmailProviderArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	startTLS := true
+	if args.StartTLS != nil {
+		startTLS = *args.StartTLS
+	}
+	if err := s.bp.SetEmailProvider(ctx, actor, args.Smarthost, args.Username, args.Password, startTLS); err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(args.Smarthost) == "" {
+		return text("outbound email is now DISABLED (smarthost cleared); provision_email is unavailable to builders until you set a smarthost again."),
+			map[string]any{"enabled": false}, nil
+	}
+	return text(fmt.Sprintf("outbound email enabled — Beamhall relays through %s. Builders can now provision_email; allow each beam's From addresses with admin_set_email_senders.", args.Smarthost)),
+		map[string]any{"enabled": true, "smarthost": args.Smarthost}, nil
 }
 
 func (s *Server) adminSetEmailSenders(ctx context.Context, req *sdkmcp.CallToolRequest, args setEmailSendersArgs) (*sdkmcp.CallToolResult, any, error) {

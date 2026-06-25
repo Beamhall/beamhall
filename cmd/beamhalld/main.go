@@ -204,8 +204,9 @@ func runRestore(args []string) error {
 
 // runMailRelay runs the bh-mail broker (PLAN §5.12): the in-bridge SMTP
 // submission server beams send through, plus the loopback control API beamhalld
-// drives. The smarthost provider and per-beam registrations arrive over the
-// control channel — nothing sensitive is read from disk here. This is the
+// drives. The broker OWNS its provider config (set at runtime over the control
+// channel by admin_set_email_provider) and persists it + its STARTTLS cert to a
+// volume; per-beam registrations arrive over the control channel. This is the
 // container entrypoint for the shared bh-mail service container.
 func runMailRelay(_ []string) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
@@ -221,22 +222,26 @@ func runMailRelay(_ []string) error {
 	if controlAddr == "" {
 		controlAddr = ":2526"
 	}
-
-	cs := mail.NewControlServer(token, 0)
-	prov := mail.New(mail.WithAuditSink(cs.Record))
-	cs.Attach(prov)
-
-	// STARTTLS cert (persisted so a restart doesn't invalidate beams' injected
-	// SMTP_CA). The public PEM is served over the control channel for injection.
-	tlsDir := os.Getenv("BEAMHALL_MAIL_TLS_DIR")
-	if tlsDir == "" {
-		tlsDir = "/tls"
+	// State dir (a persistent volume): the STARTTLS cert + the provider config.
+	stateDir := os.Getenv("BEAMHALL_MAIL_TLS_DIR")
+	if stateDir == "" {
+		stateDir = "/tls"
 	}
 	tlsHost := os.Getenv("BEAMHALL_MAIL_BEAM_HOST")
 	if tlsHost == "" {
 		tlsHost = "bh-mail"
 	}
-	cert, certPEM, err := mail.LoadOrGenerateCert(tlsDir, []string{tlsHost, "localhost"})
+
+	cs := mail.NewControlServer(token, 0)
+	prov := mail.New(mail.WithAuditSink(cs.Record), mail.WithProviderStore(stateDir))
+	cs.Attach(prov)
+	if err := prov.LoadProvider(); err != nil {
+		logger.Warn("mail-relay: load persisted provider", "err", err)
+	}
+
+	// STARTTLS cert (persisted so a restart doesn't invalidate beams' injected
+	// SMTP_CA). The public PEM is served over the control channel for injection.
+	cert, certPEM, err := mail.LoadOrGenerateCert(stateDir, []string{tlsHost, "localhost"})
 	if err != nil {
 		return fmt.Errorf("mail-relay STARTTLS cert: %w", err)
 	}
@@ -481,26 +486,16 @@ func run() error {
 		opts = append(opts, orch.WithEmail(mc, orch.EmailConfig{
 			BeamHost: cfg.MailBeamHost,
 			BeamPort: cfg.MailBeamPort,
-			Provider: mail.ProviderConfig{
-				Smarthost:       cfg.MailSmarthost,
-				Username:        cfg.MailUsername,
-				Password:        cfg.MailPassword,
-				DisableStartTLS: cfg.MailDisableStartTLS,
-			},
-			Limits: mail.Limits{PerDay: cfg.MailRatePerDay, Burst: cfg.MailRateBurst},
+			Limits:   mail.Limits{PerDay: cfg.MailRatePerDay, Burst: cfg.MailRateBurst},
 			Attach: func(ctx context.Context, network string) error {
 				// Attach the shared bh-mail container to the beam network so beams
 				// reach it as <MailBeamHost>:<port> (the bh-postgres precedent).
 				return drv.ConnectContainerToNetwork(ctx, cfg.MailBeamHost, network)
 			},
 		}))
-		if cfg.MailSmarthost == "" {
-			logger.Warn("BEAMHALL_MAIL_SMARTHOST unset — email facility wired but provision_email stays disabled until a smarthost is configured")
-		} else {
-			logger.Info("email delivery facility enabled", "broker", cfg.MailBeamHost, "smarthost", cfg.MailSmarthost)
-		}
+		logger.Info("email broker wired — email turns on once IT runs admin_set_email_provider", "broker", cfg.MailBeamHost)
 	} else {
-		logger.Info("BEAMHALL_MAIL_CONTROL_URL unset — provision_email disabled (no mail broker)")
+		logger.Info("BEAMHALL_MAIL_CONTROL_URL unset — email facility absent (no mail broker)")
 	}
 	// Owned-IdP administration (the admin_* IdP tools). Configured = the bundled
 	// Keycloak; unconfigured = a bring-your-own-IdP deployment where the
@@ -550,9 +545,10 @@ func run() error {
 		// asserting failure with live bridges means degraded isolation.
 		logger.Error("egress reconciliation FAILED — beam isolation may be degraded", "err", err)
 	}
-	// Email broker: push provider + registrations and start the reconcile/audit-
-	// drain loop (PLAN §5.12). Best-effort at boot; the loop self-heals.
-	if orchestrator.EmailEnabled() {
+	// Email broker: learn the provider state + push registrations, and start the
+	// reconcile/audit-drain loop (PLAN §5.12). Runs whenever a broker is wired,
+	// even before IT configures a provider. Best-effort at boot; the loop self-heals.
+	if orchestrator.EmailBrokerWired() {
 		if err := orchestrator.ReconcileEmail(ctx); err != nil {
 			logger.Error("email broker initial reconcile failed (will retry)", "err", err)
 		}

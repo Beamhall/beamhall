@@ -74,6 +74,7 @@ var toolScope = map[string]string{
 	"admin_set_egress":             auth.ScopeAdminIT,
 	"admin_set_auth_groups":        auth.ScopeAdminIT,
 	"admin_set_email_senders":      auth.ScopeAdminIT,
+	"admin_set_email_provider":     auth.ScopeAdminIT,
 	"admin_list_releases":          auth.ScopeAdminIT,
 	"admin_query_audit":            auth.ScopeAdminIT,
 	"admin_verify_audit_chain":     auth.ScopeAdminIT,
@@ -160,13 +161,19 @@ var upgradeTools = map[string]bool{
 	"admin_request_upgrade": true,
 }
 
-// emailTools require the email facility — a bh-mail broker plus a configured
-// smarthost provider (BEAMHALL_MAIL_*). Without it they only return "not
-// enabled", so they stay off the menu (PLAN §5.12).
+// emailTools require the email facility to be fully ON — a bh-mail broker AND an
+// IT-configured provider. Without a provider they degrade closed, so they stay
+// off the menu until admin_set_email_provider is run (PLAN §5.12).
 var emailTools = map[string]bool{
 	"provision_email":         true,
 	"show_email":              true,
 	"admin_set_email_senders": true,
+}
+
+// emailProviderTools only need the broker to be WIRED (the installer stood it
+// up), not yet configured — this is the IT entry point that turns email on.
+var emailProviderTools = map[string]bool{
+	"admin_set_email_provider": true,
 }
 
 // applianceState is the cheap, per-list snapshot of deployment capabilities the
@@ -176,7 +183,8 @@ type applianceState struct {
 	sensitiveEnabled bool
 	backupEnabled    bool
 	upgradeEnabled   bool
-	emailEnabled     bool
+	emailEnabled     bool // broker wired AND provider configured (builder tools)
+	emailWired       bool // broker wired (IT can configure the provider)
 }
 
 // toolVisible reports whether a caller with the given token should see the named
@@ -214,6 +222,9 @@ func toolVisible(name string, info *sdkauth.TokenInfo, adminRole string, st appl
 	if emailTools[name] && !st.emailEnabled {
 		return false
 	}
+	if emailProviderTools[name] && !st.emailWired {
+		return false
+	}
 	return true
 }
 
@@ -242,6 +253,7 @@ func (s *Server) installToolFilter() {
 				backupEnabled:    s.bp.BackupEnabled(),
 				upgradeEnabled:   s.bp.UpgradeEnabled(),
 				emailEnabled:     s.bp.EmailEnabled(),
+				emailWired:       s.bp.EmailBrokerWired(),
 			}
 			kept := make([]*sdkmcp.Tool, 0, len(lt.Tools))
 			for _, t := range lt.Tools {

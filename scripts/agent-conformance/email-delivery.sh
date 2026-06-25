@@ -40,11 +40,13 @@ trap 'rm -rf "$TMP"' EXIT
 
 remote() { "${SSH[@]}" "$@"; }
 
-# --- 0. preflight: broker up -------------------------------------------------
+# --- 0. preflight: broker + lab sink up --------------------------------------
 say "0. Broker preflight"
 remote 'docker ps --format "{{.Names}}" | grep -qx bh-mail' \
   || die "bh-mail broker not running — run scripts/mail-broker-setup.sh --lab-sink on the appliance first"
-ok "bh-mail broker is up"
+remote 'docker ps --format "{{.Names}}" | grep -qx mail-sink' \
+  || die "mail-sink (the test smarthost) not running — run scripts/mail-broker-setup.sh --lab-sink"
+ok "bh-mail broker + lab sink are up"
 
 # --- build the strict STARTTLS sender + a tcp probe (on the Mac) -------------
 cat > "$TMP/smtp-send.go" <<'GO'
@@ -91,6 +93,12 @@ TAG="$(remote "curl -fsS http://${REG_HOST}/v2/${REPO_PATH}/tags/list" 2>/dev/nu
 DIGEST="$(remote "curl -fsS -o /dev/null -D - -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' http://${REG_HOST}/v2/${REPO_PATH}/manifests/${TAG}" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:"{print $2}')"
 [ -n "$DIGEST" ] || die "could not resolve manifest digest for ${REPO_PATH}:${TAG}"
 FULLREF="${REG_HOST}/${REPO_PATH}@${DIGEST}"
+
+# --- 0.5 IT turns email ON (admin_set_email_provider → the lab sink) ----------
+say "0.5 admin_set_email_provider (IT → lab sink)"
+prov0="$(call "$ADMIN" admin_set_email_provider '{"smarthost":"mail-sink:2525","starttls":false}' 2>/dev/null)"
+echo "$prov0" | grep -qi "enabled" || die "admin_set_email_provider failed: $prov0"
+ok "email enabled by IT (smarthost = mail-sink:2525)"
 
 # --- 1. provision_email ------------------------------------------------------
 say "1. create_beam + provision_email"

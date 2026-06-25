@@ -127,19 +127,16 @@ type Config struct {
 	PGBeamHost string
 
 	// Email delivery facility (provision_email, PLAN §5.12), via the shared
-	// bh-mail broker. Empty MailControlURL disables the facility. MailSmarthost is
-	// the south-side provider (Mailgun/SES/internal smarthost), configured by env
-	// like PGAdminDSN configures the DB backend — empty = wired but not sending.
-	MailControlURL      string
-	MailControlToken    string
-	MailBeamHost        string // SMTP_HOST injected into beams (the broker's bridge DNS name)
-	MailBeamPort        int    // SMTP_PORT injected into beams
-	MailSmarthost       string // upstream host:port the broker relays to
-	MailUsername        string
-	MailPassword        string
-	MailDisableStartTLS bool
-	MailRatePerDay      int
-	MailRateBurst       int
+	// bh-mail broker. Empty MailControlURL = no broker wired (facility absent).
+	// The installer wires the broker (control URL/token + beam host); the smarthost
+	// PROVIDER is set at runtime by an IT admin (admin_set_email_provider) and
+	// persisted by the broker — deliberately NOT an env var.
+	MailControlURL   string
+	MailControlToken string
+	MailBeamHost     string // SMTP_HOST injected into beams (the broker's bridge DNS name)
+	MailBeamPort     int    // SMTP_PORT injected into beams
+	MailRatePerDay   int
+	MailRateBurst    int
 
 	// EgressAlwaysDeny is a comma-separated list of extra CIDRs denied for
 	// every beamhall regardless of allowlists (host IP, management subnet) —
@@ -190,16 +187,12 @@ func Load() (Config, error) {
 		PGAdminDSN: os.Getenv("BEAMHALL_PG_ADMIN_DSN"),
 		PGBeamHost: envOr("BEAMHALL_PG_BEAM_HOST", "bh-postgres"),
 
-		MailControlURL:      os.Getenv("BEAMHALL_MAIL_CONTROL_URL"),
-		MailControlToken:    os.Getenv("BEAMHALL_MAIL_CONTROL_TOKEN"),
-		MailBeamHost:        envOr("BEAMHALL_MAIL_BEAM_HOST", "bh-mail"),
-		MailBeamPort:        envInt("BEAMHALL_MAIL_BEAM_PORT", 587),
-		MailSmarthost:       os.Getenv("BEAMHALL_MAIL_SMARTHOST"),
-		MailUsername:        os.Getenv("BEAMHALL_MAIL_USERNAME"),
-		MailPassword:        os.Getenv("BEAMHALL_MAIL_PASSWORD"),
-		MailDisableStartTLS: envOr("BEAMHALL_MAIL_STARTTLS", "on") == "off",
-		MailRatePerDay:      envInt("BEAMHALL_MAIL_RATE_PER_DAY", 300),
-		MailRateBurst:       envInt("BEAMHALL_MAIL_RATE_BURST", 20),
+		MailControlURL:   os.Getenv("BEAMHALL_MAIL_CONTROL_URL"),
+		MailControlToken: os.Getenv("BEAMHALL_MAIL_CONTROL_TOKEN"),
+		MailBeamHost:     envOr("BEAMHALL_MAIL_BEAM_HOST", "bh-mail"),
+		MailBeamPort:     envInt("BEAMHALL_MAIL_BEAM_PORT", 587),
+		MailRatePerDay:   envInt("BEAMHALL_MAIL_RATE_PER_DAY", 300),
+		MailRateBurst:    envInt("BEAMHALL_MAIL_RATE_BURST", 20),
 	}
 	c.OAuthAudience = envOr("BEAMHALL_OAUTH_AUDIENCE", "https://"+c.BaseDomain+"/mcp")
 	c.OAuthAdminRole = envOr("BEAMHALL_OAUTH_ADMIN_ROLE", "beamhall-it") // = auth.DefaultAdminRole

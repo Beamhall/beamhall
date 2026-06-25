@@ -53,6 +53,7 @@ archives:
       - packaging/keycloak/beamhall-keycloak.service
       - packaging/keycloak/README.md
       - scripts/lab-bootstrap.sh
+      - scripts/mail-broker-setup.sh
       - scripts/preflight.sh
 
 checksum:
@@ -82,3 +83,4 @@ release:
     - glob: packaging/keycloak/setup-bundled-idp.sh
     - glob: packaging/keycloak/realm-template.json
     - glob: packaging/keycloak/beamhall-keycloak.service
+    - glob: scripts/mail-broker-setup.sh

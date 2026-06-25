@@ -25,9 +25,12 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	netmail "net/mail"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -166,9 +169,10 @@ type Provisioner struct {
 	pinForwarder     bool
 	forwarderFactory func(ProviderConfig) Forwarder
 
-	audit          func(Event)
-	defaults       Limits
-	forwardTimeout time.Duration
+	audit            func(Event)
+	defaults         Limits
+	forwardTimeout   time.Duration
+	providerStoreDir string // if set, SetProvider persists the provider here (broker-owned)
 }
 
 // Option configures a Provisioner.
@@ -206,6 +210,14 @@ func WithForwardTimeout(d time.Duration) Option {
 	}
 }
 
+// WithProviderStore makes the broker persist its provider config (the smarthost
+// + credentials, set at runtime via the control channel) to dir, so it survives
+// a broker restart. The credential lives only here — a root-only file in the
+// broker's own volume, never in a beam or the vault. Call LoadProvider at startup.
+func WithProviderStore(dir string) Option {
+	return func(p *Provisioner) { p.providerStoreDir = dir }
+}
+
 // New builds a Provisioner. Until a provider is configured (SetProvider) or a
 // forwarder is pinned, the facility is disabled (degrades closed).
 func New(opts ...Option) *Provisioner {
@@ -230,16 +242,61 @@ func (p *Provisioner) Enabled() bool {
 	return p.forwarder != nil
 }
 
-// SetProvider configures the south-side smarthost (admin_set_email_provider).
-// It (re)builds the real forwarder unless one was pinned for tests.
+// SetProvider configures the south-side smarthost (admin_set_email_provider). An
+// empty Smarthost clears it (disabled). It (re)builds the real forwarder unless
+// one was pinned for tests, and persists the config if a provider store is set.
 func (p *Provisioner) SetProvider(cfg ProviderConfig) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	c := cfg
 	p.provider = &c
 	if !p.pinForwarder {
-		p.forwarder = p.forwarderFactory(c)
+		if cfg.Smarthost == "" {
+			p.forwarder = nil
+		} else {
+			p.forwarder = p.forwarderFactory(cfg)
+		}
 	}
+	dir := p.providerStoreDir
+	p.mu.Unlock()
+	if dir != "" {
+		p.persistProvider(dir, cfg)
+	}
+}
+
+func providerStorePath(dir string) string { return filepath.Join(dir, "provider.json") }
+
+func (p *Provisioner) persistProvider(dir string, cfg ProviderConfig) {
+	path := providerStorePath(dir)
+	if cfg.Smarthost == "" {
+		_ = os.Remove(path)
+		return
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, b, 0o600)
+}
+
+// LoadProvider restores a persisted provider config (broker startup). No-op if no
+// store is configured or no config has been persisted.
+func (p *Provisioner) LoadProvider() error {
+	p.mu.RLock()
+	dir := p.providerStoreDir
+	p.mu.RUnlock()
+	if dir == "" {
+		return nil
+	}
+	b, err := os.ReadFile(providerStorePath(dir))
+	if err != nil {
+		return nil // none persisted yet
+	}
+	var cfg ProviderConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return fmt.Errorf("mail: parse persisted provider: %w", err)
+	}
+	p.SetProvider(cfg)
+	return nil
 }
 
 // Provision mints per-beam submission credentials and registers the beam's

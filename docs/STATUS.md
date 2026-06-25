@@ -482,14 +482,19 @@ website/              public marketing site (single-page Astro → Cloudflare); 
     pairs), ChannelShared secret sealing (`SMTP_HOST/PORT/USER/PASS`), `domain.ResourceEmail`,
     `reclaimEmail` (in `reclaimResources`), `ReconcileEmail` + `DrainEmailAudit`
     (self-healing push + audit pull). Bridge attach via the `bh-postgres` precedent.
-  - MCP: `provision_email`/`show_email` (builder) + `admin_set_email_senders` (IT) in
-    `tools.go`/`admin.go`, `visibility.go` gates (emailTools, `emailEnabled` state),
-    server `Instructions` anti-shadow-IT copy. `policy.ActionProvisionEmail`/`ActionShowEmail`.
+  - MCP: `provision_email`/`show_email` (builder) + `admin_set_email_senders` +
+    **`admin_set_email_provider`** (IT) in `tools.go`/`admin.go`; `visibility.go` two-state
+    gates (`emailWired` → the provider tool; `emailEnabled` → the builder tools); server
+    `Instructions` anti-shadow-IT copy. `policy.ActionProvisionEmail`/`ActionShowEmail`.
   - `cmd/beamhalld` — the `mail-relay` subcommand (the `bh-mail` container entrypoint) +
-    `WithEmail` wiring + the reconcile/audit-drain loop. Config: `BEAMHALL_MAIL_*`
-    (`internal/config`). **Provider is env config (`BEAMHALL_MAIL_SMARTHOST` etc.), like
-    `BEAMHALL_PG_ADMIN_DSN` — `admin_set_email_provider` was dropped** (a global cred
-    would leak via the shared-secret table or need a migration).
+    `WithEmail` wiring + the reconcile/audit-drain loop.
+  - **Provider model (operator decision 2026-06-25, supersedes env-config):** the installer
+    stands up the broker **plumbing only** (`BEAMHALL_MAIL_CONTROL_URL/_TOKEN/_BEAM_HOST`);
+    an IT admin sets the smarthost at runtime via **`admin_set_email_provider`** (MCP), and
+    the **broker holds+persists the credential** (root-only `provider.json` in its volume) —
+    never the vault, the shared-secret table, or a beamhalld env. beamhalld learns `enabled`
+    from the broker. `install.sh` stands it up by default (`--no-mail` to skip);
+    `mail-broker-setup.sh` ships as a GoReleaser asset. See memory [[facility-config-via-mcp]].
   - **Lab-verified 2026-06-25** (appliance `10.255.255.153`, full pass in
     `docs/lab-phase0-validation.md`): control channel (provider push → broker
     `enabled:true`, registration push, audit-pull), `provision_email`→bridge-attach,

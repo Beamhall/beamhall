@@ -49,6 +49,7 @@ type fakeBackplane struct {
 	backupEnabled   bool
 	upgradeEnabled  bool
 	emailEnabled    bool
+	emailWired      bool
 	auditIntact     bool // AdminVerifyAuditChain reports a clean chain when true
 }
 
@@ -128,6 +129,11 @@ func (f *fakeBackplane) ShowEmail(ctx context.Context, actor orch.Actor, beamhal
 
 func (f *fakeBackplane) SetEmailSenders(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, senders []string) error {
 	f.record("SetEmailSenders", actor)
+	return nil
+}
+
+func (f *fakeBackplane) SetEmailProvider(ctx context.Context, actor orch.Actor, smarthost, username, password string, startTLS bool) error {
+	f.record("SetEmailProvider", actor)
 	return nil
 }
 
@@ -252,6 +258,7 @@ func (f *fakeBackplane) SensitiveAdminEnabled() bool { return f.sensitiveTier }
 func (f *fakeBackplane) BackupEnabled() bool         { return f.backupEnabled }
 func (f *fakeBackplane) UpgradeEnabled() bool        { return f.upgradeEnabled }
 func (f *fakeBackplane) EmailEnabled() bool          { return f.emailEnabled }
+func (f *fakeBackplane) EmailBrokerWired() bool      { return f.emailWired }
 
 func (f *fakeBackplane) RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error) {
 	f.record("RequestUpgrade:"+version, actor)

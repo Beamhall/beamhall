@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync/atomic"
 	"time"
 
 	"github.com/Beamhall/beamhall/internal/audit"
@@ -102,12 +103,14 @@ type Orchestrator struct {
 	authIssuer   string
 	authAudience string
 
-	// Email delivery facility (PLAN §5.12): the bh-mail broker control-channel
-	// client (emailProv) plus its config — broker beam-host/port beams dial, the
-	// south-side smarthost provider (from BEAMHALL_MAIL_* env), and default
-	// per-beam limits. emailEnabled = a provider smarthost is configured.
+	// Email delivery facility (PLAN §5.12): emailProv is the bh-mail broker
+	// control-channel client (nil = no broker wired by the installer). emailCfg
+	// holds the broker beam-host/port beams dial + default per-beam limits.
+	// emailEnabled is RUNTIME state — true once an IT admin configures the provider
+	// (admin_set_email_provider); the broker owns + persists the provider config,
+	// and beamhalld learns "enabled" from the broker on boot/reconcile.
 	emailCfg     EmailConfig
-	emailEnabled bool
+	emailEnabled atomic.Bool
 
 	// Backup config (WithBackup): the data dir + key to archive and where
 	// admin_backup_now writes. Empty backupDir = backups disabled.
