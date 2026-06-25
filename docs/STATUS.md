@@ -472,7 +472,7 @@ website/              public marketing site (single-page Astro → Cloudflare); 
   (config-push provider+registrations to the broker's loopback port; audit-pull events
   into the hash chain). The S3 broker reuses this verbatim. See **PLAN §5.11**.
 
-  **Email delivery facility (PLAN §5.12) — code-complete 2026-06-24, lab-pending.**
+  **Email delivery facility (PLAN §5.12) — lab-verified 2026-06-25 (on `main`, e646265).**
   Built + unit/race-tested:
   - `internal/facility/mail` — the go-smtp v0.24 submission engine (PLAIN+LOGIN auth,
     per-beam sender allowlist, token-bucket rate limit, SMTP-smarthost forwarder,
