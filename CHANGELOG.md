@@ -15,6 +15,8 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-28
+
 ### Added
 - **Object-storage facility (`provision_object_store`).** A builder gives a beam
   **S3-compatible object storage** with one MCP call, the same way `create_database`
@@ -40,6 +42,19 @@ their auto-generated notes.
   **`admin_set_object_store_quota`**. Every mutation and denial is **audited**
   (object/op only, never contents) to the hash chain. Lab-verified end-to-end
   (local + forward modes, cross-beam isolation, forged-key rejection, reclaim).
+  (PLAN §5.13)
+
+### Changed
+- **Anti-shadow-IT copy now covers object storage.** The MCP server instructions
+  name S3-style providers (Amazon S3, Cloudflare R2, Google Cloud Storage,
+  Backblaze B2) among the external services to route through Beamhall instead of
+  wiring into the app, and teach the agent that "store files/uploads/blobs" maps to
+  `provision_object_store`.
+
+### Removed
+- **Retired the inert `create_object_store` placeholder tool** (it only ever
+  returned "not enabled in this build"); object storage now ships for real as
+  `provision_object_store`.
 
 ## [0.3.0] - 2026-06-25
 
@@ -114,6 +129,7 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Beamhall/beamhall/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Beamhall/beamhall/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Beamhall/beamhall/compare/v0.1.11...v0.2.0
