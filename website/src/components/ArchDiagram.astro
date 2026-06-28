@@ -6,7 +6,7 @@
 //   untrusted workloads that consume those services.
 ---
 <figure class="diagram">
-  <svg viewBox="0 0 760 642" role="img" aria-label="Your OIDC identity provider issues the agent's OAuth token. The untrusted agent calls beamhalld, the single-binary trust base, which validates the token against your IdP and authorizes in the policy point. Its orchestrator provisions managed services — git repo, build + registry, secret vault, database, gateway, and a brokered email facility — which the untrusted workloads consume behind a per-workspace bridge with default-deny egress.">
+  <svg viewBox="0 0 760 694" role="img" aria-label="Your OIDC identity provider issues the agent's OAuth token. The untrusted agent calls beamhalld, the single-binary trust base, which validates the token against your IdP and authorizes in the policy point. Its orchestrator provisions managed services — git repo, build + registry, secret vault, database, gateway, a brokered email facility, and brokered object storage — which the untrusted workloads consume behind a per-workspace bridge with default-deny egress.">
     <defs>
       <marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" class="dg-arrowhead" />
@@ -33,7 +33,7 @@
 
     <!-- beamhalld trust base -->
     <g transform="translate(30,176)">
-      <rect width="700" height="336" rx="14" class="dg-core" />
+      <rect width="700" height="388" rx="14" class="dg-core" />
       <text x="20" y="30" class="dg-coretitle">beamhalld</text>
       <text x="132" y="30" class="dg-sub">single binary · the trust base</text>
 
@@ -87,14 +87,19 @@
         <text x="14" y="20" class="dg-svctitle">Email broker</text>
         <text x="14" y="38" class="dg-svcsub">brokered SMTP · per-beam senders</text>
       </g>
+      <g transform="translate(248,320)">
+        <rect width="204" height="46" rx="9" class="dg-layer" />
+        <text x="14" y="20" class="dg-svctitle">Object store broker</text>
+        <text x="14" y="38" class="dg-svcsub">S3-compatible · per-beam buckets</text>
+      </g>
     </g>
 
-    <line x1="380" y1="512" x2="380" y2="552" class="dg-arrow2" />
-    <text x="392" y="532" class="dg-edge">secrets → /run/secrets · database attached</text>
-    <text x="392" y="548" class="dg-edge">routed via gateway · egress default-deny</text>
+    <line x1="380" y1="564" x2="380" y2="604" class="dg-arrow2" />
+    <text x="392" y="584" class="dg-edge">secrets → /run/secrets · database attached</text>
+    <text x="392" y="600" class="dg-edge">routed via gateway · egress default-deny</text>
 
     <!-- workloads (untrusted) -->
-    <g transform="translate(190,558)">
+    <g transform="translate(190,610)">
       <rect width="380" height="64" rx="11" class="dg-untrust" />
       <text x="190" y="29" text-anchor="middle" class="dg-title">Workloads</text>
       <text x="190" y="49" text-anchor="middle" class="dg-sub">untrusted: agent-authored code</text>

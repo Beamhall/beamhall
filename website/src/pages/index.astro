@@ -131,7 +131,8 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li><b>Networking</b> <span class="c-dim">— routing + TLS at the gateway, default-deny egress, per-workspace isolation.</span></li>
                 <li><b>Identity</b> <span class="c-dim">— one call gives a beam company sign-in: it becomes an OIDC relying party on Beamhall's bundled IdP, so employees log in with the accounts they already have — no IdP config, no credential reaching the agent, and audience-isolated so an app token can't reach the backplane.</span></li>
                 <li><b>Email</b> <span class="c-dim">— one call gives a beam outbound email through a shared in-hall broker: it sends with any SMTP library, while the mail-provider credential stays in the broker — never in the beam or the agent — with a per-beam sender allowlist, STARTTLS, and every message audited.</span></li>
-                <li><b>Connectors</b> <span class="c-dim">— email ships today as the first; </span><span class="c-amber">(coming)</span> <span class="c-dim">object storage, queues, and brokered paths to internal systems (ERP databases, integrations) — without the beam ever holding their credentials.</span></li>
+                <li><b>Object storage</b> <span class="c-dim">— one call gives a beam S3-compatible object storage the same way a database is provisioned: it uses any stock S3 SDK while Beamhall stores the bytes — on the appliance or in your own S3, and the app can't tell which — with no storage account, and no credential it can use outside the hall.</span></li>
+                <li><b>Connectors</b> <span class="c-dim">— email and object storage ship today; </span><span class="c-amber">(coming)</span> <span class="c-dim">queues, and brokered paths to internal systems (ERP databases, integrations) — without the beam ever holding their credentials.</span></li>
               </ul>
 
               <h3>a reliable path — not improvised infrastructure</h3>
@@ -385,6 +386,10 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                       <td class="get"><b>Outbound email</b> — one call gives an app SMTP send through an in-hall broker; the mail-provider credential never reaches the app or the agent</td>
                       <td class="skip">Mailgun / SES / SendGrid account · SMTP keys in the app</td>
                     </tr>
+                    <tr>
+                      <td class="get"><b>Object storage</b> — one call gives an app S3-compatible storage through an in-hall broker; the storage credential never reaches the app or the agent, and the bytes stay on your own infrastructure</td>
+                      <td class="skip">S3 / R2 / GCS account · bucket setup · access keys in the app</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -413,8 +418,8 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
               </ul>
 
               <p class="meta-line">
-                Company sign-in and outbound email ship today; object storage,
-                queues, and more secure connectors to internal systems are next —
+                Company sign-in, outbound email, and object storage ship today;
+                queues and more secure connectors to internal systems are next —
                 see the <b>roadmap</b>.
               </p>
             </div>
@@ -519,6 +524,31 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
               </div>
 
               <div class="worry">
+                <div class="worry-q">If an app gets object storage, can it read another team's files or leak our storage keys?</div>
+                <div class="worry-a">
+                  No. An app talks to a shared in-hall storage broker, not your
+                  cloud storage directly — and any external storage credential
+                  <span class="c-strong">lives only in that broker</span>, never in
+                  the app or the agent. The app holds only its own broker-scoped
+                  key, useless outside Beamhall. Because that broker is one shared
+                  container on every network, it doesn't trust the network to tell
+                  apps apart: it
+                  <span class="c-strong">verifies the signature on every single
+                  request</span>, so an app reaching for another team's bucket — or
+                  presenting a forged key — is refused outright. Preview and
+                  production get <span class="c-strong">separate buckets</span>, so
+                  preview iteration can't read or delete live data; a per-app storage
+                  quota keeps one app from filling the shared store; and every change
+                  or denied attempt is <span class="c-strong">audited</span> (the
+                  object and operation, never its contents) to the same tamper-evident
+                  record. By default the bytes live on your own appliance with no
+                  external account at all — IT can switch to the company's S3 at any
+                  time, with each app penned into its own private key prefix, and the
+                  app never learns which backend it's using.
+                </div>
+              </div>
+
+              <div class="worry">
                 <div class="worry-q">It's AI-written code on our hardware — can it break out and reach the host?</div>
                 <div class="worry-a">
                   Every app runs locked down: least privilege, read-only filesystem,
@@ -596,17 +626,18 @@ const byId = Object.fromEntries(nav.map((x) => [x.id, x]));
                 <li>four-eyes promote gate, air-gapped builds, one-command installer</li>
                 <li>provisioned auth <span class="c-dim">— one call gives a beam company sign-in (OIDC), audience-isolated, lab-verified</span></li>
                 <li>email facility <span class="c-dim">— one call gives a beam outbound email via a shared in-hall broker (the first connector); per-beam sender allowlist, STARTTLS, per-message audit, lab-verified</span></li>
+                <li>object-storage facility <span class="c-dim">— one call gives a beam S3-compatible object storage via a shared in-hall broker (the second connector); per-request SigV4 isolation, separate preview/live buckets, per-beam quota, local + forward-to-external-S3 backends, per-op audit, lab-verified</span></li>
               </ul>
 
               <h3>planned — expanding what a beam inherits</h3>
               <ul class="list todo">
-                <li><b>More secure connectors</b> <span class="c-dim">— building on the shipped email facility, the same brokered pattern extended to internal systems (ERP databases, integrations) with no credential held by the app.</span></li>
+                <li><b>More secure connectors</b> <span class="c-dim">— building on the shipped email and object-storage facilities, the same brokered pattern extended to internal systems (ERP databases, integrations) with no credential held by the app.</span></li>
                 <li><b>Firecracker / microVM driver</b> <span class="c-dim">— behind the existing RuntimeDriver interface, if a review demands hardware-virt isolation.</span></li>
                 <li><b>L7 egress proxy</b> <span class="c-dim">with content inspection.</span></li>
                 <li><b>SBOM + CVE gate before promote;</b> <span class="c-dim">SLSA provenance.</span></li>
                 <li><b>Lease-based short-lived secrets</b> <span class="c-dim">(HSM-backed).</span></li>
                 <li><b>WORM / remote-attested log sink;</b> <span class="c-dim">SIEM cold-store before prune.</span></li>
-                <li><b>Object-store and queue provisioners.</b></li>
+                <li><b>Queue provisioner</b> <span class="c-dim">— the same facility-broker pattern for message queues.</span></li>
               </ul>
 
               <h3>planned — platform</h3>
