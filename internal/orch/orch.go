@@ -67,19 +67,19 @@ type Actor struct {
 
 // Orchestrator wires the backplane services behind the PEP.
 type Orchestrator struct {
-	st         *store.Store
-	drv        driver.RuntimeDriver
-	gw         GatewayAPI
-	sched      PauseScheduler
-	vault      *secret.Vault
-	pep        *policy.PEP
-	alog       *audit.Logger
-	builder    Builder
+	st           *store.Store
+	drv          driver.RuntimeDriver
+	gw           GatewayAPI
+	sched        PauseScheduler
+	vault        *secret.Vault
+	pep          *policy.PEP
+	alog         *audit.Logger
+	builder      Builder
 	dbProv       DatabaseProvisioner
 	emailProv    EmailProvisioner
 	objStoreProv ObjectStoreProvisioner
 	repoRetire   func(beamhallSlug, beamSlug, id string) error
-	log        *slog.Logger
+	log          *slog.Logger
 
 	baseDomain        string
 	defaultPauseAfter time.Duration

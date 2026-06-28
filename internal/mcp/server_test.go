@@ -275,13 +275,13 @@ func (f *fakeBackplane) SetEgress(ctx context.Context, actor orch.Actor, beamhal
 	return f.failWith
 }
 
-func (f *fakeBackplane) IdentityAdminEnabled() bool  { return f.idpEnabled }
-func (f *fakeBackplane) SensitiveAdminEnabled() bool { return f.sensitiveTier }
-func (f *fakeBackplane) BackupEnabled() bool         { return f.backupEnabled }
-func (f *fakeBackplane) UpgradeEnabled() bool        { return f.upgradeEnabled }
-func (f *fakeBackplane) EmailEnabled() bool          { return f.emailEnabled }
-func (f *fakeBackplane) EmailBrokerWired() bool      { return f.emailWired }
-func (f *fakeBackplane) ObjectStoreEnabled() bool    { return f.objStoreEnabled }
+func (f *fakeBackplane) IdentityAdminEnabled() bool   { return f.idpEnabled }
+func (f *fakeBackplane) SensitiveAdminEnabled() bool  { return f.sensitiveTier }
+func (f *fakeBackplane) BackupEnabled() bool          { return f.backupEnabled }
+func (f *fakeBackplane) UpgradeEnabled() bool         { return f.upgradeEnabled }
+func (f *fakeBackplane) EmailEnabled() bool           { return f.emailEnabled }
+func (f *fakeBackplane) EmailBrokerWired() bool       { return f.emailWired }
+func (f *fakeBackplane) ObjectStoreEnabled() bool     { return f.objStoreEnabled }
 func (f *fakeBackplane) ObjectStoreBrokerWired() bool { return f.objStoreWired }
 
 func (f *fakeBackplane) RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error) {

@@ -33,12 +33,12 @@ import (
 //     the backend (local↔external), it does not gate availability.
 
 const (
-	s3EndpointKey  = "S3_ENDPOINT"          // shared
-	s3RegionKey    = "S3_REGION"            // shared
-	s3PathStyleKey = "S3_FORCE_PATH_STYLE"  // shared
-	s3BucketKey    = "S3_BUCKET"            // per-channel
-	s3AccessKeyKey = "S3_ACCESS_KEY"        // per-channel
-	s3SecretKeyKey = "S3_SECRET_KEY"        // per-channel (the SigV4 secret)
+	s3EndpointKey  = "S3_ENDPOINT"         // shared
+	s3RegionKey    = "S3_REGION"           // shared
+	s3PathStyleKey = "S3_FORCE_PATH_STYLE" // shared
+	s3BucketKey    = "S3_BUCKET"           // per-channel
+	s3AccessKeyKey = "S3_ACCESS_KEY"       // per-channel
+	s3SecretKeyKey = "S3_SECRET_KEY"       // per-channel (the SigV4 secret)
 )
 
 func objStoreSharedKeys() []string  { return []string{s3EndpointKey, s3RegionKey, s3PathStyleKey} }
