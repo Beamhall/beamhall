@@ -100,6 +100,22 @@ type setEmailProviderArgs struct {
 	StartTLS  *bool  `json:"starttls,omitempty" jsonschema:"upgrade to TLS via STARTTLS before AUTH (default true; set false only for a trusted internal relay that doesn't offer it)"`
 }
 
+type setObjectStoreProviderArgs struct {
+	Endpoint       string `json:"endpoint" jsonschema:"the external S3 endpoint as host:port, e.g. s3.amazonaws.com or minio.corp:9000; pass an EMPTY string to use Beamhall's built-in local storage (no external account)"`
+	Region         string `json:"region,omitempty" jsonschema:"the external S3 region (default us-east-1)"`
+	Bucket         string `json:"bucket,omitempty" jsonschema:"the single external bucket that holds every beam's objects under a per-beam key prefix; required when endpoint is set"`
+	AccessKey      string `json:"access_key,omitempty" jsonschema:"access key for the external S3; held by Beamhall, never returned"`
+	SecretKey      string `json:"secret_key,omitempty" jsonschema:"secret key for the external S3; held by Beamhall, never returned"`
+	ForcePathStyle *bool  `json:"force_path_style,omitempty" jsonschema:"use path-style addressing against the external S3 (default true; required by MinIO and most non-AWS endpoints; set false for AWS S3 virtual-host style)"`
+	UseSSL         *bool  `json:"use_ssl,omitempty" jsonschema:"dial the external S3 over HTTPS (default true)"`
+}
+
+type setObjectStoreQuotaArgs struct {
+	Beamhall string `json:"beamhall" jsonschema:"beamhall slug"`
+	Beam     string `json:"beam" jsonschema:"beam slug whose object-storage quota to set"`
+	MaxBytes int64  `json:"max_bytes" jsonschema:"per-beam storage cap in bytes across all channels (preview + production); 0 = unlimited"`
+}
+
 type federateDirectoryArgs struct {
 	Name          string `json:"name" jsonschema:"a label for the federation source, e.g. corp-ad"`
 	Vendor        string `json:"vendor,omitempty" jsonschema:"directory kind: ad (Active Directory) | other (generic LDAP)"`
@@ -250,6 +266,14 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_set_email_provider",
 		Description: "IT only: configure (or disable) the company's outbound mail provider for this appliance — the smarthost that Beamhall's mail broker relays through (Mailgun/SendGrid/Amazon SES/Postmark, or an internal corporate relay). This is the one-time setup that turns the email facility ON; until you run it, provision_email is unavailable to builders. The credential is held by the broker and never returned or exposed to any beam. Set-and-replace: pass the full smarthost (host:port) + optional username/password each time; pass an empty smarthost to turn email delivery off. Then builders use provision_email and you allow per-beam senders with admin_set_email_senders.",
 	}, s.adminSetEmailProvider)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_object_store_provider",
+		Description: "IT only: choose where Beamhall's object-store broker keeps beams' data. By DEFAULT (and when you pass an empty endpoint) it uses the appliance's built-in LOCAL store — batteries-included, no external account, ideal for a pilot. To back beams with the company's real S3 instead, pass an external endpoint (host:port) + bucket + access/secret key (AWS S3, MinIO, Wasabi, Cloudflare R2, …); Beamhall then forwards every beam's objects into that ONE bucket under a per-beam key prefix. The credential is held by the broker and never returned or exposed to any beam. Object storage is on by default once the broker is wired, so builders can provision_object_store without this; use it only to switch backends. Switching does not migrate existing data. Set-and-replace; pass an empty endpoint to return to local storage. Set a per-beam cap with admin_set_object_store_quota.",
+	}, s.adminSetObjectStoreProvider)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_object_store_quota",
+		Description: "IT only: cap how much a beam may store across its preview + production buckets (object storage from provision_object_store), so one beam can't fill the shared local store. Pass max_bytes (0 = unlimited). The beam must already have provision_object_store. Set-and-replace — re-run with a new cap to change it.",
+	}, s.adminSetObjectStoreQuota)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -1204,6 +1228,63 @@ func (s *Server) adminSetEmailProvider(ctx context.Context, req *sdkmcp.CallTool
 	}
 	return text(fmt.Sprintf("outbound email enabled — Beamhall relays through %s. Builders can now provision_email; allow each beam's From addresses with admin_set_email_senders.", args.Smarthost)),
 		map[string]any{"enabled": true, "smarthost": args.Smarthost}, nil
+}
+
+// objStoreDisabledErr turns the unconfigured-facility error from
+// provision_object_store/show_object_store into the actionable set_secret fallback
+// (PLAN §5.13), so the agent wires S3 directly instead of looping on a dead tool.
+func objStoreDisabledErr(err error) error {
+	if err != nil && strings.Contains(err.Error(), "object store not available") {
+		return fmt.Errorf("%w — object storage isn't available on this appliance (no broker wired). Ask an IT admin to enable it; once wired it's on by default. (Or wire S3 yourself by delivering S3_ENDPOINT / S3_REGION / S3_BUCKET / S3_ACCESS_KEY / S3_SECRET_KEY to the beam with set_secret and pointing your app's S3 SDK at them.)", err)
+	}
+	return err
+}
+
+func (s *Server) adminSetObjectStoreProvider(ctx context.Context, req *sdkmcp.CallToolRequest, args setObjectStoreProviderArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	forcePath := true
+	if args.ForcePathStyle != nil {
+		forcePath = *args.ForcePathStyle
+	}
+	useSSL := true
+	if args.UseSSL != nil {
+		useSSL = *args.UseSSL
+	}
+	if err := s.bp.SetObjectStoreProvider(ctx, actor, args.Endpoint, args.Region, args.Bucket, args.AccessKey, args.SecretKey, forcePath, useSSL); err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(args.Endpoint) == "" {
+		return text("object storage now uses Beamhall's built-in LOCAL store (no external account). Builders use provision_object_store; data is kept on the appliance."),
+			map[string]any{"backend": "local"}, nil
+	}
+	return text(fmt.Sprintf("object storage now FORWARDS to %s (bucket %s). Builders' data lands there under a per-beam prefix; the credential is held by Beamhall and never exposed.", args.Endpoint, args.Bucket)),
+		map[string]any{"backend": "external", "endpoint": args.Endpoint, "bucket": args.Bucket}, nil
+}
+
+func (s *Server) adminSetObjectStoreQuota(ctx context.Context, req *sdkmcp.CallToolRequest, args setObjectStoreQuotaArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.bp.SetObjectStoreQuota(ctx, actor, bh.ID, beam.ID, args.MaxBytes); err != nil {
+		return nil, nil, objStoreDisabledErr(err)
+	}
+	if args.MaxBytes == 0 {
+		return text(fmt.Sprintf("beam %q object-storage quota set to unlimited.", beam.Slug)), map[string]any{"max_bytes": 0}, nil
+	}
+	return text(fmt.Sprintf("beam %q object-storage quota set to %d bytes.", beam.Slug, args.MaxBytes)),
+		map[string]any{"max_bytes": args.MaxBytes}, nil
 }
 
 func (s *Server) adminSetEmailSenders(ctx context.Context, req *sdkmcp.CallToolRequest, args setEmailSendersArgs) (*sdkmcp.CallToolResult, any, error) {

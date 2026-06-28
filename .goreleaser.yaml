@@ -54,6 +54,7 @@ archives:
       - packaging/keycloak/README.md
       - scripts/lab-bootstrap.sh
       - scripts/mail-broker-setup.sh
+      - scripts/objstore-broker-setup.sh
       - scripts/preflight.sh
 
 checksum:
@@ -84,3 +85,4 @@ release:
     - glob: packaging/keycloak/realm-template.json
     - glob: packaging/keycloak/beamhall-keycloak.service
     - glob: scripts/mail-broker-setup.sh
+    - glob: scripts/objstore-broker-setup.sh

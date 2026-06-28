@@ -75,9 +75,10 @@ type Orchestrator struct {
 	pep        *policy.PEP
 	alog       *audit.Logger
 	builder    Builder
-	dbProv     DatabaseProvisioner
-	emailProv  EmailProvisioner
-	repoRetire func(beamhallSlug, beamSlug, id string) error
+	dbProv       DatabaseProvisioner
+	emailProv    EmailProvisioner
+	objStoreProv ObjectStoreProvisioner
+	repoRetire   func(beamhallSlug, beamSlug, id string) error
 	log        *slog.Logger
 
 	baseDomain        string
@@ -111,6 +112,14 @@ type Orchestrator struct {
 	// and beamhalld learns "enabled" from the broker on boot/reconcile.
 	emailCfg     EmailConfig
 	emailEnabled atomic.Bool
+
+	// Object-storage facility (PLAN §5.13): objStoreProv is the bh-objstore broker
+	// control-channel client (nil = no broker wired). objStoreCfg holds the broker
+	// beam-host/port beams dial + region + default quota. objStoreEnabled is learned
+	// from the broker on boot/reconcile — true by default once wired (the broker
+	// boots in local mode); admin_set_object_store_provider only switches backends.
+	objStoreCfg     ObjectStoreConfig
+	objStoreEnabled atomic.Bool
 
 	// Backup config (WithBackup): the data dir + key to archive and where
 	// admin_backup_now writes. Empty backupDir = backups disabled.

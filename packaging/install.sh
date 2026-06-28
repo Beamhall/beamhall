@@ -35,6 +35,7 @@ REPO_SLUG="${BEAMHALL_REPO:-Beamhall/beamhall}"
 RESOLVED_TAG=""
 SETUP_IDP="ask"             # ask | bundled | corporate | skip (--idp)
 SETUP_MAIL=1                # stand up the email broker plumbing (--no-mail to skip)
+SETUP_OBJSTORE=1            # stand up the object-store broker (--no-objstore to skip)
 while [ $# -gt 0 ]; do
   case "$1" in
     --group)       GROUP="$2"; shift 2 ;;
@@ -45,6 +46,7 @@ while [ $# -gt 0 ]; do
     --repo)        REPO_SLUG="$2"; shift 2 ;;
     --idp)         SETUP_IDP="$2"; shift 2 ;;
     --no-mail)     SETUP_MAIL=0; shift ;;
+    --no-objstore) SETUP_OBJSTORE=0; shift ;;
     --yes|-y)      BEAMHALL_YES=1; shift ;;
     --no-start)    AUTO_START=0; shift ;;
     -*)            echo "unknown flag: $1" >&2; exit 2 ;;
@@ -407,6 +409,41 @@ EOF
   ok "bh-mail broker ready — IT enables email with admin_set_email_provider"
 }
 
+setup_objstore_broker() {
+  local TOK NET="objstore-egress-net" IMG="bh-objstore-img:beamhall" d
+  install -d -m 0750 -o root -g beamhall /etc/beamhall
+  [ -s /etc/beamhall/objstore-control.token ] || (umask 077; openssl rand -hex 24 > /etc/beamhall/objstore-control.token)
+  TOK="$(cat /etc/beamhall/objstore-control.token)"
+  d="$(mktemp -d)"; cp /usr/local/bin/beamhalld "$d/beamhalld"
+  printf 'FROM scratch\nCOPY beamhalld /beamhalld\nENTRYPOINT ["/beamhalld","object-store-relay"]\n' > "$d/Dockerfile"
+  run_step "Building the bh-objstore broker image" docker build -q -t "$IMG" "$d"
+  rm -rf "$d"
+  # The egress net carries the south-side hop to an external S3 (forward mode); in
+  # the default local mode it's unused. Beams reach the broker via their own bridge.
+  docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
+  docker volume create bh-objstore-data >/dev/null 2>&1 || true
+  if ! docker ps --format '{{.Names}}' | grep -qx bh-objstore; then
+    docker rm -f bh-objstore >/dev/null 2>&1 || true
+    run_step "Starting the bh-objstore broker (local backend)" docker run -d --restart=always --name bh-objstore \
+      --network "$NET" -p 127.0.0.1:9001:9001 -v bh-objstore-data:/data \
+      -e BEAMHALL_OBJSTORE_CONTROL_TOKEN="$TOK" -e BEAMHALL_OBJSTORE_S3_ADDR=:9000 \
+      -e BEAMHALL_OBJSTORE_CONTROL_ADDR=:9001 -e BEAMHALL_OBJSTORE_STATE_DIR=/data "$IMG"
+  fi
+  if ! grep -q '^BEAMHALL_OBJSTORE_CONTROL_URL=' /etc/beamhall/beamhall.env 2>/dev/null; then
+    cat >> /etc/beamhall/beamhall.env <<EOF
+
+# Object-store broker (provision_object_store, PLAN §5.13). On by default with a
+# local disk backend. IT can switch to the company's S3 at runtime with
+# admin_set_object_store_provider — the credential is held + persisted by the
+# broker, not here. Remove these lines to drop the facility.
+BEAMHALL_OBJSTORE_CONTROL_URL=http://127.0.0.1:9001
+BEAMHALL_OBJSTORE_CONTROL_TOKEN=${TOK}
+BEAMHALL_OBJSTORE_BEAM_HOST=bh-objstore
+EOF
+  fi
+  ok "bh-objstore broker ready — object storage is on (local backend); switch to external S3 with admin_set_object_store_provider"
+}
+
 group_appliance() {
   phase "The Beamhall appliance"
   if [ -n "$BIN_SRC" ] && [ -x "$BIN_SRC" ]; then ok "using provided binary: $BIN_SRC"
@@ -465,6 +502,7 @@ EOF
   else ok "beamhall.env exists — left unchanged"; fi
 
   if [ "$SETUP_MAIL" = 1 ]; then setup_mail_broker; else ok "email broker skipped (--no-mail)"; fi
+  if [ "$SETUP_OBJSTORE" = 1 ]; then setup_objstore_broker; else ok "object-store broker skipped (--no-objstore)"; fi
 
   cat > /etc/systemd/system/beamhalld.service <<EOF
 [Unit]

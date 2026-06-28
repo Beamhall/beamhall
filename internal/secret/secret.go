@@ -195,6 +195,19 @@ func (v *Vault) value(ctx context.Context, ref string) ([]byte, error) {
 	return v.decrypt(ct)
 }
 
+// Reveal returns the plaintext of a single sealed secret. It is a backplane-side
+// read path (no agent ever calls it) used where the orchestrator must re-supply a
+// secret it already sealed — e.g. re-pushing a beam's plaintext S3 key to the
+// object-store broker on reconcile, which SigV4 requires (the broker can't verify
+// from a hash). Like Inject, the plaintext never leaves the backplane.
+func (v *Vault) Reveal(ctx context.Context, ref domain.SecretRef) ([]byte, error) {
+	sec, err := v.store.GetSecret(ctx, ref.BeamhallID, ref.BeamID, ref.Key, ref.Channel)
+	if err != nil {
+		return nil, err
+	}
+	return v.value(ctx, sec.ValueRef)
+}
+
 // Seal encrypts arbitrary bytes to the vault key (age), for control-plane data
 // that must not sit in the store as plaintext but is not a per-beam secret —
 // e.g. the payload of a pending sensitive admin action, which may carry an LDAP

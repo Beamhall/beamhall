@@ -50,6 +50,13 @@ const (
 	// via requireIT/itAudit, not a role-matrix entry.
 	ActionProvisionEmail Action = "provision_email"
 	ActionShowEmail      Action = "show_email"
+	// Object-storage facility (PLAN §5.13): a per-beam managed primitive, like a
+	// database. provision_object_store is a builder write; show_object_store is a
+	// read. The IT-set backend provider + quota (admin_set_object_store_provider /
+	// admin_set_object_store_quota) are admin:it actions via requireIT/itAudit, not
+	// role-matrix entries.
+	ActionProvisionObjectStore Action = "provision_object_store"
+	ActionShowObjectStore      Action = "show_object_store"
 )
 
 // Forbidden actions: hard-denied for every role, including it_admin, on the
@@ -82,8 +89,9 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionReadBeamhall: true,
 		ActionShowLogs:     true,
 		ActionShowMetrics:  true,
-		ActionShowAuth:     true,
-		ActionShowEmail:    true,
+		ActionShowAuth:        true,
+		ActionShowEmail:       true,
+		ActionShowObjectStore: true,
 	},
 	domain.RoleBuilder: {
 		ActionReadBeamhall:   true,
@@ -106,8 +114,10 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		// May give their beam company sign-in (provision_auth) and inspect it.
 		ActionProvisionAuth:  true,
 		ActionShowAuth:       true,
-		ActionProvisionEmail: true,
-		ActionShowEmail:      true,
+		ActionProvisionEmail:       true,
+		ActionShowEmail:            true,
+		ActionProvisionObjectStore: true,
+		ActionShowObjectStore:      true,
 	},
 	domain.RoleBeamhallAdmin: {
 		ActionReadBeamhall:   true,
@@ -126,8 +136,10 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionDestroyBeam:    true,
 		ActionProvisionAuth:  true,
 		ActionShowAuth:       true,
-		ActionProvisionEmail: true,
-		ActionShowEmail:      true,
+		ActionProvisionEmail:       true,
+		ActionShowEmail:            true,
+		ActionProvisionObjectStore: true,
+		ActionShowObjectStore:      true,
 	},
 }
 

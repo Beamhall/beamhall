@@ -50,6 +50,8 @@ type fakeBackplane struct {
 	upgradeEnabled  bool
 	emailEnabled    bool
 	emailWired      bool
+	objStoreEnabled bool
+	objStoreWired   bool
 	auditIntact     bool // AdminVerifyAuditChain reports a clean chain when true
 }
 
@@ -134,6 +136,26 @@ func (f *fakeBackplane) SetEmailSenders(ctx context.Context, actor orch.Actor, b
 
 func (f *fakeBackplane) SetEmailProvider(ctx context.Context, actor orch.Actor, smarthost, username, password string, startTLS bool) error {
 	f.record("SetEmailProvider", actor)
+	return nil
+}
+
+func (f *fakeBackplane) ProvisionObjectStore(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) ([]string, error) {
+	f.record("ProvisionObjectStore", actor)
+	return []string{"S3_ENDPOINT", "S3_REGION", "S3_FORCE_PATH_STYLE", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY"}, nil
+}
+
+func (f *fakeBackplane) ShowObjectStore(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.ObjectStoreInfo, error) {
+	f.record("ShowObjectStore", actor)
+	return orch.ObjectStoreInfo{}, nil
+}
+
+func (f *fakeBackplane) SetObjectStoreProvider(ctx context.Context, actor orch.Actor, endpoint, region, bucket, accessKey, secretKey string, forcePathStyle, useSSL bool) error {
+	f.record("SetObjectStoreProvider", actor)
+	return nil
+}
+
+func (f *fakeBackplane) SetObjectStoreQuota(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, maxBytes int64) error {
+	f.record("SetObjectStoreQuota", actor)
 	return nil
 }
 
@@ -259,6 +281,8 @@ func (f *fakeBackplane) BackupEnabled() bool         { return f.backupEnabled }
 func (f *fakeBackplane) UpgradeEnabled() bool        { return f.upgradeEnabled }
 func (f *fakeBackplane) EmailEnabled() bool          { return f.emailEnabled }
 func (f *fakeBackplane) EmailBrokerWired() bool      { return f.emailWired }
+func (f *fakeBackplane) ObjectStoreEnabled() bool    { return f.objStoreEnabled }
+func (f *fakeBackplane) ObjectStoreBrokerWired() bool { return f.objStoreWired }
 
 func (f *fakeBackplane) RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error) {
 	f.record("RequestUpgrade:"+version, actor)
@@ -745,7 +769,7 @@ func TestToolListMatchesContract(t *testing.T) {
 	for _, want := range []string{"list_beams", "create_beam", "deploy_beam", "get_repo",
 		"create_database", "set_secret", "show_logs", "pause_preview", "resume_preview",
 		"promote_to_live", "rollback", "show_metrics", "archive_beam", "destroy_beam",
-		"create_object_store", "create_queue"} {
+		"create_queue"} {
 		if !got[want] {
 			t.Errorf("builder tool %q missing from the contract", want)
 		}
@@ -1137,7 +1161,7 @@ func TestSecretLifecycleAndOperateTools(t *testing.T) {
 func TestFastFollowToolsRefuse(t *testing.T) {
 	h := newHarness(t)
 	cs := h.connect(t, auth.ScopeResourcesWrite, nil)
-	for _, tool := range []string{"create_object_store", "create_queue"} {
+	for _, tool := range []string{"create_queue"} {
 		res, err := cs.CallTool(context.Background(), &sdkmcp.CallToolParams{Name: tool, Arguments: map[string]any{}})
 		if err != nil {
 			t.Fatal(err)

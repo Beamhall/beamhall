@@ -1192,3 +1192,62 @@ no provider); an IT admin sets the smarthost at runtime with
 `scripts/mail-broker-setup.sh` is now a GoReleaser release asset. The earlier
 env-provider approach (`BEAMHALL_MAIL_SMARTHOST`) and the "dropped
 admin_set_email_provider" note are superseded.
+
+## Object-storage facility — spike + lab verification (2026-06-28)
+
+The second §5.11 facility (PLAN §5.13). Built on `feature/objstore-facility`.
+
+### Spike (step 0) — gofakes3 + a hand-written SigV4 verifier (GO)
+
+A throwaway spike validated the engine choice + the security-critical path before
+building the package, against the real gofakes3 + two independent stock SDKs
+(aws-sdk-go-v2 at its **defaults**, and minio-go), over plain HTTP, path-style.
+
+- **Crux gotcha — chunked-trailer framing.** gofakes3 only natively decodes
+  `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` (`gofakes3.go:688`). Modern aws-sdk-go-v2 and
+  boto3/aws-cli **default** to `STREAMING-UNSIGNED-PAYLOAD-TRAILER` (CRC32 data-integrity
+  checksums), which gofakes3 would store **garbled**. Fix baked into the package: our
+  verifier middleware **normalizes every aws-chunked variant** (signed / unsigned / the
+  `*-TRAILER` forms) into a plain body — streaming, no full-body buffering — before the
+  engine, setting `Content-Length` from `X-Amz-Decoded-Content-Length` and
+  `x-amz-content-sha256: UNSIGNED-PAYLOAD`. Verified byte-exact round-trip with the AWS
+  SDK at its defaults. Invisible to unit tests that hand-craft signed (non-trailer) bodies —
+  only a real default-configured SDK exercises it.
+- We verify only the **seed** (Authorization-header) signature using the placeholder in
+  `x-amz-content-sha256`; per-chunk signatures aren't re-verified (the seed proves the
+  requester holds the secret; body integrity on the private bridge isn't the threat).
+- S3 canonical URI = `r.URL.EscapedPath()` (S3 doesn't double-encode). `host` from `r.Host`.
+- Backend: `s3afero.MultiBucket(s3afero.FsPath(dir, FsPathCreate))` persists on disk across
+  a process restart. Multipart rides gofakes3's in-memory fallback (no `MultipartBackend`),
+  so FORWARD multipart is free (buffers parts, then one `PutObject`).
+- **Decision: gofakes3 engine + our own verifier/normalizer (Path B).** The JankariTech
+  fork was not needed. aws-sdk-go-v2 was spike-only; the package keeps minio-go only.
+
+### Lab verification (appliance `10.255.255.153`, `bh-objstore` broker)
+
+Drove the live appliance after deploying the branch binary (rollback:
+`beamhalld.pre-objstore`) and standing up `bh-objstore` (local backend, on by default).
+`scripts/agent-conformance/object-store.sh` (a stock minio-go client in throwaway
+containers on the team bridge) **passes live**:
+
+| Check | Result |
+|---|---|
+| Boot: broker wired → `/control/status` | `enabled:true` (local default) |
+| `provision_object_store` (builder) → sealed `S3_*`, deploy → `/run/secrets/*` injected | ✅ |
+| LOCAL round-trip: PUT+GET via a stock S3 SDK over plain HTTP (SigV4) | `OK` byte-exact |
+| Cross-beam: beam B's key on beam A's bucket | `access to this bucket is not allowed` (403) |
+| Forged secret | `the request signature we calculated does not match` |
+| `destroy_beam` (IT) → broker deregister + **purge bucket** (old creds) | `SignatureDoesNotMatch` |
+| Audit: `object_store_op` chained (`result=ok` PUT/GET; `denied` cross-bucket + signature) | present; `admin_verify_audit_chain` → intact |
+| **FORWARD**: `admin_set_object_store_provider` → external MinIO; beam PUT lands at `company-bucket/beam-<id>/preview/<key>` | ✅ data in external bucket under the per-beam prefix; beam never saw the MinIO credential |
+| Switch back to LOCAL (empty endpoint) | `backend:local`, `enabled:true` |
+
+**Gotcha (audit, not a bug):** `object_store_op` events carry **no MCP actor** (they're
+broker-emitted per-request, like `email_send`); and an event whose beam was destroyed
+before the ~15s audit-drain runs lands with an **empty beamhall** (the post-destroy
+`GetBeam` fails), so it won't match a `beamhall`-scoped `admin_query_audit`. Events from a
+still-alive beam are correctly attributed. `admin_query_audit` returns oldest-first — page
+with `after_seq` to reach recent events.
+
+The appliance is left in the default LOCAL state with both `bh-mail` and `bh-objstore`
+brokers running; the test MinIO was removed.

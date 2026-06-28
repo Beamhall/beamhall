@@ -15,6 +15,32 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Added
+- **Object-storage facility (`provision_object_store`).** A builder gives a beam
+  **S3-compatible object storage** with one MCP call, the same way `create_database`
+  gives it a database: no storage account, and **no credential the agent or the app
+  can use outside the hall**. The app reads `/run/secrets/S3_ENDPOINT`, `S3_REGION`,
+  `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_FORCE_PATH_STYLE` and uses any
+  stock S3 SDK (boto3/aws-sdk/minio) — Beamhall stores the bytes and the app can't
+  tell whether they live on the appliance or in the company's real S3.
+  `show_object_store` reports the wiring without revealing the keys. Storage runs
+  through a shared **`bh-objstore` broker container** on each beamhall bridge (the
+  second instance of the **facility-broker pattern**), which **verifies every
+  request's AWS SigV4 signature** — that, not the network, is what isolates beams
+  (the broker is one shared container on all bridges). **Batteries included:** the
+  installer stands the broker up **on by default** with a local disk backend
+  (`install.sh --no-objstore` to skip), so a pilot has object storage with no
+  external account. An **IT admin can switch the backend to the company's S3 at
+  runtime with `admin_set_object_store_provider`** (AWS/MinIO/Wasabi/R2 — the
+  endpoint + credential are held and persisted by the broker, never in a beam or
+  the agent's reach), with every beam namespaced under its own key prefix inside one
+  admin-supplied bucket. **Per-channel:** preview and live get **separate buckets**
+  (like the database), so preview iteration can't read or delete production data;
+  `promote_to_live` provisions the live bucket. IT can cap per-beam storage with
+  **`admin_set_object_store_quota`**. Every mutation and denial is **audited**
+  (object/op only, never contents) to the hash chain. Lab-verified end-to-end
+  (local + forward modes, cross-beam isolation, forged-key rejection, reclaim).
+
 ## [0.3.0] - 2026-06-25
 
 ### Added

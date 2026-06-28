@@ -403,9 +403,14 @@ type Route struct {
 type ResourceType string
 
 const (
-	ResourceDatabase    ResourceType = "database"     // Postgres (MVP)
-	ResourceObjectStore ResourceType = "object_store" // MinIO (fast-follow)
-	ResourceQueue       ResourceType = "queue"        // fast-follow
+	ResourceDatabase ResourceType = "database" // Postgres (MVP)
+	// ResourceObjectStore is a beam's S3 object-storage binding at the shared
+	// bh-objstore broker (PLAN §5.13). One row per channel; BackingHandle is the
+	// per-beam access key; ConnectionSecretRef points at the channel's sealed
+	// S3_SECRET_KEY; Spec holds access_key/bucket/quota_bytes. Provisioned by
+	// provision_object_store (preview), mirrored to live on promote.
+	ResourceObjectStore ResourceType = "object_store"
+	ResourceQueue       ResourceType = "queue" // fast-follow
 	// ResourceAuthClient is a per-beam OIDC relying party in the owned IdP — the
 	// beam's company sign-in (PLAN §5.10). One row per channel; BackingHandle is
 	// the IdP client UUID; ConnectionSecretRef points at the channel's sealed

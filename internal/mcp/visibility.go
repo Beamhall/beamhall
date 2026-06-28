@@ -42,9 +42,11 @@ var toolScope = map[string]string{
 	"create_database": auth.ScopeResourcesWrite,
 	"provision_auth":  auth.ScopeResourcesWrite,
 	"show_auth":       auth.ScopeBeamhallsRead,
-	"provision_email": auth.ScopeResourcesWrite,
-	"show_email":      auth.ScopeBeamhallsRead,
-	"set_secret":      auth.ScopeSecretsWrite,
+	"provision_email":        auth.ScopeResourcesWrite,
+	"show_email":             auth.ScopeBeamhallsRead,
+	"provision_object_store": auth.ScopeResourcesWrite,
+	"show_object_store":      auth.ScopeBeamhallsRead,
+	"set_secret":             auth.ScopeSecretsWrite,
 	"show_logs":       auth.ScopeLogsRead,
 	"pause_preview":   auth.ScopeBeamsOperate,
 	"resume_preview":  auth.ScopeBeamsOperate,
@@ -73,8 +75,10 @@ var toolScope = map[string]string{
 	"admin_update_beamhall":        auth.ScopeAdminIT,
 	"admin_set_egress":             auth.ScopeAdminIT,
 	"admin_set_auth_groups":        auth.ScopeAdminIT,
-	"admin_set_email_senders":      auth.ScopeAdminIT,
-	"admin_set_email_provider":     auth.ScopeAdminIT,
+	"admin_set_email_senders":         auth.ScopeAdminIT,
+	"admin_set_email_provider":        auth.ScopeAdminIT,
+	"admin_set_object_store_provider": auth.ScopeAdminIT,
+	"admin_set_object_store_quota":    auth.ScopeAdminIT,
 	"admin_list_releases":          auth.ScopeAdminIT,
 	"admin_query_audit":            auth.ScopeAdminIT,
 	"admin_verify_audit_chain":     auth.ScopeAdminIT,
@@ -105,8 +109,7 @@ var toolScope = map[string]string{
 // which exist so an agent gets a clear "not enabled in this build" answer rather
 // than an unknown-tool error. They carry no capability, so they're shown to all.
 var alwaysVisible = map[string]bool{
-	"create_object_store": true,
-	"create_queue":        true,
+	"create_queue": true,
 }
 
 // idpAdminTools require the appliance to administer its own (bundled) IdP. On a
@@ -176,6 +179,20 @@ var emailProviderTools = map[string]bool{
 	"admin_set_email_provider": true,
 }
 
+// objectStoreTools require the object-store facility to be enabled (a bh-objstore
+// broker reporting a backend — true by default once wired, since it boots local).
+var objectStoreTools = map[string]bool{
+	"provision_object_store": true,
+	"show_object_store":      true,
+}
+
+// objectStoreProviderTools only need the broker WIRED — the IT entry points to
+// switch the backend (local↔external) and cap per-beam storage.
+var objectStoreProviderTools = map[string]bool{
+	"admin_set_object_store_provider": true,
+	"admin_set_object_store_quota":    true,
+}
+
 // applianceState is the cheap, per-list snapshot of deployment capabilities the
 // filter consults in addition to the caller's token (no DB read).
 type applianceState struct {
@@ -185,6 +202,8 @@ type applianceState struct {
 	upgradeEnabled   bool
 	emailEnabled     bool // broker wired AND provider configured (builder tools)
 	emailWired       bool // broker wired (IT can configure the provider)
+	objStoreEnabled  bool // broker wired AND reporting a backend (builder tools)
+	objStoreWired    bool // broker wired (IT can switch the backend / set quota)
 }
 
 // toolVisible reports whether a caller with the given token should see the named
@@ -225,6 +244,12 @@ func toolVisible(name string, info *sdkauth.TokenInfo, adminRole string, st appl
 	if emailProviderTools[name] && !st.emailWired {
 		return false
 	}
+	if objectStoreTools[name] && !st.objStoreEnabled {
+		return false
+	}
+	if objectStoreProviderTools[name] && !st.objStoreWired {
+		return false
+	}
 	return true
 }
 
@@ -254,6 +279,8 @@ func (s *Server) installToolFilter() {
 				upgradeEnabled:   s.bp.UpgradeEnabled(),
 				emailEnabled:     s.bp.EmailEnabled(),
 				emailWired:       s.bp.EmailBrokerWired(),
+				objStoreEnabled:  s.bp.ObjectStoreEnabled(),
+				objStoreWired:    s.bp.ObjectStoreBrokerWired(),
 			}
 			kept := make([]*sdkmcp.Tool, 0, len(lt.Tools))
 			for _, t := range lt.Tools {

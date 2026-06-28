@@ -138,6 +138,18 @@ type Config struct {
 	MailRatePerDay   int
 	MailRateBurst    int
 
+	// Object-storage facility (provision_object_store, PLAN §5.13), via the shared
+	// bh-objstore broker. Empty ObjStoreControlURL = no broker wired (facility
+	// absent). The installer wires the broker (control URL/token + beam host); the
+	// BACKEND (local vs external S3) is set at runtime by an IT admin
+	// (admin_set_object_store_provider) and persisted by the broker — not an env var.
+	ObjStoreControlURL   string
+	ObjStoreControlToken string
+	ObjStoreBeamHost     string // S3_ENDPOINT host injected into beams (broker bridge DNS name)
+	ObjStoreBeamPort     int    // S3_ENDPOINT port injected into beams
+	ObjStoreRegion       string // S3_REGION injected into beams
+	ObjStoreQuotaBytes   int64  // default per-beam storage cap (0 = unlimited)
+
 	// EgressAlwaysDeny is a comma-separated list of extra CIDRs denied for
 	// every beamhall regardless of allowlists (host IP, management subnet) —
 	// merged with the built-in link-local/metadata set.
@@ -193,6 +205,13 @@ func Load() (Config, error) {
 		MailBeamPort:     envInt("BEAMHALL_MAIL_BEAM_PORT", 587),
 		MailRatePerDay:   envInt("BEAMHALL_MAIL_RATE_PER_DAY", 300),
 		MailRateBurst:    envInt("BEAMHALL_MAIL_RATE_BURST", 20),
+
+		ObjStoreControlURL:   os.Getenv("BEAMHALL_OBJSTORE_CONTROL_URL"),
+		ObjStoreControlToken: os.Getenv("BEAMHALL_OBJSTORE_CONTROL_TOKEN"),
+		ObjStoreBeamHost:     envOr("BEAMHALL_OBJSTORE_BEAM_HOST", "bh-objstore"),
+		ObjStoreBeamPort:     envInt("BEAMHALL_OBJSTORE_BEAM_PORT", 9000),
+		ObjStoreRegion:       envOr("BEAMHALL_OBJSTORE_REGION", "us-east-1"),
+		ObjStoreQuotaBytes:   envInt64("BEAMHALL_OBJSTORE_QUOTA_BYTES", 5<<30), // 5 GiB default
 	}
 	c.OAuthAudience = envOr("BEAMHALL_OAUTH_AUDIENCE", "https://"+c.BaseDomain+"/mcp")
 	c.OAuthAdminRole = envOr("BEAMHALL_OAUTH_ADMIN_ROLE", "beamhall-it") // = auth.DefaultAdminRole
@@ -233,6 +252,15 @@ func envOr(key, def string) string {
 func envInt(key string, def int) int {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envInt64(key string, def int64) int64 {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
 			return n
 		}
 	}

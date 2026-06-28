@@ -164,6 +164,14 @@ func (s *Server) registerTools() {
 		Description: "Read-only: show whether this beam has outbound email provisioned, the in-hall SMTP host/port it sends through, its sender username, which From addresses/domains IT has allowed it to send as, and its per-day rate limit — without ever revealing the SMTP password. Use it to inspect the wiring or debug a rejected send. The sender allowlist is set by IT (admin_set_email_senders), not the builder.",
 	}, s.showEmail)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "provision_object_store",
+		Description: "Give this beam S3-COMPATIBLE OBJECT STORAGE so your app can store files/blobs (user uploads, images, exports, generated assets, backups) — you configure NO storage account and NEVER see any credential (exactly like create_database hands you a database whose password you never see). This is the everyday \"add a bucket / let users upload files / store images\" request. Store through Beamhall; do NOT wire Amazon S3, Cloudflare R2, Google Cloud Storage, Azure Blob, Supabase Storage, Backblaze B2, or a raw MinIO bucket into the app yourself — that leaks a credential and bypasses the audit trail. After the next deploy_beam your app reads six files — /run/secrets/S3_ENDPOINT, /run/secrets/S3_REGION, /run/secrets/S3_BUCKET, /run/secrets/S3_ACCESS_KEY, /run/secrets/S3_SECRET_KEY, and /run/secrets/S3_FORCE_PATH_STYLE — and uses any standard S3 SDK (boto3, aws-sdk, minio) pointed at S3_ENDPOINT with PATH-STYLE addressing (set force_path_style / path-style = true) and the file-read access key + secret. Beamhall stores the bytes for you — locally on the appliance, or forwarded to the company's real S3 — and your app cannot tell which. Preview and production get SEPARATE buckets, so iterating on preview never reads or deletes production data; promote_to_live provisions the live bucket. Read the bucket name and keys from their FILES (never hardcode) so one image works on every preview URL and in production. Idempotent. Credentials appear only AFTER the next deploy_beam (no hot reload).",
+	}, s.provisionObjectStore)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "show_object_store",
+		Description: "Read-only: show whether this beam has object storage provisioned, the in-hall S3 endpoint and region it uses, and its per-channel buckets (preview/production) with each channel's storage quota — without ever revealing the access key or secret. Use it to inspect the wiring or debug an upload.",
+	}, s.showObjectStore)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "set_secret",
 		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back.",
 	}, s.setSecret)
@@ -216,8 +224,9 @@ func (s *Server) registerTools() {
 	s.registerAdminTools()
 
 	// Contract placeholders (PLAN §5.7): present so agents get a clear answer
-	// instead of an unknown-tool error; enabled in a future build.
-	for _, name := range []string{"create_object_store", "create_queue"} {
+	// instead of an unknown-tool error; enabled in a future build. (Object storage
+	// graduated to provision_object_store; only the queue placeholder remains.)
+	for _, name := range []string{"create_queue"} {
 		n := name
 		sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 			Name:        n,
@@ -608,6 +617,65 @@ func (s *Server) showEmail(ctx context.Context, req *sdkmcp.CallToolRequest, arg
 	}
 	msg := fmt.Sprintf("beam %q email: sends via %s:%d as user %s; allowed senders: %s; rate limit: %d/day.",
 		beam.Slug, info.Host, info.Port, info.Username, senders, info.RateLimitPerDay)
+	return text(msg), info, nil
+}
+
+func (s *Server) provisionObjectStore(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeResourcesWrite)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys, err := s.bp.ProvisionObjectStore(ctx, actor, bh.ID, beam.ID)
+	if err != nil {
+		return nil, nil, objStoreDisabledErr(err)
+	}
+	files := make([]string, len(keys))
+	for i, k := range keys {
+		files[i] = "/run/secrets/" + k
+	}
+	msg := fmt.Sprintf("object storage provisioned for beam %q. After the next deploy_beam your app reads %s and uses any S3 SDK pointed at S3_ENDPOINT with path-style addressing — Beamhall stores the bytes. Preview and production get separate buckets (promote_to_live provisions the live one). No credential value is ever shown.",
+		beam.Slug, strings.Join(files, ", "))
+	return text(msg), map[string]any{"secret_keys": keys, "secret_files": files}, nil
+}
+
+func (s *Server) showObjectStore(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamhallsRead)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := s.bp.ShowObjectStore(ctx, actor, bh.ID, beam.ID)
+	if err != nil {
+		return nil, nil, objStoreDisabledErr(err)
+	}
+	if !info.Provisioned {
+		return text(fmt.Sprintf("beam %q has no object storage provisioned — call provision_object_store to add it.", beam.Slug)), info, nil
+	}
+	parts := make([]string, 0, len(info.Channels))
+	for _, ch := range info.Channels {
+		q := "unlimited"
+		if ch.QuotaBytes > 0 {
+			q = fmt.Sprintf("%d bytes", ch.QuotaBytes)
+		}
+		parts = append(parts, fmt.Sprintf("%s→%s (quota %s)", ch.Channel, ch.Bucket, q))
+	}
+	msg := fmt.Sprintf("beam %q object storage: endpoint %s, region %s; buckets: %s.",
+		beam.Slug, info.Endpoint, info.Region, strings.Join(parts, ", "))
 	return text(msg), info, nil
 }
 

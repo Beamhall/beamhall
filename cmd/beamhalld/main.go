@@ -32,6 +32,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/driver"
 	"github.com/Beamhall/beamhall/internal/egress"
 	"github.com/Beamhall/beamhall/internal/facility/mail"
+	objstore "github.com/Beamhall/beamhall/internal/facility/s3"
 	"github.com/Beamhall/beamhall/internal/gateway"
 	"github.com/Beamhall/beamhall/internal/gitserver"
 	"github.com/Beamhall/beamhall/internal/identityadmin"
@@ -127,6 +128,12 @@ func main() {
 		case "mail-relay":
 			if err := runMailRelay(os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "mail-relay:", err)
+				os.Exit(1)
+			}
+			return
+		case "object-store-relay":
+			if err := runObjectStoreRelay(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "object-store-relay:", err)
 				os.Exit(1)
 			}
 			return
@@ -292,6 +299,94 @@ func startEmailReconcile(ctx context.Context, o *orch.Orchestrator, cursor int64
 				next, err := o.DrainEmailAudit(ctx, cursor)
 				if err != nil {
 					logger.Warn("email audit drain", "err", err)
+					continue
+				}
+				cursor = next
+			}
+		}
+	}()
+}
+
+// runObjectStoreRelay runs the bh-objstore broker (PLAN §5.13): the in-bridge,
+// SigV4-verifying S3 endpoint beams store through, plus the loopback control API
+// beamhalld drives. The broker OWNS its backend config (set at runtime over the
+// control channel by admin_set_object_store_provider) and persists it to a volume
+// — defaulting to a LOCAL disk backend (batteries-included). It serves plain HTTP
+// on the bridge (SigV4 gives request auth). This is the container entrypoint for
+// the shared bh-objstore service container.
+func runObjectStoreRelay(_ []string) error {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
+	token := os.Getenv("BEAMHALL_OBJSTORE_CONTROL_TOKEN")
+	if token == "" {
+		return errors.New("BEAMHALL_OBJSTORE_CONTROL_TOKEN is required")
+	}
+	s3Addr := os.Getenv("BEAMHALL_OBJSTORE_S3_ADDR")
+	if s3Addr == "" {
+		s3Addr = ":9000"
+	}
+	controlAddr := os.Getenv("BEAMHALL_OBJSTORE_CONTROL_ADDR")
+	if controlAddr == "" {
+		controlAddr = ":9001"
+	}
+	// State dir (a persistent volume): the local object data + the provider config.
+	stateDir := os.Getenv("BEAMHALL_OBJSTORE_STATE_DIR")
+	if stateDir == "" {
+		stateDir = "/data"
+	}
+
+	cs := objstore.NewControlServer(token, 0)
+	prov := objstore.New(objstore.WithAuditSink(cs.Record), objstore.WithStateDir(stateDir))
+	cs.Attach(prov)
+	if err := prov.LoadProvider(); err != nil {
+		logger.Warn("object-store-relay: load persisted provider", "err", err)
+	}
+
+	ctrl := &http.Server{Addr: controlAddr, Handler: cs.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		logger.Info("object-store-relay control API listening", "addr", controlAddr)
+		if err := ctrl.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("object-store-relay control API failed", "err", err)
+		}
+	}()
+
+	s3Srv := &http.Server{Addr: s3Addr, Handler: prov.Handler(), ReadHeaderTimeout: 30 * time.Second}
+	go func() {
+		logger.Info("object-store-relay S3 endpoint listening", "addr", s3Addr)
+		if err := s3Srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("object-store-relay S3 server stopped", "err", err)
+		}
+	}()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	logger.Info("object-store-relay shutting down")
+	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = ctrl.Shutdown(shutCtx)
+	_ = s3Srv.Shutdown(shutCtx)
+	return nil
+}
+
+// startObjectStoreReconcile runs a background loop that re-pushes per-beam
+// registrations to the bh-objstore broker (idempotent, self-healing across broker
+// restarts; the plaintext SigV4 key is read back from the vault) and drains its
+// audit ring into the hash chain.
+func startObjectStoreReconcile(ctx context.Context, o *orch.Orchestrator, cursor int64, logger *slog.Logger) {
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := o.ReconcileObjectStore(ctx); err != nil {
+					logger.Warn("object-store broker reconcile", "err", err)
+				}
+				next, err := o.DrainObjectStoreAudit(ctx, cursor)
+				if err != nil {
+					logger.Warn("object-store audit drain", "err", err)
 					continue
 				}
 				cursor = next
@@ -497,6 +592,26 @@ func run() error {
 	} else {
 		logger.Info("BEAMHALL_MAIL_CONTROL_URL unset — email facility absent (no mail broker)")
 	}
+	// Object-storage facility (PLAN §5.13): the shared bh-objstore broker, driven
+	// over the control channel. Empty BEAMHALL_OBJSTORE_CONTROL_URL = no broker
+	// wired (facility absent). On by default once wired (the broker boots local).
+	if cfg.ObjStoreControlURL != "" {
+		oc := objstore.NewClient(cfg.ObjStoreControlURL, cfg.ObjStoreControlToken)
+		opts = append(opts, orch.WithObjectStore(oc, orch.ObjectStoreConfig{
+			BeamHost:     cfg.ObjStoreBeamHost,
+			BeamPort:     cfg.ObjStoreBeamPort,
+			Region:       cfg.ObjStoreRegion,
+			DefaultQuota: cfg.ObjStoreQuotaBytes,
+			Attach: func(ctx context.Context, network string) error {
+				// Attach the shared bh-objstore container to the beam network so beams
+				// reach it as <ObjStoreBeamHost>:<port> (the bh-postgres precedent).
+				return drv.ConnectContainerToNetwork(ctx, cfg.ObjStoreBeamHost, network)
+			},
+		}))
+		logger.Info("object-store broker wired", "broker", cfg.ObjStoreBeamHost)
+	} else {
+		logger.Info("BEAMHALL_OBJSTORE_CONTROL_URL unset — object-store facility absent (no broker)")
+	}
 	// Owned-IdP administration (the admin_* IdP tools). Configured = the bundled
 	// Keycloak; unconfigured = a bring-your-own-IdP deployment where the
 	// orchestrator's default Disabled provider applies (Beamhall validates tokens
@@ -558,6 +673,20 @@ func run() error {
 		}
 		startEmailReconcile(ctx, orchestrator, cursor, logger)
 		logger.Info("email broker reconcile loop started")
+	}
+
+	// Object-store broker: learn the backend state + push registrations, and start
+	// the reconcile/audit-drain loop (PLAN §5.13). Best-effort at boot; self-heals.
+	if orchestrator.ObjectStoreBrokerWired() {
+		if err := orchestrator.ReconcileObjectStore(ctx); err != nil {
+			logger.Error("object-store broker initial reconcile failed (will retry)", "err", err)
+		}
+		cursor, cerr := orchestrator.ObjectStoreAuditCursor(ctx)
+		if cerr != nil {
+			logger.Warn("object-store audit cursor init failed; starting from 0", "err", cerr)
+		}
+		startObjectStoreReconcile(ctx, orchestrator, cursor, logger)
+		logger.Info("object-store broker reconcile loop started")
 	}
 
 	// --- agent-facing surface: MCP + OAuth ---------------------------------

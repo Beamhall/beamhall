@@ -201,6 +201,12 @@ func (o *Orchestrator) reconcileLiveResources(ctx context.Context, actor Actor, 
 	if err := o.mirrorLiveAuthClient(ctx, actor, bh, beamSlug, beamID); err != nil {
 		return err
 	}
+	// Mirror the preview object store to a distinct live bucket (own credentials,
+	// own data) on first promote — PLAN §5.13, so production never reads or writes
+	// the builder's preview objects. Independent of the database provisioner.
+	if err := o.reconcileLiveObjectStore(ctx, actor, bh, beamID); err != nil {
+		return err
+	}
 	if o.dbProv == nil {
 		return nil
 	}

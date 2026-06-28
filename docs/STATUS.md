@@ -157,11 +157,13 @@ MCP + OAuth specifics (`internal/mcp`, `internal/auth`, item 5):
   data-driven in the PEP — the E2E proves a token *with* `beams:promote` still
   gets the PEP denial when the role is builder.
 - Tools (PLAN §5.7): list_beams, create_beam, deploy_beam, get_repo,
-  create_database, set_secret, show_logs, show_metrics, pause_preview,
+  create_database, provision_email/show_email, provision_object_store/show_object_store,
+  set_secret, show_logs, show_metrics, pause_preview,
   resume_preview, promote_to_live, rollback, archive_beam, destroy_beam;
-  create_object_store/create_queue answer "not enabled in this build".
-  Addressing is by slugs. Tools return handles/intents only — create_database
-  returns the secret key + `/run/secrets/<KEY>` path, never the DSN.
+  create_queue answers "not enabled in this build" (object storage graduated to
+  provision_object_store, PLAN §5.13). Addressing is by slugs. Tools return
+  handles/intents only — create_database returns the secret key +
+  `/run/secrets/<KEY>` path, never the DSN.
 - **Beam CRUD / archival**: `destroy_beam` and `archive_beam` share one terminal
   archival path (`Status=archived`: workload + URL retired, quota slot + slug
   freed, **source repo + audit retained**; `ListBeamsByBeamhall` filters
@@ -395,6 +397,7 @@ internal/orch/        orchestrator: lifecycle reconciler wiring driver+gateway+s
 internal/build/       source→image pipeline: managed go-git repos + pack (build daemon) + registry digest
 internal/resource/    managed-resource provisioners (Postgres: scoped role + db per beam)
 internal/facility/mail/  email delivery facility (PLAN §5.12): go-smtp broker engine + control channel (broker server + beamhalld client). The bh-mail service container runs `beamhalld mail-relay`.
+internal/facility/s3/    object-storage facility (PLAN §5.13): gofakes3 engine + our SigV4 verifier/normalizer + local + minio-go forward backends + control channel. The bh-objstore container runs `beamhalld object-store-relay`.
 internal/auth/        OAuth resource server: JWKS/iss/aud/exp/scope validation, Origin check
 internal/identityadmin/ owned-IdP administration seam (3rd stable seam): Provider iface + Keycloak Admin-REST impl + Disabled (BYO-IdP)
 internal/mcp/         agent-facing MCP server (official go-sdk, Streamable HTTP): tools (incl. admin_* family), per-caller tools/list filtering (visibility.go), progress, tarball transport
@@ -511,6 +514,46 @@ website/              public marketing site (single-page Astro → Cloudflare); 
     (re-runnable conformance test — **passes live**, 8 steps). CHANGELOG `[Unreleased]` updated.
     **Remaining:** fold the broker into the production installer/packaging (today
     `mail-broker-setup.sh` stands it up; the appliance is set up this way).
+
+  **Object-storage facility (PLAN §5.13) — lab-verified 2026-06-28 (branch
+  `feature/objstore-facility`).** The **second** §5.11 facility; reuses the broker
+  pattern. Built + unit/race-tested + lab-verified:
+  - `internal/facility/s3` — gofakes3 engine (S3 verbs/listing/multipart + `s3afero`
+    disk persistence) fronted by **our own SigV4-verifying middleware** (`sigv4.go`:
+    seed-signature verify, per-beam bucket scoping, **aws-chunked normalizer** for the
+    `STREAMING-*[-TRAILER]` body framing modern SDKs send, coarse quota, per-request
+    audit). `s3.go` (Provisioner + provider persistence + backend swap), `forward.go`
+    (minio-go `gofakes3.Backend` → external S3, `beam-<id>/<channel>/` prefix isolation),
+    `control.go`/`client.go` (control channel). Tests use minio-go + synthetic chunked
+    bodies; **the validation spike (step 0) is in `lab-phase0-validation.md`**.
+  - `internal/orch/objectstore.go` — `ProvisionObjectStore`/`ShowObjectStore` (+ audit
+    pairs), **per-channel** sealing (shared `S3_ENDPOINT/REGION/FORCE_PATH_STYLE` +
+    per-channel `S3_BUCKET/ACCESS_KEY/SECRET_KEY`), `domain.ResourceObjectStore`,
+    `reconcileLiveObjectStore` (promote mirror, in `livechannel.go`), `reclaimObjectStore`
+    (deregister+**purge**, in `reclaimResources`), `ReconcileObjectStore` +
+    `DrainObjectStoreAudit`. Reconcile reads the plaintext key from the vault via new
+    **`secret.Vault.Reveal`** (SigV4 needs plaintext; it can't sit in `Spec`).
+  - MCP: `provision_object_store`/`show_object_store` (builder) + `admin_set_object_store_provider`
+    + `admin_set_object_store_quota` (IT) in `tools.go`/`admin.go`; `visibility.go` two-state
+    gates (`objStoreWired`→provider/quota tools; `objStoreEnabled`→builder tools); server
+    `Instructions` anti-shadow-IT copy (S3/R2/GCS/Supabase). `policy.ActionProvisionObjectStore`/
+    `ActionShowObjectStore`. The inert `create_object_store` placeholder was retired.
+  - `cmd/beamhalld` — `object-store-relay` subcommand (the `bh-objstore` entrypoint) +
+    `WithObjectStore` wiring + reconcile/audit-drain loop. `internal/config` `BEAMHALL_OBJSTORE_*`.
+  - **Enabled by default with a LOCAL backend** (the bundled-IdP analogue); IT switches to an
+    external S3 at runtime via `admin_set_object_store_provider` (broker holds+persists
+    `provider.json`). `install.sh` stands it up (`--no-objstore` to skip);
+    `scripts/objstore-broker-setup.sh` (`--lab-minio`) ships as a GoReleaser asset. Plain HTTP
+    on the bridge (SigV4 = request auth; no `S3_CA`). Per-channel buckets (preview≠live).
+  - **Lab-verified 2026-06-28** (appliance `10.255.255.153`, `bh-objstore` broker): LOCAL
+    round-trip via a stock minio-go client over plain HTTP, **cross-beam `AccessDenied`**,
+    **forged-key `SignatureDoesNotMatch`**, destroy→deregister+purge, `object_store_op` audit
+    events chained + `admin_verify_audit_chain` intact; **FORWARD** to an external MinIO with
+    data landing under `company-bucket/beam-<id>/<channel>/` and the external credential never
+    seen by the beam. Re-runnable: `scripts/agent-conformance/object-store.sh` (**passes live**).
+    `beamhalld.pre-objstore` is the appliance rollback binary. CHANGELOG `[Unreleased]` updated.
+  - **v1 notes:** local data not in `admin_backup_now` (recommend forward-to-S3 beyond pilot);
+    FORWARD multipart via gofakes3's in-memory fallback; presigned-URL auth rejected.
 
 ## Remaining work
 

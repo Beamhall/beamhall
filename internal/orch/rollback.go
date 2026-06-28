@@ -200,6 +200,11 @@ func (o *Orchestrator) reclaimResources(ctx context.Context, beamID domain.ID) {
 			// Deregister at the bh-mail broker + delete sealed SMTP secrets (PLAN §5.12).
 			o.reclaimEmail(ctx, r)
 		}
+		if r.Type == domain.ResourceObjectStore {
+			// Deregister + purge the bucket at the bh-objstore broker + delete sealed
+			// S3 secrets (PLAN §5.13).
+			o.reclaimObjectStore(ctx, r)
+		}
 		if err := o.st.DeleteResource(ctx, r.ID); err != nil {
 			o.log.Warn("deleting resource row on destroy", "beam", beamID, "resource", r.ID, "err", err)
 		}
