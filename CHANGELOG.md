@@ -15,7 +15,7 @@ their auto-generated notes.
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-06-28
+## [0.4.0] - 2026-07-02
 
 ### Added
 - **Object-storage facility (`provision_object_store`).** A builder gives a beam
