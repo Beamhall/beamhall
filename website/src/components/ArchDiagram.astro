@@ -6,7 +6,23 @@
 //   untrusted workloads that consume those services.
 ---
 <figure class="diagram">
-  <svg viewBox="0 0 760 694" role="img" aria-label="Your OIDC identity provider issues the agent's OAuth token. The untrusted agent calls beamhalld, the single-binary trust base, which validates the token against your IdP and authorizes in the policy point. Its orchestrator provisions managed services — git repo, build + registry, secret vault, database, gateway, a brokered email facility, and brokered object storage — which the untrusted workloads consume behind a per-workspace bridge with default-deny egress.">
+  <svg
+    viewBox="0 0 760 694"
+    role="img"
+    aria-labelledby="arch-title"
+    aria-describedby="arch-desc"
+  >
+    <title id="arch-title">Beamhall architecture and trust boundary</title>
+    <desc id="arch-desc">
+      Top to bottom: your OIDC identity provider issues the agent's OAuth token.
+      The untrusted agent calls beamhalld, the single-binary trust base, which
+      validates the token against your IdP and authorizes the call in the policy
+      point. Its orchestrator provisions the managed services — private git
+      repository, build and registry, secret vault, database, gateway, a brokered
+      email facility and brokered object storage. The untrusted workloads consume
+      those services from below the trust boundary, behind a per-workspace bridge
+      with default-deny egress.
+    </desc>
     <defs>
       <marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" class="dg-arrowhead" />
@@ -105,4 +121,8 @@
       <text x="190" y="49" text-anchor="middle" class="dg-sub">untrusted: agent-authored code</text>
     </g>
   </svg>
+  <figcaption class="dg-cap">
+    The trust boundary: everything the agent touches sits above it; nothing below
+    it is reachable without a policy decision.
+  </figcaption>
 </figure>

@@ -1,0 +1,289 @@
+/* Beamhall — long-form article inside the terminal window.
+   Extends terminal.css; no new colors, only the existing palette tokens. */
+
+.article {
+  max-width: 860px;
+}
+.article > header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 18px;
+  margin-bottom: 22px;
+}
+.article h1 {
+  font-size: clamp(22px, 3.2vw, 30px);
+  line-height: 1.25;
+  color: var(--fg-strong);
+  font-weight: 700;
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
+}
+.article h1 .h1-sub { display: block; color: var(--cyan); }
+.article .byline {
+  color: var(--dim);
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+}
+.article .byline b { color: var(--fg); font-weight: 500; }
+.article .standfirst {
+  color: var(--fg-strong);
+  font-size: 17px;
+  margin: 16px 0 0;
+}
+
+.article p { margin: 0 0 15px; }
+.article h2 {
+  font-size: 17px;
+  line-height: 1.35;
+  color: var(--fg-strong);
+  font-weight: 700;
+  margin: 38px 0 14px;
+  padding-top: 4px;
+}
+.article h2::before {
+  content: "## ";
+  color: var(--cyan);
+  font-weight: 700;
+}
+.article h3 {
+  font-size: 13.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  margin: 26px 0 10px;
+  font-weight: 700;
+}
+.article strong { color: var(--fg-strong); font-weight: 700; }
+.article ol,
+.article ul.plain { padding-left: 26px; margin: 0 0 16px; }
+.article ol li,
+.article ul.plain li { padding: 2px 0; }
+.article ol { color: var(--fg); }
+.article ol li::marker { color: var(--dim); }
+
+/* pull quote — what the human actually types */
+.article blockquote {
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--cyan);
+  border-radius: 8px;
+  background: var(--term-bg-2);
+  color: var(--fg-strong);
+}
+.article blockquote p { margin: 0; }
+.article blockquote p + p { margin-top: 8px; }
+.article blockquote > p:first-child::before {
+  content: "› ";
+  color: var(--cyan);
+}
+
+/* ---- Flow chains (the article's ASCII diagrams, redrawn) ------------- */
+.flow {
+  margin: 0 0 22px;
+  padding: 20px 18px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--term-bg-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+.flow .fnode {
+  border: 1px solid var(--border-bright);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 9px 16px;
+  text-align: center;
+  color: var(--fg-strong);
+  font-size: 14.5px;
+  font-weight: 500;
+  max-width: 100%;
+}
+.flow .fnode .fsub {
+  display: block;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 400;
+  margin-top: 2px;
+}
+.flow .fnode.actor { border-color: #6a4f1e; background: #14110a; }
+.flow .fnode.core { border-color: var(--cyan); background: #07101f; }
+.flow .fnode.core .fname { color: var(--cyan); font-weight: 700; }
+.flow .fnode.app { border-color: var(--indigo); background: #0c1030; }
+.flow .fnode.gate { border-color: #5a431b; background: #18120a; color: var(--amber); }
+.flow .fedge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.35;
+  padding: 6px 0 2px;
+  text-align: center;
+}
+.flow .fedge .flabel { color: var(--cyan); }
+.flow .fedge .flabel.quiet { color: var(--dim); }
+.flow .fedge::after {
+  content: "▼";
+  color: var(--dimmer);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.flow figcaption {
+  margin-top: 12px;
+  color: var(--dim);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* ---- Comparison table ----------------------------------------------- */
+.cmp-wrap { overflow-x: auto; margin: 0 0 10px; }
+table.cmp {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+table.cmp th,
+table.cmp td {
+  vertical-align: top;
+  text-align: left;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+table.cmp thead th {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border-bright);
+  padding-bottom: 9px;
+  white-space: nowrap;
+}
+table.cmp thead th.own { color: var(--cyan); }
+table.cmp tbody th {
+  font-weight: 500;
+  color: var(--fg-strong);
+  width: 20%;
+  border-right: 1px solid var(--border);
+}
+table.cmp td { color: var(--dim); width: 26.6%; }
+table.cmp td.own { color: var(--fg); border-left: 1px solid var(--border); }
+table.cmp tbody tr:hover td,
+table.cmp tbody tr:hover th { background: #0a132266; }
+table.cmp tr:last-child th,
+table.cmp tr:last-child td { border-bottom: none; }
+.cmp-hint { color: var(--dimmer); font-size: 12px; margin: 0 0 20px; }
+
+/* Mobile: the table restacks into one card per question. */
+@media (max-width: 760px) {
+  .cmp-wrap { overflow-x: visible; }
+  table.cmp,
+  table.cmp tbody,
+  table.cmp tr,
+  table.cmp th,
+  table.cmp td { display: block; width: auto; min-width: 0; }
+  table.cmp thead { display: none; }
+  table.cmp tbody tr {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    background: var(--term-bg-2);
+  }
+  table.cmp tbody th {
+    width: auto;
+    border: none;
+    border-bottom: 1px solid var(--border-bright);
+    padding: 0 0 8px;
+    margin-bottom: 8px;
+    font-weight: 700;
+  }
+  table.cmp td {
+    border: none;
+    padding: 6px 0;
+  }
+  table.cmp td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 2px;
+  }
+  table.cmp td.own::before { color: var(--cyan); }
+  table.cmp tbody tr:hover td,
+  table.cmp tbody tr:hover th { background: transparent; }
+  .cmp-hint { display: none; }
+}
+
+/* ---- Sources -------------------------------------------------------- */
+.sources { list-style: none; padding: 0; margin: 0 0 10px; }
+.sources li { padding: 4px 0 4px 22px; position: relative; font-size: 14px; }
+.sources li::before { content: "▸"; position: absolute; left: 0; color: var(--dimmer); }
+.sources li .who {
+  color: var(--dim);
+}
+
+/* rule between the essay and the appendix */
+.article hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 34px 0 26px;
+}
+
+.article .foot-nav {
+  margin-top: 30px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── TL;DR / key takeaways ─────────────────────────────────────────────────
+   The short, factual version of the argument, near the top: useful for a
+   skimming reader and for text extraction by LLM crawlers. */
+.article .tldr {
+  border: 1px solid var(--border-bright);
+  border-left: 2px solid var(--cyan);
+  border-radius: 8px;
+  background: #0a162866;
+  padding: 14px 18px 16px;
+  margin: 24px 0 30px;
+}
+.article .tldr h2 {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  margin: 0 0 10px;
+  padding-top: 0;
+}
+.article .tldr h2::before { content: none; }
+.article .tldr ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.article .tldr li {
+  position: relative;
+  padding: 4px 0 4px 20px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+.article .tldr li::before {
+  content: "▸";
+  position: absolute;
+  left: 0;
+  color: var(--dimmer);
+}
+
+/* NOTE: `.sr-only` lives in terminal.css (both pages need it).
+ */

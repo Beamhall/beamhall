@@ -11,3 +11,34 @@
 # Long-cache the fingerprinted build assets.
 /_astro/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Machine-readable twins for LLM crawlers and "view as markdown" flows.
+# Explicit content types (so they render as text, not download) and a canonical
+# link back to the HTML page so they never compete with it in search.
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+  X-Robots-Tag: all
+
+/llms-full.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+  X-Robots-Tag: all
+
+/alternatives/beamhall-vs-dokploy-vs-coolify.md
+  Content-Type: text/markdown; charset=utf-8
+  Cache-Control: public, max-age=3600
+  Link: <https://beamhall.com/alternatives/beamhall-vs-dokploy-vs-coolify/>; rel="canonical"
+
+# Crawl policy for the site (robots.txt carries the AI-crawler allowlist).
+/sitemap-index.xml
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/sitemap-0.xml
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+# The share-card render target is not a page.
+/og
+  X-Robots-Tag: noindex

@@ -1,0 +1,908 @@
+---
+import Sidebar from "../../components/Sidebar.astro";
+import { pages, repo } from "../../nav";
+import "../../styles/terminal.css";
+import "../../styles/article.css";
+
+const page = pages.find((p) => p.id === "alternatives")!;
+
+const title =
+  "Beamhall vs Dokploy vs Coolify: When the Person Shipping the App Is an AI Agent";
+const description =
+  "Dokploy and Coolify make self-hosting easier. Beamhall is built for a different problem: letting AI coding agents ship internal apps without giving them infrastructure credentials or control.";
+const keywords = [
+  "Beamhall",
+  "Dokploy alternative",
+  "Coolify alternative",
+  "self-hosted AI app platform",
+  "self-hosted PaaS",
+  "Claude Code deployment",
+  "vibe coding enterprise",
+  "internal AI apps",
+  "AI coding agents",
+  "secure vibe coding",
+].join(", ");
+const published = "2026-08-26";
+const modified = "2026-08-26";
+const site = (Astro.site?.href ?? "https://beamhall.com/").replace(/\/$/, "");
+const canonical = new URL(page.href, Astro.site ?? "https://beamhall.com").href;
+// A plain-markdown twin of this article, for LLM crawlers and "view as
+// markdown" flows. Emitted by ./beamhall-vs-dokploy-vs-coolify.md.ts.
+const markdownUrl = "/alternatives/beamhall-vs-dokploy-vs-coolify.md";
+
+// SERP-length title/description (the on-page h1 and standfirst stay long-form).
+const metaTitle = "Beamhall vs Dokploy vs Coolify: which for AI-built apps?";
+const metaDescription =
+  "Dokploy and Coolify are self-hosted PaaS. Beamhall solves a different problem: letting AI coding agents ship internal apps without infrastructure credentials.";
+
+// The comparison table, kept as data so the mobile card layout and the desktop
+// grid stay in sync (each cell carries its column label for the stacked view).
+const cols = ["Coolify", "Dokploy", "Beamhall"];
+const rows: [string, string, string, string][] = [
+  [
+    "Primary design center",
+    "Self-hosted PaaS for developers and operators",
+    "Self-hosted PaaS with strong AI deployment integration",
+    "Self-hosted backplane for AI-agent-built internal apps",
+  ],
+  [
+    "AI integration",
+    "Built-in MCP with team-scoped API authentication and supported operations",
+    "Official MCP exposing broad Dokploy API coverage",
+    "MCP is the primary agent-facing control surface",
+  ],
+  [
+    "What the agent becomes",
+    "An automation client for the PaaS",
+    "A highly capable PaaS operator",
+    "A requester of policy-governed application capabilities",
+  ],
+  [
+    "Source workflow",
+    "Git, images, services, other deployment paths",
+    "Git, Docker image, Docker Compose",
+    "Integrated private Git per app; agent handles the push",
+  ],
+  [
+    "Build control",
+    "Flexible Docker/source deployment model",
+    "Flexible build, Docker and Compose model",
+    "Controlled Buildpacks pipeline; agent cannot supply its own Dockerfile",
+  ],
+  [
+    "Database credentials",
+    "Managed as platform/application configuration",
+    "Internal credentials and environment variables; external vaults supported",
+    "Minted and injected by Beamhall; raw connection string is not returned to the agent",
+  ],
+  [
+    "Secret handling",
+    "Encrypted platform values and scoped API behavior",
+    "Environment variables plus external secret providers; MCP can redact sensitive fields",
+    "Write-only agent interface; secrets injected into the workload",
+  ],
+  [
+    "Egress posture",
+    "Operator-managed as part of server/workload security",
+    "Isolation features available; host/network security remains an operator concern",
+    "Default-deny per workspace; agent has no tool to widen it",
+  ],
+  [
+    "Runtime hardening",
+    "Operator/application responsibility",
+    "Docker/Swarm deployment controls and isolation options",
+    "IT-set immutable baseline; runc or gVisor tier",
+  ],
+  [
+    "Production governance",
+    "Teams, roles and token permissions",
+    "Enterprise SSO, RBAC and audit features available",
+    "Preview and live are separate lifecycle states; promotion can be IT-only with optional four-eyes approval",
+  ],
+  [
+    "Application SSO",
+    "Platform SSO options are focused on Coolify access",
+    "Enterprise Application Authentication can protect deployed apps",
+    "Company sign-in is a provisioned application capability",
+  ],
+  [
+    "Open-source model",
+    "Apache 2.0",
+    "Core Apache 2.0; proprietary enterprise directory for paid functionality",
+    "Apache 2.0",
+  ],
+  [
+    "Current maturity",
+    "Established project and ecosystem",
+    "Established project with active AI/PaaS development",
+    "Pre-1.0; currently moving into design-partner validation",
+  ],
+];
+
+const sources: { href: string; label: string; who: string }[] = [
+  { href: "/", label: "Beamhall overview, architecture, security model, features, and roadmap", who: "beamhall.com" },
+  { href: repo, label: "Beamhall source repository and project status", who: "github.com" },
+  { href: `${repo}/blob/main/docs/threat-model.md`, label: "Beamhall security and threat model", who: "github.com" },
+  { href: "https://dokploy.com/deploy-ai", label: "Dokploy: Deploy AI Apps Securely", who: "dokploy.com" },
+  { href: "https://github.com/Dokploy/mcp", label: "Dokploy official MCP server", who: "github.com" },
+  { href: "https://docs.dokploy.com/docs/core/applications", label: "Dokploy application deployment model", who: "docs.dokploy.com" },
+  { href: "https://docs.dokploy.com/docs/core/secrets-providers", label: "Dokploy secrets providers", who: "docs.dokploy.com" },
+  { href: "https://docs.dokploy.com/docs/core/enterprise", label: "Dokploy Enterprise features", who: "docs.dokploy.com" },
+  { href: "https://coolify.io/docs/get-started/introduction", label: "Coolify overview", who: "coolify.io" },
+  { href: "https://coolify.io/docs/integrations/mcp", label: "Coolify MCP documentation", who: "coolify.io" },
+  { href: "https://next.coolify.io/docs/core/security-model", label: "Coolify security model", who: "next.coolify.io" },
+  { href: "https://next.coolify.io/docs/applications/deployments/overview", label: "Coolify deployment model", who: "next.coolify.io" },
+];
+
+// Key takeaways — the short, factual version of the argument. Rendered near the
+// top of the article and reused verbatim in the markdown twin.
+const takeaways: string[] = [
+  "Coolify and Dokploy are self-hosted PaaS products: a developer or operator remains responsible for the infrastructure decisions. Beamhall is an application backplane whose intended operator is the AI coding agent.",
+  "Both Dokploy and Coolify now ship MCP servers that let an agent drive the platform. Beamhall inverts the contract: the agent requests application capabilities and never becomes an infrastructure administrator.",
+  "Beamhall treats the agent and the code it writes as untrusted. Database connection strings and secrets are injected into the running app, never returned to the agent, so prompt injection has nothing to steal.",
+  "Beamhall's defaults are structural, not advisory: least privilege, read-only root filesystem, default-deny egress, IT-set resource ceilings and runtime tier, per-workspace isolation — with no agent tool to widen any of them.",
+  "Preview and live are separate lifecycle states; promotion can be reserved for IT and optionally require four-eyes approval.",
+  "Keep Dokploy or Coolify if your users are developers who want full control over images, Compose files and build strategies. Choose Beamhall if non-developers will build internal apps with AI and you need the constraints to be the product.",
+  "Maturity trade-off: Coolify and Dokploy are established projects; Beamhall is pre-1.0 and entering design-partner validation.",
+];
+
+// Q&A pairs surfaced as FAQPage structured data. Each mirrors an H2 below.
+const faq: { q: string; a: string }[] = [
+  {
+    q: "Is Beamhall a Dokploy alternative?",
+    a: "Sometimes. If you want another general-purpose self-hosted PaaS, Beamhall is not what you want — it intentionally gives the agent less infrastructure freedom. If you are evaluating Dokploy because of its Claude Code and MCP story, and your real goal is employee-created internal applications, Beamhall is worth comparing: Dokploy exposes a powerful deployment platform to the agent, while Beamhall exposes a narrower application-capability model and keeps the infrastructure behind it. That is a different trust model, not a UI difference.",
+  },
+  {
+    q: "Is Beamhall a Coolify alternative?",
+    a: "It depends on the job. As a Coolify alternative for hosting arbitrary developer-managed workloads, Beamhall is deliberately narrower. As a self-hosted environment for secure vibe coding and AI-generated internal apps, it addresses concerns Coolify leaves to the operator: runtime posture, outbound-network defaults, capability provisioning, agent credential exposure, and the separation between building a preview and promoting an app to production. Coolify is a platform your developers operate; Beamhall is the platform your AI agent operates without becoming your infrastructure administrator.",
+  },
+  {
+    q: "When should you keep Dokploy or Coolify?",
+    a: "When your primary users are developers. Choose a general-purpose PaaS if your team wants direct control over Docker images, Compose definitions, build strategies, environment configuration, public applications and arbitrary services. Coolify is especially attractive if you want a mature, fully open-source self-hosted PaaS with a large ecosystem and no feature-lock between hosted and self-hosted. Dokploy is compelling if you want a modern PaaS that is aggressively integrating with AI coding tools, with broad official MCP coverage and enterprise governance features.",
+  },
+  {
+    q: "What about Claude Code?",
+    a: "Claude Code is the first agent Beamhall targets, but Beamhall's agent interface is MCP rather than a Claude-only deployment protocol. What matters is the contract on the other side of the MCP connection: a broad infrastructure API asks the model to make infrastructure decisions, while Beamhall's tool surface asks it only to state what the application needs.",
+  },
+];
+
+// Structured data. `application/ld+json` is a data block, not an executable
+// script, so it is unaffected by the site's `script-src 'self'` CSP.
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": `${canonical}#article`,
+      headline: "Beamhall vs Dokploy vs Coolify: when the person shipping the app is an AI agent",
+      alternativeHeadline: title,
+      description: metaDescription,
+      abstract: description,
+      inLanguage: "en",
+      articleSection: "Comparisons",
+      keywords,
+      datePublished: published,
+      dateModified: modified,
+      mainEntityOfPage: { "@type": "WebPage", "@id": canonical },
+      url: canonical,
+      image: {
+        "@type": "ImageObject",
+        url: `${site}/og.png`,
+        width: 1200,
+        height: 630,
+      },
+      author: { "@type": "Organization", name: "Beamhall", url: `${site}/` },
+      publisher: {
+        "@type": "Organization",
+        "@id": `${site}/#organization`,
+        name: "Beamhall",
+        url: `${site}/`,
+        logo: { "@type": "ImageObject", url: `${site}/icon-512.png`, width: 512, height: 512 },
+      },
+      about: [
+        { "@type": "SoftwareApplication", name: "Beamhall", applicationCategory: "DeveloperApplication" },
+        { "@type": "SoftwareApplication", name: "Dokploy", applicationCategory: "DeveloperApplication" },
+        { "@type": "SoftwareApplication", name: "Coolify", applicationCategory: "DeveloperApplication" },
+      ],
+      citation: sources.filter((x) => !x.href.startsWith("/")).map((x) => x.href),
+      encoding: {
+        "@type": "MediaObject",
+        encodingFormat: "text/markdown",
+        contentUrl: `${site}${markdownUrl}`,
+      },
+    },
+    {
+      "@type": "BreadcrumbList",
+      "@id": `${canonical}#breadcrumbs`,
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Beamhall", item: `${site}/` },
+        { "@type": "ListItem", position: 2, name: "Alternatives", item: `${site}/alternatives/` },
+        { "@type": "ListItem", position: 3, name: "Beamhall vs Dokploy vs Coolify", item: canonical },
+      ],
+    },
+    {
+      "@type": "FAQPage",
+      "@id": `${canonical}#faq`,
+      mainEntity: faq.map((f) => ({
+        "@type": "Question",
+        name: f.q,
+        acceptedAnswer: { "@type": "Answer", text: f.a },
+      })),
+    },
+  ],
+};
+---
+
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#010312" />
+    <title>{metaTitle}</title>
+    <meta name="description" content={metaDescription} />
+    <meta name="keywords" content={keywords} />
+    <meta name="author" content="Beamhall" />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:site_name" content="Beamhall" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={metaDescription} />
+    <meta property="og:type" content="article" />
+    <meta property="article:published_time" content={published} />
+    <meta property="article:modified_time" content={modified} />
+    <meta property="article:author" content="Beamhall" />
+    <meta property="article:section" content="Comparisons" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={`${site}/og.png`} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="Beamhall: the self-hosted backplane for agent-built internal apps" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={metaDescription} />
+    <meta name="twitter:image" content={`${site}/og.png`} />
+    <meta name="twitter:image:alt" content="Beamhall: the self-hosted backplane for agent-built internal apps" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
+    <link rel="alternate" type="text/markdown" title="This article as plain Markdown" href={markdownUrl} />
+    <link rel="alternate" type="text/markdown" title="Beamhall for LLMs (llms.txt)" href="/llms.txt" />
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} is:inline />
+  </head>
+  <body>
+    <div class="app">
+      <Sidebar mode="links" active="alternatives" />
+
+      <main class="term">
+        <div class="term-bar">
+          <span class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></span>
+          <span class="term-path">beamhall: <b id="path">~/alternatives</b></span>
+          <span class="term-hint">nav: <kbd>1</kbd>–<kbd>8</kbd></span>
+        </div>
+
+        <div class="term-body">
+          <section class="screen active">
+            <div class="prompt">
+              <span class="u">beam@beamhall.com</span><span class="s">:</span><span class="p">~/alternatives</span><span class="s">$</span> {page.cmd}<span class="cursor"></span>
+            </div>
+
+            <article class="article">
+              <header>
+                <h1>
+                  Beamhall vs Dokploy vs Coolify
+                  <span class="h1-sub">When the person shipping the app is an AI agent</span>
+                </h1>
+                <p class="byline">
+                  <span>by <b>Beamhall</b></span>
+                  <span>·</span>
+                  <span><time datetime={published}>26 August 2026</time></span>
+                  <span>·</span>
+                  <span>comparison</span>
+                  <span>·</span>
+                  <span><a href={markdownUrl} rel="alternate">read as markdown</a></span>
+                </p>
+                <p class="standfirst">{description}</p>
+              </header>
+
+              <aside class="tldr" aria-labelledby="tldr-h">
+                <h2 id="tldr-h">TL;DR</h2>
+                <ul>
+                  {takeaways.map((t) => <li>{t}</li>)}
+                </ul>
+              </aside>
+
+              <p>
+                Dokploy and Coolify solved an important problem: getting an
+                application onto your own servers without turning every
+                deployment into a small Kubernetes consulting engagement.
+              </p>
+              <p>AI coding agents create a different problem.</p>
+              <p>
+                The person asking for the application may not know what a
+                container is. They may not know what Git is. They may be in
+                Finance, Operations, HR, Support, or Sales. They have an idea,
+                Claude Code or another coding agent can build it, and at some
+                point they type something close to:
+              </p>
+
+              <blockquote><p>Publish this so the team can use it.</p></blockquote>
+
+              <p>That sentence changes the threat model.</p>
+              <p>
+                A conventional self-hosted PaaS assumes that a developer or
+                operator is ultimately responsible for choosing the source,
+                configuring the runtime, wiring a database, handling secrets,
+                deciding what should be reachable, and granting the automation
+                enough access to make those things happen.
+              </p>
+              <p>
+                Beamhall starts from a different assumption:
+                <strong>both the AI agent and the code it produces are untrusted</strong>.
+              </p>
+              <p>
+                That is the useful way to compare Beamhall, Dokploy, and
+                Coolify. Not by counting deployment buttons, but by asking who is
+                expected to make infrastructure decisions, what the AI agent is
+                allowed to touch, and what happens when the builder is not a
+                developer.
+              </p>
+
+              <h2>Dokploy and Coolify are PaaS products. Beamhall is an application backplane for agents.</h2>
+              <p>
+                Coolify describes itself as an open-source, self-hostable PaaS
+                alternative to Vercel, Heroku, and Netlify. It connects to
+                servers, runs applications as Docker resources, handles routing
+                and TLS, and supports Git-based deployment, databases, services,
+                previews, API automation, and an increasingly capable MCP
+                interface.
+              </p>
+              <p>
+                Dokploy occupies similar territory. It supports applications from
+                Git, Docker images, and Docker Compose, manages databases and
+                domains, and now has an official MCP server that exposes the
+                Dokploy API to AI clients.
+              </p>
+              <p>Those are useful products. If your starting point is:</p>
+              <blockquote><p>I have an application. Help me deploy and operate it.</p></blockquote>
+              <p>a self-hosted PaaS is a sensible answer.</p>
+              <p>Beamhall starts one step earlier:</p>
+              <blockquote>
+                <p>
+                  I have an employee with an idea and an AI coding agent. Let
+                  them create an internal application without turning either of
+                  them into an infrastructure administrator.
+                </p>
+              </blockquote>
+              <p>
+                That difference sounds subtle until you follow an app all the way
+                from prompt to production.
+              </p>
+
+              <h2>The real difference appears after “publish this”</h2>
+              <p>
+                Imagine a People Operations employee asks Claude Code to build a
+                simple RSVP application with a database and employee sign-in.
+              </p>
+              <p>
+                With a conventional PaaS, somebody or something still has to
+                translate the application into infrastructure decisions:
+              </p>
+              <ol>
+                <li>Where does the source live?</li>
+                <li>How is it built?</li>
+                <li>Which image or build method should be used?</li>
+                <li>Which database should be created?</li>
+                <li>Where does the connection string go?</li>
+                <li>Which environment variables are secrets?</li>
+                <li>Which domain should be exposed?</li>
+                <li>Can the application reach the public internet?</li>
+                <li>Who can access the application?</li>
+                <li>Is the agent allowed to push this to production?</li>
+              </ol>
+              <p>
+                An experienced developer may barely notice those decisions. A
+                vibe coder probably does not know they exist.
+              </p>
+              <p>
+                An AI agent does know they exist, which creates a new temptation:
+                give the agent enough tooling and credentials to solve the entire
+                problem itself.
+              </p>
+              <p>
+                That is the point where “AI-assisted deployment” and “governed AI
+                application platform” stop being the same thing.
+              </p>
+
+              <h2>Dokploy gives agents a powerful deployment API</h2>
+              <p>
+                Dokploy has made a serious investment in agent integration. Its
+                official MCP server currently exposes hundreds of tools across
+                projects, applications, deployments, domains, databases, Git
+                providers, Docker, backups, enterprise features, and other
+                platform functions.
+              </p>
+              <p>
+                That is useful if you want Claude Code, Cursor, or another MCP
+                client to operate Dokploy directly. Tool presets and category
+                filtering can reduce the surface exposed to a client, and Dokploy
+                also supports redacting secret-bearing fields from MCP responses.
+              </p>
+              <p>The model is still recognizable, though:</p>
+
+              <figure class="flow">
+                <div class="fnode actor"><span class="fname">AI agent</span></div>
+                <div class="fedge"><span class="flabel">Dokploy API token</span></div>
+                <div class="fnode"><span class="fname">Dokploy MCP</span></div>
+                <div class="fedge"><span class="flabel">create / configure / deploy</span></div>
+                <div class="fnode"><span class="fname">PaaS resources</span></div>
+                <p class="sr-only">Flow: the AI agent holds a Dokploy API token, calls the Dokploy MCP server, and creates, configures and deploys PaaS resources directly.</p>
+                <figcaption>The agent as an automated PaaS operator.</figcaption>
+              </figure>
+
+              <p>The agent is an automated PaaS operator.</p>
+              <p>
+                That is a perfectly reasonable model for a developer agent. It is
+                less comfortable when the user behind the agent is someone who
+                cannot review the infrastructure decisions the agent is making.
+              </p>
+              <p>
+                Dokploy itself is moving toward this use case and now explicitly
+                markets a governed environment for employees deploying AI-built
+                applications. That makes it one of the more interesting PaaS
+                options for organizations experimenting with Claude Code and
+                similar tools.
+              </p>
+              <p>
+                Beamhall takes the idea further by refusing to make the agent an
+                infrastructure operator in the first place.
+              </p>
+
+              <h2>Coolify is adding MCP, but its basic contract remains developer-oriented</h2>
+              <p>
+                Coolify has also added a built-in MCP server. Its current
+                documentation describes team-scoped API tokens, infrastructure
+                inspection, deployment and lifecycle operations, resource
+                discovery, logs, and related tools.
+              </p>
+              <p>
+                Again, this is useful. An AI assistant can understand what is
+                deployed, troubleshoot failures, and perform operations that its
+                token permits.
+              </p>
+              <p>
+                But Coolify is explicit about the security boundary of the
+                product. Its security documentation says the operator remains
+                responsible for server security, Docker and OS updates, firewall
+                and network controls, application code, container images, runtime
+                permissions, public endpoints, backups, monitoring, and incident
+                response.
+              </p>
+              <p>That contract makes sense for a PaaS.</p>
+              <p>
+                It also explains why “give Claude access to Coolify” is not the
+                same architecture as “let a non-developer safely create an
+                internal app with Claude.”
+              </p>
+              <p>
+                Coolify helps you operate infrastructure you control. Beamhall
+                tries to make most infrastructure choices unavailable to the
+                agent altogether.
+              </p>
+
+              <h2>Beamhall gives the agent capabilities, not infrastructure</h2>
+              <p>
+                In Beamhall, the agent does not create a PostgreSQL service and
+                then receive its password. It asks for a database capability.
+              </p>
+              <p>
+                The platform creates the database and injects the connection
+                information into the running application. The connection string
+                is not returned to the agent.
+              </p>
+              <p>
+                The same pattern applies to secrets. The agent can set a secret,
+                but there is no corresponding tool to read it back.
+              </p>
+              <p>
+                For company sign-in, the agent asks for authentication. Beamhall
+                provisions the application identity under policy.
+              </p>
+              <p>
+                For object storage or outbound email, the app receives access to
+                a brokered capability. The upstream provider credential stays
+                outside both the app and the agent.
+              </p>
+              <p>The flow looks more like this:</p>
+
+              <figure class="flow">
+                <div class="fnode actor"><span class="fname">Employee</span></div>
+                <div class="fedge"><span class="flabel">“This app needs a database”</span></div>
+                <div class="fnode actor"><span class="fname">AI coding agent</span></div>
+                <div class="fedge"><span class="flabel">request capability</span></div>
+                <div class="fnode core">
+                  <span class="fname">Beamhall</span>
+                  <span class="fsub">policy check · provision · inject at runtime</span>
+                </div>
+                <div class="fedge"><span class="flabel quiet">connection injected, never returned</span></div>
+                <div class="fnode app"><span class="fname">Application</span></div>
+                <p class="sr-only">Flow: the employee tells the AI coding agent the app needs a database; the agent requests that capability from Beamhall; Beamhall runs a policy check, provisions it and injects it at runtime into the application. The connection is injected, never returned to the agent.</p>
+                <figcaption>The agent asks for a capability; the wiring stays inside the backplane.</figcaption>
+              </figure>
+
+              <p>
+                The agent gets enough information to use the capability, not
+                enough information to reconfigure the platform behind it.
+              </p>
+              <p>
+                That distinction matters under prompt injection, agent mistakes,
+                generated-code vulnerabilities, and plain old bad judgment.
+              </p>
+
+              <h2>Git still exists. The vibe coder does not need to care.</h2>
+              <p>
+                A common objection to self-hosted developer platforms is that the
+                workflow eventually reaches a sentence like “now create a Git
+                repository,” which is approximately where half the intended
+                audience quietly returns to a spreadsheet.
+              </p>
+              <p>Beamhall has integrated Git, but Git is plumbing.</p>
+              <p>
+                Each app gets its own private repository. When an agent deploys,
+                Beamhall provides a one-time push destination, builds the source
+                with a controlled Cloud Native Buildpacks pipeline, publishes a
+                pinned image to the internal registry, and runs it.
+              </p>
+              <p>
+                The human can remain blissfully unaware that a commit, remote,
+                registry, or build pipeline exists.
+              </p>
+              <p>
+                This is an important distinction from hiding Git behind a better
+                UI. The intended operator of the workflow is the agent. The
+                employee describes the application and evaluates the result.
+              </p>
+              <p>
+                A developer can still inspect the machinery when necessary. It
+                simply is not a prerequisite for making a small internal tool.
+              </p>
+
+              <h2>The comparison that matters for AI-built internal apps</h2>
+              <div class="cmp-wrap">
+                <table class="cmp">
+                  <caption class="sr-only">
+                    Coolify, Dokploy and Beamhall compared for AI-agent-built internal applications
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Question</th>
+                      {cols.map((c) => <th scope="col" class={c === "Beamhall" ? "own" : undefined}>{c}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {
+                      rows.map(([q, ...cells]) => (
+                        <tr>
+                          <th scope="row">{q}</th>
+                          {cells.map((cell, i) => (
+                            <td data-label={cols[i]} class={cols[i] === "Beamhall" ? "own" : undefined}>
+                              {cell}
+                            </td>
+                          ))}
+                        </tr>
+                      ))
+                    }
+                  </tbody>
+                </table>
+              </div>
+              <p class="cmp-hint">Scroll the table sideways to compare all three.</p>
+
+              <p>
+                This is not a scorecard where every row should turn green for
+                Beamhall.
+              </p>
+              <p>
+                If you need an extremely flexible self-hosted PaaS and your users
+                are developers, flexibility is a feature. Dokploy and Coolify let
+                experienced operators make choices that Beamhall deliberately
+                removes from an AI agent.
+              </p>
+              <p>
+                The question is whether you want those choices available in your
+                employee-facing vibe-coding workflow.
+              </p>
+
+              <h2>Security defaults matter more when nobody is reviewing the deployment</h2>
+              <p>
+                Traditional developer platforms can offer secure deployments. The
+                catch is that somebody needs to configure them securely.
+              </p>
+              <p>
+                AI-generated internal apps produce a different scale problem. If
+                ten developers ship ten services, review is plausible. If hundreds
+                of employees discover that Claude can turn a sentence into a
+                working internal tool, security cannot depend on each employee
+                understanding container networking.
+              </p>
+              <p>
+                Beamhall therefore makes several decisions structural rather than
+                advisory.
+              </p>
+              <div class="box">
+                <div class="box-h">Structural, not advisory</div>
+                An application starts least-privileged. Its root filesystem is
+                read-only except where explicitly writable. Resource ceilings are
+                set by IT. Workspaces are isolated. Outbound traffic is denied by
+                default. The agent cannot open its own network path, raise its
+                quota, read secrets, change its runtime security context, or
+                reach another workspace because
+                <span class="c-strong">those operations do not exist in the agent tool surface</span>.
+              </div>
+              <p>
+                For stronger workload isolation, a workspace can use gVisor rather
+                than the default hardened runc runtime.
+              </p>
+              <p>
+                This does not make AI-generated code magically safe. Nothing does.
+                Beamhall's own
+                <a href={`${repo}/blob/main/docs/threat-model.md`} target="_blank" rel="noopener">threat model</a>
+                explicitly retains the shared-kernel risk of runc and documents
+                the trade-offs of gVisor.
+              </p>
+              <p>
+                What it does is reduce the number of security decisions delegated
+                to the thing most likely to improvise them: the coding agent.
+              </p>
+
+              <h2>The database password question is more important than it looks</h2>
+              <p>Consider one small architectural detail.</p>
+              <p>A coding agent creates a database.</p>
+              <p>
+                In a typical automation model, the platform returns credentials or
+                makes them available as configuration. You can mask them in a UI,
+                use an external vault, narrow token permissions, and redact API
+                responses. All of those are worthwhile controls.
+              </p>
+              <p>Beamhall changes the contract.</p>
+              <p>
+                The agent asks for the database. Beamhall provisions it. The
+                application receives the connection data at runtime. The agent
+                receives a reference telling it where the application will find
+                that data.
+              </p>
+              <p>
+                There is no useful database password sitting in the model context.
+              </p>
+              <p>
+                Why care? Because an AI coding agent processes untrusted material
+                constantly: source files, package documentation, logs, copied
+                snippets, user input, issue descriptions, web content, and tool
+                responses. Prompt injection turns every unnecessary credential in
+                that context into an avoidable liability.
+              </p>
+              <div class="box">
+                <div class="box-h">The rule</div>
+                The safest secret for an agent is the one it never had.
+              </div>
+
+              <h2>Production should not be one more tool call</h2>
+              <p>Vibe coding makes preview environments cheap. That is good.</p>
+              <p>It should not make production approval meaningless.</p>
+              <p>
+                Beamhall separates the builder's ability to create and deploy a
+                preview from the ability to promote that application to live use.
+                IT can reserve promotion for a different role and optionally
+                require a second administrator to approve it.
+              </p>
+              <p>That creates a useful employee workflow:</p>
+
+              <figure class="flow">
+                <div class="fnode actor"><span class="fname">“I need an equipment checkout app.”</span></div>
+                <div class="fedge"></div>
+                <div class="fnode actor"><span class="fname">Claude</span></div>
+                <div class="fedge"></div>
+                <div class="fnode core"><span class="fname">Build + preview</span></div>
+                <div class="fedge"></div>
+                <div class="fnode"><span class="fname">Employee tests it</span></div>
+                <div class="fedge"></div>
+                <div class="fnode gate"><span class="fname">IT approval</span></div>
+                <div class="fedge"></div>
+                <div class="fnode app"><span class="fname">Live</span></div>
+                <p class="sr-only">Flow: an employee asks for an equipment checkout app; Claude builds it; Beamhall builds and runs a preview; the employee tests it; IT approves the promotion; only then does the app go live.</p>
+                <figcaption>Preview is cheap; promotion to live stays a governed step.</figcaption>
+              </figure>
+
+              <p>
+                The employee still gets the satisfying part of vibe coding: an
+                idea can become working software quickly.
+              </p>
+              <p>
+                IT keeps the part that should never have been crowdsourced:
+                deciding what is allowed to become a production application inside
+                the company.
+              </p>
+              <p>
+                Dokploy can provide enterprise RBAC, SSO, audit logs, and
+                application authentication. Coolify provides teams, roles, scoped
+                API tokens, SSO integrations, and security controls around its
+                management plane. Organizations can build governed workflows on
+                top of both.
+              </p>
+              <p>
+                Beamhall simply makes that workflow the product rather than a
+                platform design exercise.
+              </p>
+
+              <h2>When should you keep Dokploy or Coolify?</h2>
+              <p>
+                If your primary users are developers, there is a strong case for
+                doing exactly that.
+              </p>
+              <p>
+                Choose a general-purpose PaaS when your team wants direct control
+                over Docker images, Compose definitions, build strategies,
+                environment configuration, public applications, arbitrary
+                services, and the rest of a broad deployment surface.
+              </p>
+              <p>
+                Coolify is especially attractive if you want a mature, fully
+                open-source self-hosted PaaS with a large ecosystem and no
+                feature-lock distinction between its hosted and self-hosted
+                product.
+              </p>
+              <p>
+                Dokploy is particularly interesting if you want a modern PaaS that
+                is aggressively integrating with AI coding tools. Its official MCP
+                coverage is broad, its enterprise governance features are relevant
+                to larger organizations, and its product direction clearly
+                acknowledges AI-built applications.
+              </p>
+              <p>Beamhall is the more opinionated choice.</p>
+              <p>It is for the organization asking a different question:</p>
+              <blockquote>
+                <p>
+                  How do we let people who are not developers build useful
+                  internal software with AI, without giving those people or their
+                  agents the keys to our infrastructure?
+                </p>
+              </blockquote>
+              <p>If that is the question, the constraints are the feature.</p>
+
+              <h2>Is Beamhall a Dokploy alternative?</h2>
+              <p>Sometimes.</p>
+              <p>
+                If you are searching for a <strong>Dokploy alternative</strong>
+                because you want another general-purpose self-hosted PaaS,
+                Beamhall is probably not what you want. It intentionally provides
+                less infrastructure freedom to the agent.
+              </p>
+              <p>
+                If you are evaluating Dokploy because of its Claude Code and MCP
+                story, and your actual goal is employee-created internal
+                applications, Beamhall is worth comparing. Dokploy exposes a
+                powerful deployment platform to the agent. Beamhall exposes a
+                narrower application capability model and keeps the infrastructure
+                behind it.
+              </p>
+              <p>That is not a UI difference. It is a different trust model.</p>
+
+              <h2>Is Beamhall a Coolify alternative?</h2>
+              <p>Again, it depends on the job.</p>
+              <p>
+                As a <strong>Coolify alternative</strong> for hosting arbitrary
+                developer-managed workloads, Beamhall is intentionally narrower.
+              </p>
+              <p>
+                As a self-hosted environment for secure vibe coding and
+                AI-generated internal apps, it addresses several concerns that
+                Coolify leaves to the operator: runtime posture,
+                outbound-network defaults, capability provisioning, agent
+                credential exposure, and the separation between building a preview
+                and promoting an app to production.
+              </p>
+              <p>Coolify is a platform your developers operate.</p>
+              <p>
+                Beamhall is intended to be the platform your AI agent operates
+                <strong>without becoming your infrastructure administrator</strong>.
+              </p>
+
+              <h2>What about Claude Code?</h2>
+              <p>
+                Claude Code is the first agent Beamhall is targeting, but
+                Beamhall's agent interface is based on MCP rather than a private
+                Claude-only deployment protocol.
+              </p>
+              <p>
+                The important part is not the logo on the coding agent. It is the
+                contract on the other side of the MCP connection.
+              </p>
+              <p>
+                A broad infrastructure API asks the model to make infrastructure
+                decisions.
+              </p>
+              <p>
+                Beamhall's tool surface asks it to state what the application
+                needs.
+              </p>
+              <p>
+                That is the abstraction we think internal AI development needs.
+              </p>
+
+              <h2>A note on maturity</h2>
+              <p>
+                There is an obvious trade-off here and it is better stated plainly.
+              </p>
+              <p>
+                Coolify and Dokploy are established projects with larger user
+                bases and broader deployment capabilities. Beamhall is pre-1.0.
+                The core security surface and end-to-end workflow are built and
+                validated, and the project is entering design-partner validation.
+              </p>
+              <p>
+                If your requirement today is “replace Heroku on our own servers,”
+                use the mature PaaS that fits your environment.
+              </p>
+              <p>
+                If your requirement is “we expect AI coding to spread beyond
+                developers, and we need an architecture for that before employees
+                create a shadow stack of Vercel, Neon, Supabase, Fly.io, random
+                API keys, and public URLs,” Beamhall is being built for exactly
+                that problem.
+              </p>
+              <p>
+                The interesting part of enterprise vibe coding is no longer
+                whether AI can write the application.
+              </p>
+              <p>It can.</p>
+              <p>
+                The hard part is deciding what happens when someone types
+                <strong>publish</strong>.
+              </p>
+
+              <div class="cta">
+                <a class="btn primary" href="/#overview">See how Beamhall works</a>
+                <a class="btn" href="/#install">Install it on your own host</a>
+                <a class="btn" href={repo} target="_blank" rel="noopener">★ Source on GitHub</a>
+              </div>
+
+              <hr />
+
+              <h2>Sources and product documentation</h2>
+              <p class="c-dim">
+                The comparison above reflects publicly available product
+                documentation checked on 26 August 2026.
+              </p>
+              <ul class="sources">
+                {
+                  sources.map((s) => (
+                    <li>
+                      <a
+                        href={s.href}
+                        target={s.href.startsWith("/") ? undefined : "_blank"}
+                        rel={s.href.startsWith("/") ? undefined : "noopener"}
+                      >
+                        {s.label}
+                      </a>
+                      <span class="who"> — {s.who}</span>
+                    </li>
+                  ))
+                }
+              </ul>
+
+              <p class="foot-nav">
+                <a href="/">← back to the Beamhall terminal</a>
+              </p>
+            </article>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="/nav.js"></script>
+  </body>
+</html>

@@ -1,0 +1,65 @@
+---
+// The shared left sidebar: logo, tagline, the screens/pages menu, GitHub CTA.
+//
+// mode="screens"  → the landing page: screens are <button>s driven by nav.js.
+// mode="links"    → a standalone route: every screen is a link back to /#<id>.
+import { Image } from "astro:assets";
+import logo from "../assets/beamhall-logo.png";
+import { nav, pages, repo } from "../nav";
+
+interface Props {
+  mode?: "screens" | "links";
+  active?: string;
+}
+const { mode = "screens", active } = Astro.props;
+---
+
+<aside class="sidebar">
+  <div class="brand">
+    <a href="/" aria-label="Beamhall home">
+      <Image src={logo} alt="Beamhall" widths={[260, 520]} sizes="260px" />
+    </a>
+    <p class="tag">
+      <span class="tag-1">Agent-built apps</span>
+      <span class="tag-2">Infrastructure included.</span>
+    </p>
+  </div>
+
+  <nav class="nav" aria-label="Sections">
+    {
+      mode === "screens"
+        ? nav.map((item, i) => (
+            <button data-screen={item.id} class={i === 0 ? "active" : ""}>
+              <span class="n">{item.n}</span>
+              <span class="lbl">{item.label}</span>
+              <span class="arrow">›</span>
+            </button>
+          ))
+        : nav.map((item) => (
+            <a class="nav-item" data-nav-link href={`/#${item.id}`}>
+              <span class="n">{item.n}</span>
+              <span class="lbl">{item.label}</span>
+              <span class="arrow">›</span>
+            </a>
+          ))
+    }
+    {
+      pages.map((item) => (
+        <a
+          class={active === item.id ? "nav-item active" : "nav-item"}
+          data-nav-link
+          href={item.href}
+          aria-current={active === item.id ? "page" : undefined}
+        >
+          <span class="n">{item.n}</span>
+          <span class="lbl">{item.label}</span>
+          <span class="arrow">›</span>
+        </a>
+      ))
+    }
+  </nav>
+
+  <div class="side-foot">
+    <a class="star-btn" href={repo} target="_blank" rel="noopener"><span class="s">★</span> Star on GitHub</a>
+  </div>
+</aside>

@@ -1,0 +1,93 @@
+# Beamhall — https://beamhall.com
+#
+# Policy: this is a public marketing site. We WANT to be crawled, indexed, and
+# ingested by AI/LLM crawlers — being quoted correctly is the point. Everything
+# is allowed except the share-card render target.
+#
+# Machine-readable entry points for agents and LLM crawlers:
+#   https://beamhall.com/llms.txt
+#   https://beamhall.com/llms-full.txt
+#   https://beamhall.com/alternatives/beamhall-vs-dokploy-vs-coolify.md
+
+User-agent: *
+Allow: /
+Disallow: /og
+Disallow: /og/
+
+# --- Search engines -------------------------------------------------------
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+# --- AI / LLM crawlers: explicitly allowed --------------------------------
+# Training + retrieval crawlers. Listed by name so the permission is
+# unambiguous rather than inherited from the wildcard rule.
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Meta-ExternalAgent
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: YouBot
+Allow: /
+
+User-agent: Diffbot
+Allow: /
+
+User-agent: Timpibot
+Allow: /
+
+User-agent: omgili
+Allow: /
+
+Sitemap: https://beamhall.com/sitemap-index.xml

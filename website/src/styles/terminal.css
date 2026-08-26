@@ -81,6 +81,7 @@ a:hover { text-decoration: underline; }
   overflow-y: auto;
 }
 .brand { padding: 0; }
+.brand a { display: block; }
 .brand img {
   width: 100%;
   height: auto;
@@ -112,7 +113,8 @@ a:hover { text-decoration: underline; }
   gap: 2px;
   padding: 0 2px;
 }
-.nav button {
+.nav button,
+.nav a.nav-item {
   all: unset;
   display: flex;
   align-items: baseline;
@@ -125,17 +127,25 @@ a:hover { text-decoration: underline; }
   border: 1px solid transparent;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.nav button .n { color: var(--dimmer); font-size: 13px; }
-.nav button .arrow { color: var(--cyan); opacity: 0; margin-left: auto; }
-.nav button:hover { background: var(--panel); color: var(--fg-strong); }
-.nav button:focus-visible { border-color: var(--border-bright); }
-.nav button.active {
+.nav a.nav-item:hover { text-decoration: none; }
+.nav button .n,
+.nav a.nav-item .n { color: var(--dimmer); font-size: 13px; }
+.nav button .arrow,
+.nav a.nav-item .arrow { color: var(--cyan); opacity: 0; margin-left: auto; }
+.nav button:hover,
+.nav a.nav-item:hover { background: var(--panel); color: var(--fg-strong); }
+.nav button:focus-visible,
+.nav a.nav-item:focus-visible { border-color: var(--border-bright); }
+.nav button.active,
+.nav a.nav-item.active {
   background: var(--panel);
   border-color: var(--border-bright);
   color: var(--fg-strong);
 }
-.nav button.active .n { color: var(--cyan); }
-.nav button.active .arrow { opacity: 1; }
+.nav button.active .n,
+.nav a.nav-item.active .n { color: var(--cyan); }
+.nav button.active .arrow,
+.nav a.nav-item.active .arrow { opacity: 1; }
 
 .side-foot {
   margin-top: auto;
@@ -501,9 +511,42 @@ table.gains .skip::before { content: "✗ "; color: var(--red); font-weight: 700
     gap: 6px;
     flex: 1;
   }
-  .nav button .n, .nav button .arrow { display: none; }
+  .nav button .n, .nav button .arrow,
+  .nav a.nav-item .n, .nav a.nav-item .arrow { display: none; }
   .side-foot { width: 100%; margin-top: 4px; border-top: none; padding: 0; flex-direction: row; flex-wrap: wrap; gap: 14px; }
   .term { margin: 0; border-radius: 0; border-left: none; border-right: none; }
   .term-hint { display: none; }
   .term-body { padding: 22px 16px 50px; }
+}
+
+/* ── "See also" cross-link (landing → long-form pages) ────────────────────── */
+.out p.see-also {
+  margin: 18px 0 14px;
+  padding-left: 20px;
+  position: relative;
+  color: var(--dim);
+  font-size: 13px;
+}
+.out p.see-also::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: var(--dimmer);
+}
+
+/* ── Visually hidden ────────────────────────────────────────────────────────
+   Text that exists for screen readers, search engines and text extraction
+   (LLM crawlers) but is not painted: page/section headings that the TUI
+   expresses as a prompt line, and prose summaries of the SVG diagrams. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
