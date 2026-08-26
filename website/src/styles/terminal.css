@@ -217,6 +217,11 @@ a:hover { text-decoration: underline; }
   padding: 26px clamp(18px, 4vw, 48px) 60px;
   overflow-y: auto;
   flex: 1;
+  /* Containing block for the .sr-only text below. Without it those absolutely
+     positioned nodes resolve against the initial containing block, so ones
+     sitting deep inside this scroller land thousands of px down the *document*
+     and give the window its own scrollbar past the end of the content. */
+  position: relative;
 }
 
 /* ---- Screens -------------------------------------------------------- */
