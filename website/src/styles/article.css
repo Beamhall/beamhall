@@ -110,11 +110,11 @@
   font-weight: 400;
   margin-top: 2px;
 }
-.flow .fnode.actor { border-color: #6a4f1e; background: #14110a; }
-.flow .fnode.core { border-color: var(--cyan); background: #07101f; }
-.flow .fnode.core .fname { color: var(--cyan); font-weight: 700; }
-.flow .fnode.app { border-color: var(--indigo); background: #0c1030; }
-.flow .fnode.gate { border-color: #5a431b; background: #18120a; color: var(--amber); }
+.flow .fnode.f-actor { border-color: #6a4f1e; background: #14110a; }
+.flow .fnode.f-core { border-color: var(--cyan); background: #07101f; }
+.flow .fnode.f-core .fname { color: var(--cyan); font-weight: 700; }
+.flow .fnode.f-app { border-color: var(--indigo); background: #0c1030; }
+.flow .fnode.f-gate { border-color: #5a431b; background: #18120a; color: var(--amber); }
 .flow .fedge {
   display: flex;
   flex-direction: column;

@@ -436,7 +436,7 @@ const jsonLd = {
               <p>The model is still recognizable, though:</p>
 
               <figure class="flow">
-                <div class="fnode actor"><span class="fname">AI agent</span></div>
+                <div class="fnode f-actor"><span class="fname">AI agent</span></div>
                 <div class="fedge"><span class="flabel">Dokploy API token</span></div>
                 <div class="fnode"><span class="fname">Dokploy MCP</span></div>
                 <div class="fedge"><span class="flabel">create / configure / deploy</span></div>
@@ -521,16 +521,16 @@ const jsonLd = {
               <p>The flow looks more like this:</p>
 
               <figure class="flow">
-                <div class="fnode actor"><span class="fname">Employee</span></div>
+                <div class="fnode f-actor"><span class="fname">Employee</span></div>
                 <div class="fedge"><span class="flabel">“This app needs a database”</span></div>
-                <div class="fnode actor"><span class="fname">AI coding agent</span></div>
+                <div class="fnode f-actor"><span class="fname">AI coding agent</span></div>
                 <div class="fedge"><span class="flabel">request capability</span></div>
-                <div class="fnode core">
+                <div class="fnode f-core">
                   <span class="fname">Beamhall</span>
                   <span class="fsub">policy check · provision · inject at runtime</span>
                 </div>
                 <div class="fedge"><span class="flabel quiet">connection injected, never returned</span></div>
-                <div class="fnode app"><span class="fname">Application</span></div>
+                <div class="fnode f-app"><span class="fname">Application</span></div>
                 <p class="sr-only">Flow: the employee tells the AI coding agent the app needs a database; the agent requests that capability from Beamhall; Beamhall runs a policy check, provisions it and injects it at runtime into the application. The connection is injected, never returned to the agent.</p>
                 <figcaption>The agent asks for a capability; the wiring stays inside the backplane.</figcaption>
               </figure>
@@ -702,17 +702,17 @@ const jsonLd = {
               <p>That creates a useful employee workflow:</p>
 
               <figure class="flow">
-                <div class="fnode actor"><span class="fname">“I need an equipment checkout app.”</span></div>
+                <div class="fnode f-actor"><span class="fname">“I need an equipment checkout app.”</span></div>
                 <div class="fedge"></div>
-                <div class="fnode actor"><span class="fname">Claude</span></div>
+                <div class="fnode f-actor"><span class="fname">Claude</span></div>
                 <div class="fedge"></div>
-                <div class="fnode core"><span class="fname">Build + preview</span></div>
+                <div class="fnode f-core"><span class="fname">Build + preview</span></div>
                 <div class="fedge"></div>
                 <div class="fnode"><span class="fname">Employee tests it</span></div>
                 <div class="fedge"></div>
-                <div class="fnode gate"><span class="fname">IT approval</span></div>
+                <div class="fnode f-gate"><span class="fname">IT approval</span></div>
                 <div class="fedge"></div>
-                <div class="fnode app"><span class="fname">Live</span></div>
+                <div class="fnode f-app"><span class="fname">Live</span></div>
                 <p class="sr-only">Flow: an employee asks for an equipment checkout app; Claude builds it; Beamhall builds and runs a preview; the employee tests it; IT approves the promotion; only then does the app go live.</p>
                 <figcaption>Preview is cheap; promotion to live stays a governed step.</figcaption>
               </figure>
