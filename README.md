@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src=".github/social-card.png" alt="Beamhall — agent-built apps. Self-hosted infrastructure secured." width="820">
+
 # Beamhall
 
 **Agent-built apps, infrastructure included.**
@@ -7,7 +9,7 @@
 _The self-hosted backplane for internal apps your AI agents build — they inherit
 compute, data, secrets, identity, and secure connectivity instead of wiring it._
 
-[Website](https://beamhall.com) · [Security](https://beamhall.com/#security) · [Threat model](docs/threat-model.md) · [Roadmap](https://beamhall.com/#roadmap)
+[Website](https://beamhall.com) · [Security](https://beamhall.com/#security) · [Threat model](docs/threat-model.md) · [Roadmap](https://beamhall.com/#roadmap) · [vs. Dokploy & Coolify](https://beamhall.com/alternatives/beamhall-vs-dokploy-vs-coolify/)
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8.svg)
@@ -78,7 +80,7 @@ handle, never the wiring.
 
 The full, honest treatment — including the **residual risks Beamhall does not
 eliminate** — is in [`docs/threat-model.md`](docs/threat-model.md) and on the
-[website](https://beamhall.com/security/threat-model/).
+[website](https://beamhall.com/#security).
 
 ## Status
 
@@ -87,7 +89,7 @@ including a from-scratch install driven entirely by an agent over MCP, on both t
 hardened `runc` and gVisor `runsc` tiers. Beamhall is **pre-1.0**; the next
 milestone is validation with design-partner deployments. See
 [`docs/STATUS.md`](docs/STATUS.md) for the authoritative status and
-[the roadmap](https://beamhall.com/roadmap/) for what's planned.
+[the roadmap](https://beamhall.com/#roadmap) for what's planned.
 
 ## Build
 
@@ -110,7 +112,8 @@ Integration tests (Docker, root, a hardened runtime) are gated behind
 | [`docs/PLAN.md`](docs/PLAN.md) | The design contract: architecture, security model, scope, decisions. |
 | [`docs/STATUS.md`](docs/STATUS.md) | Living status: what's built, package layout, how to run things. |
 | [`docs/threat-model.md`](docs/threat-model.md) | The security/sign-off artifact: attack → mitigation → residual → test. |
-| [`website/`](website/) | The public site (Astro + Starlight → Cloudflare Pages). |
+| [`website/`](website/) | The public site (Astro → Cloudflare Workers static assets). |
+| [Beamhall vs Dokploy vs Coolify](https://beamhall.com/alternatives/beamhall-vs-dokploy-vs-coolify/) | Where Beamhall sits next to a general-purpose self-hosted PaaS. |
 
 ## Project layout
 
