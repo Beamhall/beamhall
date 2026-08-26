@@ -4,6 +4,7 @@ import FlowDiagram from "../components/FlowDiagram.astro";
 import ArchDiagram from "../components/ArchDiagram.astro";
 import "../styles/terminal.css";
 import { byId, pages, repo } from "../nav";
+import { ogImage, ogImageUrl } from "../seo";
 
 const site = Astro.site?.href.replace(/\/$/, "") ?? "https://beamhall.com";
 const canonical = `${site}/`;
@@ -100,16 +101,16 @@ const jsonLd = {
     <meta property="og:description" content={ogDescription} />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content={`${site}/og.png`} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:type" content="image/png" />
-    <meta property="og:image:alt" content="Beamhall: the self-hosted backplane for agent-built internal apps" />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:image:width" content={String(ogImage.width)} />
+    <meta property="og:image:height" content={String(ogImage.height)} />
+    <meta property="og:image:type" content={ogImage.type} />
+    <meta property="og:image:alt" content={ogImage.alt} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Beamhall: agent-built apps, infrastructure included" />
     <meta name="twitter:description" content={ogDescription} />
-    <meta name="twitter:image" content={`${site}/og.png`} />
-    <meta name="twitter:image:alt" content="Beamhall: the self-hosted backplane for agent-built internal apps" />
+    <meta name="twitter:image" content={ogImageUrl} />
+    <meta name="twitter:image:alt" content={ogImage.alt} />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
     <link rel="alternate" type="text/markdown" title="Beamhall for LLMs (llms.txt)" href="/llms.txt" />

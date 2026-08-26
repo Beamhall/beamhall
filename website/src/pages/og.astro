@@ -1,6 +1,12 @@
 ---
-// Social share card (1200x630). Rendered once to /og.png via headless Chrome
-// (see website/README). Kept as a route so the card is reproducible; noindex.
+// SUPERSEDED — do NOT re-render this over public/og.png.
+//
+// This was the generated share card (1200x630, screenshotted via headless
+// Chrome). The live card is now brand artwork: the master is
+// src/assets/social-share-image.png and the served file is public/og.png.
+// See src/seo.ts for the defaults and the re-derive command.
+//
+// Kept as a noindex route only so the earlier card stays reproducible.
 import { Image } from "astro:assets";
 import logo from "../assets/beamhall-logo.png";
 ---

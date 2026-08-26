@@ -54,7 +54,8 @@ deep-linkable via `#<id>` (e.g. `/#security`).
 Standalone routes are plain Astro pages that import `Sidebar` with
 `mode="links"` and both stylesheets, and put the content inside
 `.term-body > .screen.active > article.article`. They carry their own
-`<title>` / description / keywords / canonical / OG tags and reuse `/og.png`.
+`<title>` / description / keywords / canonical / OG tags, taking the share
+card from `src/seo.ts` (see Social share card below).
 
 Add one to the menu by appending to `pages` in `src/nav.ts` — it renders after
 the screens and keeps the `1`–`N` keyboard numbering (`public/nav.js` follows the
@@ -116,19 +117,30 @@ header back to the HTML page so it never competes with it in search.
 
 ## Social share card (Open Graph)
 
-`public/og.png` (1200×630) is the link-preview image used by WhatsApp, Slack,
-iMessage, Twitter/X, etc. (wired via `og:image` / `twitter:image` in
-`index.astro`). It's rendered from the `/og` route. To regenerate after a brand or
-copy change:
+`public/og.png` (1200×630) is the link-preview image every shared link falls
+back to — Slack, iMessage, WhatsApp, X/Twitter, LinkedIn, Discord, Facebook and
+Google's social preview all read it.
+
+It is **brand artwork, not a generated card.** The full-resolution master is
+`src/assets/social-share-image.png`; the served file is derived from it:
 
 ```sh
-npm run preview &      # serve the built site
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless=new --hide-scrollbars --force-device-scale-factor=1 \
-  --window-size=1200,630 --screenshot=public/og.png http://localhost:4321/og
+node -e "require('sharp')('src/assets/social-share-image.png') \
+  .resize(1200,630,{fit:'cover'}).png({palette:true,effort:10}) \
+  .toFile('public/og.png')"
 ```
 
-Keep it under ~300 KB so WhatsApp shows the large preview.
+Keep it under ~300 KB — several platforms silently skip larger cards (the
+current file is ~250 KB; the palette encode is what gets it there).
+
+Pages never hardcode the path: `src/seo.ts` owns the URL, dimensions, MIME type
+and alt text, and both pages spread it into `og:image` / `twitter:image` and the
+article's JSON-LD. Swapping the card is a one-file change — replace `og.png`
+(and the master) and update `alt` in `src/seo.ts` if the artwork says something
+different.
+
+`src/pages/og.astro` is the **superseded** generated card, kept as a noindex
+route for reproducibility. Do not re-render it over `public/og.png`.
 
 ## Deploy to Cloudflare (Worker, Static Assets)
 

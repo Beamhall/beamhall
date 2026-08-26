@@ -1,6 +1,7 @@
 ---
 import Sidebar from "../../components/Sidebar.astro";
 import { pages, repo } from "../../nav";
+import { ogImage, ogImageUrl } from "../../seo";
 import "../../styles/terminal.css";
 import "../../styles/article.css";
 
@@ -187,9 +188,9 @@ const jsonLd = {
       url: canonical,
       image: {
         "@type": "ImageObject",
-        url: `${site}/og.png`,
-        width: 1200,
-        height: 630,
+        url: ogImageUrl,
+        width: ogImage.width,
+        height: ogImage.height,
       },
       author: { "@type": "Organization", name: "Beamhall", url: `${site}/` },
       publisher: {
@@ -259,16 +260,16 @@ const jsonLd = {
     <meta property="article:author" content="Beamhall" />
     <meta property="article:section" content="Comparisons" />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content={`${site}/og.png`} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:type" content="image/png" />
-    <meta property="og:image:alt" content="Beamhall: the self-hosted backplane for agent-built internal apps" />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:image:width" content={String(ogImage.width)} />
+    <meta property="og:image:height" content={String(ogImage.height)} />
+    <meta property="og:image:type" content={ogImage.type} />
+    <meta property="og:image:alt" content={ogImage.alt} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={metaDescription} />
-    <meta name="twitter:image" content={`${site}/og.png`} />
-    <meta name="twitter:image:alt" content="Beamhall: the self-hosted backplane for agent-built internal apps" />
+    <meta name="twitter:image" content={ogImageUrl} />
+    <meta name="twitter:image:alt" content={ogImage.alt} />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
     <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
     <link rel="alternate" type="text/markdown" title="This article as plain Markdown" href={markdownUrl} />
