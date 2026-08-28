@@ -42,6 +42,13 @@ plus the `bh-smoke-beam` test image.
 - Keep the two stable seams stable: the `RuntimeDriver` interface and the MCP tool
   contract (PLAN §5.3, §5.7). Runtime is Docker-only behind the driver; gVisor
   `runsc` is a `runtime_class`, not a new driver (PLAN §3).
+- **Code comments: MINIMAL, and only for what the code cannot say.** A comment
+  exists solely to explain something not obvious from reading the code (an
+  invariant, a constraint, a non-obvious "why"). Never put process breadcrumbs in
+  code: no references to code reviews, review-finding IDs, bug-fix reports,
+  pending tasks, TODOs, or internal docs (`local-docs/`, security reviews,
+  STATUS). Test comments describe the failure scenario being guarded, not the
+  review that found it. Tracking belongs in `local-docs/`, not in the source.
 
 ## MCP tool copy is the agent's only manual — REQUIRED
 The operator/builder talks to Beamhall through an AI agent that sees **only** the

@@ -57,6 +57,9 @@ A PR that quietly widens the agent's blast radius will not be merged.
 
 - Write code that reads like the surrounding code — match the existing naming,
   structure, and comment density.
+- Keep comments minimal: a comment only earns its place by explaining something
+  the code cannot say (an invariant, a non-obvious "why"). Don't reference
+  reviews, issue numbers, or pending work in code comments.
 - Keep the documentation current. A change isn't complete until the relevant doc
   reflects it:
   - `docs/PLAN.md` — design/scope changes.
