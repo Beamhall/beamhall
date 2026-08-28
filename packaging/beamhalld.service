@@ -71,8 +71,11 @@ RestrictRealtime=true
 LockPersonality=true
 RemoveIPC=true
 ReadWritePaths=/var/lib/beamhall
-# The Docker sockets beamhalld talks to (runtime + the non-remapped build daemon).
-ReadWritePaths=/run/docker.sock /run/docker-build.sock
+# The Docker sockets beamhalld talks to (runtime + the non-remapped build
+# daemon). '-' = ignore if absent: with ProtectSystem=strict a missing listed
+# path is otherwise a hard namespace failure, and not every install runs a
+# separate build-daemon socket.
+ReadWritePaths=-/run/docker.sock -/run/docker-build.sock
 # Resource ceilings for the appliance process itself.
 LimitNOFILE=1048576
 
