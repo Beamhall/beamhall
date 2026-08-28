@@ -4,8 +4,7 @@
 // tarball) to a commit SHA, and Cloud Native Buildpacks builds executed
 // against a separate non-userns-remapped build context that --publish to the
 // appliance's internal registry. The runtime daemon never builds; it pulls
-// the pinned digest and runs it (lab-verified constraint,
-// docs/lab-phase0-validation.md).
+// the pinned digest and runs it (lab-verified constraint).
 package build
 
 import (

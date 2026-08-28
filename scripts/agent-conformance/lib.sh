@@ -4,11 +4,15 @@
 
 set -euo pipefail
 
-# --- appliance + endpoints (override APPLIANCE for a different target) -------
-APPLIANCE="${BEAMHALL_APPLIANCE:-root@10.255.255.153}"
+# --- appliance + endpoints ---------------------------------------------------
+# BEAMHALL_APPLIANCE (ssh target, e.g. root@<appliance-ip>) and BH_CA (path to
+# the gateway CA cert on this machine) are deployment-specific: set them in the
+# environment or in the gitignored .env alongside this script.
+APPLIANCE="${BEAMHALL_APPLIANCE:-${BEAMHALL_TEST_HOST:+root@$BEAMHALL_TEST_HOST}}"
+[ -n "$APPLIANCE" ] || { echo "set BEAMHALL_APPLIANCE (ssh target, e.g. root@<appliance-ip>) or BEAMHALL_TEST_HOST" >&2; exit 1; }
 ISSUER="${BH_ISSUER:-https://idp.beamhall.internal/realms/beamhall}"
 MCP_URL="${BH_MCP_URL:-https://beamhall.internal/mcp}"
-CA="${BH_CA:-/Users/mmachado/Scratch/.beamhall-gateway-ca.crt}"
+CA="${BH_CA:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/gateway-ca.crt}"
 ENVFILE_REMOTE="/etc/beamhall/beamhall.env"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"

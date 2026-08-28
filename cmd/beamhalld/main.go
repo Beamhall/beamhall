@@ -463,7 +463,7 @@ func run() error {
 		// Tampering is surfaced loudly but does not brick the appliance: new
 		// events still chain onto the current head, and the violations stay
 		// on record here. Whether boot should hard-fail instead is an open
-		// decision (docs/STATUS.md).
+		// decision.
 		for _, is := range issues {
 			logger.Error("audit chain integrity violation", "seq", is.Seq, "reason", is.Reason)
 		}

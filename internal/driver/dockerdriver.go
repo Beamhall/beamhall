@@ -28,7 +28,7 @@ import (
 // images. Buildpack builds must run in a separate, non-userns-remapped context
 // and publish the pinned image to the internal registry; the runtime daemon
 // only pulls and runs it. This is a lab-verified constraint — see
-// docs/lab-phase0-validation.md and docs/PLAN.md §4/§8.
+// docs/PLAN.md §4/§8.
 var ErrBuildUnsupported = errors.New("docker driver does not build images; builds run in a separate non-remapped context")
 
 const (

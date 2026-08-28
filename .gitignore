@@ -19,6 +19,13 @@ go.work.sum
 .env
 .env.*
 
+# Maintainer-local docs (status, lab evidence, security reviews, business notes)
+/local-docs/
+CLAUDE.local.md
+
+# Agent-conformance: machine-local gateway CA (fetched from your appliance)
+scripts/agent-conformance/gateway-ca.crt
+
 # Python (agent-conformance tooling)
 __pycache__/
 *.pyc
@@ -30,7 +37,6 @@ __pycache__/
 *.swp
 dist/
 /bh-devidp
-beamhall_business_idea_mvp.md
 
 # Release pipeline: notes extracted from CHANGELOG at release time (release.yml).
 # Untracked, must be ignored so GoReleaser's git-clean check does not abort.

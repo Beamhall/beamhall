@@ -62,11 +62,13 @@ scripts/agent-conformance/provision.sh
 scripts/agent-conformance/verify.sh
 ```
 
-`provision.sh` requires: SSH to the appliance (`root@10.255.255.153`, override with
-`BEAMHALL_APPLIANCE`), and the gateway CA on the Mac (`BH_CA`, default
-`/Users/mmachado/Scratch/.beamhall-gateway-ca.crt`). Passwords are generated on the
-appliance and returned over the encrypted SSH channel into the local gitignored
-`.env` only.
+`provision.sh` requires SSH to the appliance (`BEAMHALL_APPLIANCE`, an ssh
+target like `root@<appliance-ip>`, or just `BEAMHALL_TEST_HOST` with the
+address). Passwords are generated on the appliance and returned over the
+encrypted SSH channel into the local gitignored `.env` only, and the appliance's
+gateway CA — generated at install time by the gateway's internal PKI, never
+shipped in the repo — is fetched into the gitignored default `BH_CA` path
+(`scripts/agent-conformance/gateway-ca.crt`) so the proxies can verify TLS.
 
 ## Driving the suite — two ways
 
@@ -171,7 +173,7 @@ over MCP as a persona.
 For OS-level separation or to run the four personas as fully parallel real
 clients, each proxy can run inside its own Apple `container` Linux VM (installed,
 v1.0.0). Cost: each container has its own network namespace, so it needs
-`10.255.255.153 beamhall.internal idp.beamhall.internal` injected (its `/etc/hosts`
+`<appliance-ip> beamhall.internal idp.beamhall.internal` injected (its `/etc/hosts`
 or the lab resolver) and the gateway CA mounted + trusted inside. Since isolation
 is already enforced server-side by token identity, this is a hardening/parallelism
 tier only — the native multi-proxy suite is the primary path. A future

@@ -14,8 +14,9 @@ set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || { echo "must run as root (use sudo)"; exit 1; }
 
-# Who should get docker-group + own the daemon? The sudo invoker, else 'mmachado'.
-TARGET_USER="${SUDO_USER:-mmachado}"
+# Who should get docker-group + own the daemon? The sudo invoker (override with
+# BEAMHALL_BOOTSTRAP_USER; empty when run directly as root → group-add skipped).
+TARGET_USER="${BEAMHALL_BOOTSTRAP_USER:-${SUDO_USER:-}}"
 ARCH="$(uname -m)"
 log() { printf '\n\033[1;36m== %s\033[0m\n' "$1"; }
 
@@ -68,10 +69,14 @@ echo -n "security: "; docker info --format '{{range .SecurityOptions}}{{.}} {{en
 echo -n "runtimes: "; docker info --format '{{range $k,$v := .Runtimes}}{{$k}} {{end}}'; echo
 grep -qE '^dockremap:' /etc/subuid && echo "subuid: dockremap range present" || echo "subuid: MISSING dockremap"
 
-log "5/6 Add ${TARGET_USER} to the docker group"
+log "5/6 Add ${TARGET_USER:-<none>} to the docker group"
 groupadd -f docker
-usermod -aG docker "${TARGET_USER}"
-echo "added ${TARGET_USER} to docker group (effective on next login)"
+if [ -n "${TARGET_USER}" ]; then
+  usermod -aG docker "${TARGET_USER}"
+  echo "added ${TARGET_USER} to docker group (effective on next login)"
+else
+  echo "no non-root invoker detected (set BEAMHALL_BOOTSTRAP_USER to add one); skipped"
+fi
 
 log "6/6 Install pack CLI (Cloud Native Buildpacks), best-effort"
 if ! command -v pack >/dev/null 2>&1; then

@@ -87,8 +87,8 @@ eliminate** — is in [`docs/threat-model.md`](docs/threat-model.md) and on the
 The entire MUST-HAVE security surface is **built and validated end-to-end**,
 including a from-scratch install driven entirely by an agent over MCP, on both the
 hardened `runc` and gVisor `runsc` tiers. Beamhall is **pre-1.0**; the next
-milestone is validation with design-partner deployments. See
-[`docs/STATUS.md`](docs/STATUS.md) for the authoritative status and
+milestone is validation with design-partner deployments. See the
+[`CHANGELOG`](CHANGELOG.md) for what has shipped and
 [the roadmap](https://beamhall.com/#roadmap) for what's planned.
 
 ## Build
@@ -102,15 +102,14 @@ go test -race ./...
 ```
 
 Integration tests (Docker, root, a hardened runtime) are gated behind
-`BEAMHALL_DOCKER_IT=1` and run against a Linux test appliance — see
-[`docs/STATUS.md`](docs/STATUS.md).
+`BEAMHALL_DOCKER_IT=1` and run against a Linux test appliance — see each
+`*_integration_test.go` header and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Documentation
 
 | Doc | What it is |
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | The design contract: architecture, security model, scope, decisions. |
-| [`docs/STATUS.md`](docs/STATUS.md) | Living status: what's built, package layout, how to run things. |
 | [`docs/threat-model.md`](docs/threat-model.md) | The security/sign-off artifact: attack → mitigation → residual → test. |
 | [`website/`](website/) | The public site (Astro → Cloudflare Workers static assets). |
 | [Beamhall vs Dokploy vs Coolify](https://beamhall.com/alternatives/beamhall-vs-dokploy-vs-coolify/) | Where Beamhall sits next to a general-purpose self-hosted PaaS. |
@@ -136,7 +135,7 @@ internal/mcp/       agent-facing MCP server (the fixed tool surface)
 internal/web/       IT Admin console (OIDC)
 internal/gitserver/ git smart-HTTP push transport
 website/            marketing + documentation site
-docs/               PLAN.md, STATUS.md, threat-model.md, and more
+docs/               PLAN.md, threat-model.md, getting-started.md, and more
 ```
 
 ## Contributing

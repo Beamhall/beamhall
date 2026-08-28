@@ -12,7 +12,9 @@
 #
 # The heavy lifting runs on the appliance (Keycloak is loopback-only there);
 # generated passwords come back over the encrypted SSH channel and are written
-# only to the local gitignored .env — never to a file on the appliance.
+# only to the local gitignored .env — never to a file on the appliance. It also
+# fetches the appliance's install-generated gateway CA into the local gitignored
+# gateway-ca.crt so the proxies can verify TLS (nothing cert-like is shipped).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -103,6 +105,23 @@ umask 077
 } > "$ENV_LOCAL"
 chmod 600 "$ENV_LOCAL"
 ok "wrote $n credentials to $ENV_LOCAL (chmod 600, gitignored)"
+
+# Fetch this appliance's gateway CA (generated at install time by Caddy's
+# internal PKI, trusted on the appliance by install.sh) into the local
+# gitignored path the proxies/scripts default to ($CA, see lib.sh). Idempotent:
+# re-running just refreshes the copy.
+CA_REMOTE=/usr/local/share/ca-certificates/beamhall-gateway-ca.crt
+if "${SSH[@]}" cat "$CA_REMOTE" > "$CA.tmp" 2>/dev/null && [ -s "$CA.tmp" ]; then
+  mv "$CA.tmp" "$CA"
+  ok "fetched the gateway CA to $CA (gitignored)"
+else
+  rm -f "$CA.tmp"
+  if [ -s "$CA" ]; then
+    warn "could not fetch $CA_REMOTE from the appliance — keeping the existing $CA"
+  else
+    die "no gateway CA at $CA_REMOTE on the appliance (non-internal TLS install?) and no local $CA — set BH_CA to your CA bundle"
+  fi
+fi
 
 say "Verifying token elevation (admins see admin_*, builders don't) …"
 "$HERE/verify.sh" || die "verification failed — see above"

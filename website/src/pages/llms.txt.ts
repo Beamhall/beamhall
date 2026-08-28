@@ -49,7 +49,7 @@ A "beamhall" is a workspace. The agent-facing control surface is MCP.
 - [Source repository](https://github.com/Beamhall/beamhall): the Go implementation, Apache-2.0.
 - [Threat model](https://github.com/Beamhall/beamhall/blob/main/docs/threat-model.md): the security document; every mitigation cites a test or a lab finding.
 - [Design plan](https://github.com/Beamhall/beamhall/blob/main/docs/PLAN.md): architecture, security model, scope and locked decisions.
-- [Project status](https://github.com/Beamhall/beamhall/blob/main/docs/STATUS.md): what is done and what is next.
+- [Changelog](https://github.com/Beamhall/beamhall/blob/main/CHANGELOG.md): what shipped in each release.
 
 ## Optional
 

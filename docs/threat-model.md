@@ -6,7 +6,7 @@ and — explicitly — the residual risk it does not eliminate. The honesty here
 deliberate: it is the artifact a security team signs off on (PLAN §8 Phase 0
 gate), and every mitigation below is exercised by an automated test (the
 negative-security suite, `internal/e2e/TestAgentCannot`) or verified on the lab
-appliance (`docs/lab-phase0-validation.md`).
+appliance (the maintainer's lab-validation record; available on request).
 
 Status: the entire MUST-HAVE security surface is built and lab-verified. The one
 decision this document supports is whether **hardened-Docker default + the
@@ -132,8 +132,8 @@ out-of-band key → restore → **byte-identical** key → a vault-sealed DB cre
 still decrypts and works). It also caught and fixed a genuine regulated-tier gap
 invisible to unit tests: gVisor cannot reach Docker's embedded DNS, so
 managed-database reachability is now provided by injected `/etc/hosts` entries
-rather than name resolution. Full reproducible record:
-`docs/lab-phase0-validation.md`.
+rather than name resolution. The full reproducible record is kept in the
+maintainer's lab-validation notes (available on request).
 
 ## 6. Threat model (attack → mitigation → residual → upgrade path)
 

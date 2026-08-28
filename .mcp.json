@@ -9,7 +9,7 @@
         "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
         "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
         "BH_MCP_URL": "https://beamhall.internal/mcp",
-        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+        "BH_CA": "scripts/agent-conformance/gateway-ca.crt"
       }
     },
     "bh-admin-bob": {
@@ -21,7 +21,7 @@
         "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
         "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
         "BH_MCP_URL": "https://beamhall.internal/mcp",
-        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+        "BH_CA": "scripts/agent-conformance/gateway-ca.crt"
       }
     },
     "bh-builder-carol": {
@@ -33,7 +33,7 @@
         "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
         "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
         "BH_MCP_URL": "https://beamhall.internal/mcp",
-        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+        "BH_CA": "scripts/agent-conformance/gateway-ca.crt"
       }
     },
     "bh-builder-dave": {
@@ -45,7 +45,7 @@
         "BH_SCOPE": "beamhall-audience beamhalls:read beams:write beams:deploy beams:operate beams:promote secrets:write resources:write logs:read metrics:read",
         "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
         "BH_MCP_URL": "https://beamhall.internal/mcp",
-        "BH_CA": "/Users/mmachado/Scratch/.beamhall-gateway-ca.crt"
+        "BH_CA": "scripts/agent-conformance/gateway-ca.crt"
       }
     }
   }

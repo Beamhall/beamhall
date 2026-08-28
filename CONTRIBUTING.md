@@ -34,8 +34,10 @@ gofmt -l .   # must print nothing (excluding generated code under internal/store
 
 Some tests are **integration tests** that require a Linux host with Docker, root,
 and a hardened runtime. They are gated behind `BEAMHALL_DOCKER_IT=1` and are not
-run by the default `go test`. See `docs/STATUS.md` for how they are run against a
-test appliance. A unit-test-only change does not need them, but a change to the
+run by the default `go test`. Each `*_integration_test.go` header documents how it
+is run against a test appliance (cross-compile `GOOS=linux GOARCH=amd64 go test -c`,
+copy to the appliance, run as root with `BEAMHALL_DOCKER_IT=1`).
+A unit-test-only change does not need them, but a change to the
 driver, egress, gateway, or end-to-end flow does.
 
 ## The two stable seams — handle with care
@@ -57,8 +59,6 @@ A PR that quietly widens the agent's blast radius will not be merged.
   structure, and comment density.
 - Keep the documentation current. A change isn't complete until the relevant doc
   reflects it:
-  - `docs/STATUS.md` — status, package layout, decisions (read first by the next
-    contributor).
   - `docs/PLAN.md` — design/scope changes.
   - `docs/threat-model.md` — any change touching the security posture, with the
     mitigation cited to a test.

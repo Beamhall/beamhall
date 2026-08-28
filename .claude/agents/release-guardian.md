@@ -22,7 +22,7 @@ authoritative procedure** — read the repo files for current state, execute fro
 - **`CHANGELOG.md` is the single source of truth for release notes** (the release
   workflow extracts the tag's section as the GitHub Release body).
 - **Appliance-touching features must be lab-verified** before release (see
-  `docs/lab-phase0-validation.md`); a half-finished feature stays on `main`
+  `local-docs/lab-phase0-validation.md`); a half-finished feature stays on `main`
   untagged until done — never tag a partial feature.
 - Repo conventions: feature/release branch → `git merge --ff-only` into `main` →
   push; **no PRs**. Commit email `marcosmachado@gmail.com`. **No AI attribution**
@@ -65,7 +65,8 @@ change; cite `PLAN §x` where useful.
 4. **Website sync** — hand off to the **website-steward** agent (or do it if
    trivial): flip any shipped `(coming)` flag, bump version/install references.
    Don't let the site claim a just-shipped feature is still "coming."
-5. Sanity: `docs/STATUS.md`, `docs/PLAN.md`, `docs/lab-phase0-validation.md` current.
+5. Sanity: `local-docs/STATUS.md`, `docs/PLAN.md`,
+   `local-docs/lab-phase0-validation.md` current.
 6. Commit on a branch, ff-merge to `main`, push:
    `git checkout -b release-vX.Y.Z` → `git add -A` →
    `git -c user.email=marcosmachado@gmail.com commit -m "release: vX.Y.Z"` →
