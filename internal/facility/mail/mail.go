@@ -48,6 +48,11 @@ var (
 	ErrUnknownBeam = errors.New("mail: beam not registered for email")
 	// ErrRateLimited means the beam exceeded its per-beam send rate.
 	ErrRateLimited = errors.New("mail: rate limit exceeded")
+	// ErrHeaderFromNotPermitted means the DATA From: header names an address
+	// the allowlist forbids. The envelope MAIL FROM alone is not the identity
+	// recipients see, so this closes the header-spoofing gap the envelope-only
+	// check leaves open.
+	ErrHeaderFromNotPermitted = errors.New("mail: header From not permitted")
 )
 
 // ProviderConfig is the south-side smarthost the relay forwards to. One
@@ -413,10 +418,15 @@ func (p *Provisioner) emit(ev Event) {
 	}
 }
 
-// deliver enforces the rate limit, forwards to the south side, and audits.
-// Returns nil on success, ErrRateLimited, ErrNotEnabled, or a wrapped upstream
-// error; relay.go maps these to SMTP reply codes. The sender allowlist is
-// enforced earlier (at MAIL FROM) so a rejected sender never spends a token.
+// deliver checks the DATA From: header against the allowlist, enforces the
+// rate limit, forwards to the south side, and audits. Returns nil on success,
+// ErrHeaderFromNotPermitted, ErrRateLimited, ErrNotEnabled, or a wrapped
+// upstream error; relay.go maps these to SMTP reply codes. The envelope
+// sender allowlist is enforced earlier (at MAIL FROM) so a rejected envelope
+// sender never reaches here; the header check below closes the companion gap
+// where the envelope passes but the visible From: header spoofs an address
+// the allowlist would never permit.
+// Both checks run before the rate limiter so a rejected send never spends a token.
 func (p *Provisioner) deliver(reg *registration, from string, to []string, data []byte) error {
 	ev := Event{
 		BeamID: reg.beamID,
@@ -425,6 +435,13 @@ func (p *Provisioner) deliver(reg *registration, from string, to []string, data 
 		Size:   len(data),
 	}
 	ev.Subject, ev.MessageID = parseHeaders(data)
+
+	if !headerFromAllowed(data, reg.allowedSnapshot()) {
+		ev.Result = "rejected"
+		ev.Err = "header From not permitted"
+		p.emit(ev)
+		return ErrHeaderFromNotPermitted
+	}
 
 	if !reg.limiter.Allow() {
 		ev.Result = "rejected"
@@ -459,6 +476,28 @@ func (p *Provisioner) deliver(reg *registration, from string, to []string, data 
 
 // beamUsername is the stable per-beam SMTP username (injected as SMTP_USER).
 func beamUsername(beamID string) string { return "beam-" + beamID }
+
+// headerFromAllowed reports whether every address in the DATA From: header is
+// permitted by allowed, using the same rules as senderAllowed. A missing,
+// empty, or unparseable From: header is rejected (fail closed) — recipients
+// see this header, not the envelope sender, so it must be held to the same
+// allowlist the envelope is.
+func headerFromAllowed(data []byte, allowed []string) bool {
+	m, err := netmail.ReadMessage(bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	addrs, err := m.Header.AddressList("From")
+	if err != nil || len(addrs) == 0 {
+		return false
+	}
+	for _, a := range addrs {
+		if !senderAllowed(a.Address, allowed) {
+			return false
+		}
+	}
+	return true
+}
 
 // senderAllowed reports whether the envelope sender is permitted. allowed
 // entries may be a full address ("noreply@x.com"), a domain ("x.com"), or a

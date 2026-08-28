@@ -12,6 +12,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/driver"
 	"github.com/Beamhall/beamhall/internal/gateway"
 	"github.com/Beamhall/beamhall/internal/policy"
+	"github.com/Beamhall/beamhall/internal/store"
 )
 
 // CreateBeam registers a new Beam in a Beamhall (no workload yet). The slug
@@ -43,7 +44,19 @@ func (o *Orchestrator) CreateBeam(ctx context.Context, actor Actor, beamhallID d
 			PreviewPauseAfter: o.defaultPauseAfter,
 			CreatedBy:         actor.ID,
 		}
-		if err := o.st.CreateBeam(ctx, beam); err != nil {
+		// Atomic count+insert (not a separate CheckBeamQuota-then-CreateBeam):
+		// two concurrent create_beam calls could otherwise each pass the
+		// pre-check above and together exceed max_beams.
+		if err := o.st.CreateBeamWithQuota(ctx, beam, bh.Quota.MaxBeams); err != nil {
+			if errors.Is(err, store.ErrQuota) {
+				// The pre-check above passed but a concurrent create_beam won
+				// the race — surface the same friendly QuotaError shape it
+				// would have produced had it run after the race instead of
+				// before.
+				if qerr := o.pep.CheckBeamQuota(ctx, bh); qerr != nil {
+					return nil, qerr
+				}
+			}
 			return nil, err
 		}
 		return beam, nil
@@ -179,6 +192,13 @@ func (o *Orchestrator) DeployBeamFromGit(ctx context.Context, actor Actor, beamh
 }
 
 func (o *Orchestrator) deploy(ctx context.Context, beamhallID, beamID domain.ID, step buildStep) (*domain.Beam, error) {
+	// Serialize against any other deploy/promote/rollback/destroy on this beam:
+	// without this, a concurrent destroy can archive the beam and reclaim
+	// its resources while a slow build is still in flight, and the deploy's
+	// stale in-memory copy then overwrites Status back to "active" on finalize.
+	unlock := o.beamLocks.lock(beamID)
+	defer unlock()
+
 	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return nil, err
@@ -254,6 +274,17 @@ func (o *Orchestrator) deploy(ctx context.Context, beamhallID, beamID domain.ID,
 	if err := o.st.ActivateRelease(ctx, rel.ID); err != nil {
 		return nil, err
 	}
+	// Point the beam at the new release BEFORE retiring the predecessor, and
+	// persist it immediately: if anything after this fails (route mint,
+	// pause-arm, or another store write inside finalizeActiveRelease), the
+	// beam still correctly points at the running, active release rather than
+	// a now-destroyed one.
+	// finalizeActiveRelease sets the same field again (harmless) alongside
+	// PreviewHost/DesiredReleaseID/ResumedAt once those are known.
+	beam.CurrentReleaseID = rel.ID
+	if err := o.st.UpdateBeam(ctx, &beam); err != nil {
+		return nil, err
+	}
 	if prevRelease != "" {
 		if err := o.retireRelease(ctx, prevRelease, domain.ReleaseSuperseded); err != nil {
 			o.log.Warn("retiring previous release failed", "release", prevRelease, "err", err)
@@ -296,6 +327,27 @@ func (o *Orchestrator) spawnWorkload(ctx context.Context, beamhallID, beamID, re
 	if err != nil {
 		return driver.Status{}, err
 	}
+	// From here on a container exists, with its secrets already staged — any
+	// early return below must tear it down, or a failed bring-up (egress
+	// assert, store write, start failure, crash-on-boot, or the caller's own
+	// ctx being cancelled mid-poll in awaitStartup) leaks it and its staged
+	// secret files with nothing left referencing them to ever clean up.
+	// Uses a fresh background context with its own timeout: the triggering
+	// ctx may itself be the thing that got cancelled.
+	needsCleanup := true
+	defer func() {
+		if !needsCleanup {
+			return
+		}
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := o.drv.Stop(cctx, h, 0); err != nil {
+			o.log.Warn("cleanup: stop workload after failed bring-up", "ref", h.Ref, "err", err)
+		}
+		if err := o.drv.Destroy(cctx, h); err != nil {
+			o.log.Warn("cleanup: destroy workload after failed bring-up", "ref", h.Ref, "err", err)
+		}
+	}()
 	// The per-Beamhall bridge now exists — assert its egress policy BEFORE
 	// the workload starts (fail-closed).
 	if o.egressSync != nil {
@@ -309,7 +361,12 @@ func (o *Orchestrator) spawnWorkload(ctx context.Context, beamhallID, beamID, re
 	if err := o.drv.Start(ctx, h); err != nil {
 		return driver.Status{}, err
 	}
-	return o.awaitStartup(ctx, beamhallID, beamID, h)
+	status, err := o.awaitStartup(ctx, beamhallID, beamID, h)
+	if err != nil {
+		return driver.Status{}, err
+	}
+	needsCleanup = false
+	return status, nil
 }
 
 // finalizeActiveRelease mints the preview channel's route, points the Beam at
@@ -461,12 +518,19 @@ func (o *Orchestrator) mintRoute(ctx context.Context, beam *domain.Beam, relID d
 // beamhall-wide. ChannelShared secrets (user- and beamhall-set) inject into both
 // channels; channel-specific secrets (database DSNs) inject only into their own
 // channel, so the same app key (e.g. MAIN_URL) resolves to that channel's DSN.
+// Deduped by Key: every ref mounts to /run/secrets/<key> regardless of
+// channel, so a shared and a channel-specific secret sharing a key would
+// otherwise produce two mounts at the identical target path — Docker rejects
+// that as a duplicate mount, failing every subsequent deploy with no
+// delete_secret tool to recover. The
+// channel-specific one wins.
 func (o *Orchestrator) secretRefs(ctx context.Context, beamhallID, beamID domain.ID, ch domain.Channel) ([]domain.SecretRef, error) {
 	metas, err := o.st.ListSecretsByBeamhall(ctx, beamhallID)
 	if err != nil {
 		return nil, err
 	}
 	refs := make([]domain.SecretRef, 0, len(metas))
+	idxByKey := make(map[string]int, len(metas))
 	for _, m := range metas {
 		if m.BeamID != "" && m.BeamID != beamID {
 			continue
@@ -474,7 +538,15 @@ func (o *Orchestrator) secretRefs(ctx context.Context, beamhallID, beamID domain
 		if m.Channel != domain.ChannelShared && m.Channel != ch {
 			continue
 		}
-		refs = append(refs, domain.SecretRef{BeamhallID: m.BeamhallID, BeamID: m.BeamID, Key: m.Key, Channel: m.Channel})
+		ref := domain.SecretRef{BeamhallID: m.BeamhallID, BeamID: m.BeamID, Key: m.Key, Channel: m.Channel}
+		if i, ok := idxByKey[m.Key]; ok {
+			if refs[i].Channel == domain.ChannelShared && ref.Channel != domain.ChannelShared {
+				refs[i] = ref
+			}
+			continue
+		}
+		idxByKey[m.Key] = len(refs)
+		refs = append(refs, ref)
 	}
 	return refs, nil
 }

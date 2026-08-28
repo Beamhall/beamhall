@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -67,6 +68,87 @@ func TestUpsertAndRetireReconcileCaddy(t *testing.T) {
 	}
 	if srv := last().Apps.HTTP.Servers["beamhall"]; len(srv.Routes) != 0 {
 		t.Fatalf("route not retired: %+v", srv.Routes)
+	}
+}
+
+// TestBeamRouteCannotShadowStaticHost is a regression test:
+// a beam must never be able to
+// claim a static (bundled infrastructure, e.g. the bundled Keycloak IdP)
+// hostname — Upsert must refuse it outright, render must resolve any
+// residual clash in the static route's favor, and AskHandler must keep
+// authorizing on-demand TLS for it.
+func TestBeamRouteCannotShadowStaticHost(t *testing.T) {
+	url, last := captureCaddy(t)
+	g := New(WithAdminURL(url), WithAskEndpoint("http://localhost:2099/ask"),
+		WithStaticRoute("idp.wc.local", "172.18.0.2:8080"))
+
+	err := g.Upsert(context.Background(), Route{Hostname: "idp.wc.local", BackendAddr: "172.18.0.9:9999", Kind: Live})
+	if err == nil {
+		t.Fatal("beam route claiming a static hostname was accepted")
+	}
+
+	// Caddy must still be routing the static backend, not the attempted beam one.
+	cfg := last()
+	if cfg == nil {
+		// Upsert's own guard fires before ever calling load, in which case
+		// Apply must still render the static route correctly.
+		if err := g.Apply(context.Background()); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		cfg = last()
+	}
+	srv, ok := cfg.Apps.HTTP.Servers["beamhall"]
+	if !ok || len(srv.Routes) != 1 {
+		t.Fatalf("expected exactly 1 route (the static one), got %+v", srv.Routes)
+	}
+	if srv.Routes[0].Handle[0].Upstreams[0].Dial != "172.18.0.2:8080" {
+		t.Fatalf("static route was shadowed: %+v", srv.Routes[0])
+	}
+
+	// On-demand TLS must still authorize the static host.
+	req := httptest.NewRequest(http.MethodGet, "/ask?domain=idp.wc.local", nil)
+	rec := httptest.NewRecorder()
+	g.AskHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ask for static host = %d, want 200", rec.Code)
+	}
+}
+
+// TestRetireKeepsRouteOnFailedLoad is a regression test:
+// a failed Caddy
+// reconcile during Retire must not leave the in-memory route set (and hence
+// whatever a caller persists from it) claiming the route is gone while Caddy
+// itself is still actually serving it — that disagreement is what lets a
+// "retired" route resurrect on the next boot restore.
+func TestRetireKeepsRouteOnFailedLoad(t *testing.T) {
+	var fail atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			http.Error(w, "caddy admin API unreachable", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	g := New(WithAdminURL(srv.URL), WithAskEndpoint("http://localhost:2099/ask"))
+
+	if err := g.Upsert(context.Background(), Route{Hostname: "beam.ops.wc.local", BackendAddr: "172.18.0.2:8080", Kind: Live}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	fail.Store(true)
+	if err := g.Retire(context.Background(), "beam.ops.wc.local"); err == nil {
+		t.Fatal("expected Retire to fail (caddy rejected the load)")
+	}
+
+	found := false
+	for _, r := range g.Snapshot() {
+		if r.Hostname == "beam.ops.wc.local" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("route removed from in-memory state despite the failed Caddy reconcile — memory and Caddy now disagree")
 	}
 }
 

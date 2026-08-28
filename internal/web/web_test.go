@@ -33,12 +33,13 @@ const (
 // fakeIdP implements the slice of OIDC the console uses: discovery, authorize
 // (auto-consent, issues a code), token (code → access token), and JWKS.
 type fakeIdP struct {
-	t       *testing.T
-	key     *rsa.PrivateKey
-	srv     *httptest.Server
-	scopes  string // scopes granted to the next issued token
-	subject string
-	email   string
+	t        *testing.T
+	key      *rsa.PrivateKey
+	srv      *httptest.Server
+	scopes   string // scopes granted to the next issued token
+	subject  string
+	email    string
+	tokenTTL time.Duration // access-token lifetime; defaults to 1h in mint()
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -88,9 +89,13 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 }
 
 func (i *fakeIdP) mint() string {
+	ttl := i.tokenTTL
+	if ttl == 0 {
+		ttl = time.Hour
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss": i.srv.URL, "aud": testIssuerAud, "sub": i.subject, "email": i.email,
-		"scope": i.scopes, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
+		"scope": i.scopes, "iat": time.Now().Unix(), "exp": time.Now().Add(ttl).Unix(),
 	})
 	tok.Header["kid"] = "k1"
 	s, err := tok.SignedString(i.key)
@@ -167,6 +172,44 @@ func TestLoginFlowAndDashboard(t *testing.T) {
 	}
 	if !strings.Contains(body, "it@acme.test") {
 		t.Errorf("operator email not shown")
+	}
+}
+
+// TestSessionCappedAtAccessTokenExpiry is a regression test:
+// the
+// session cookie must not outlive the access token that minted it — a
+// short-lived token (simulating the common OIDC case, and the case where the
+// admin's admin:it grant is revoked and the token simply isn't renewed) must
+// leave the console session expired well before the flat 8h SessionTTL would
+// have, not usable for the full default window regardless of the token.
+func TestSessionCappedAtAccessTokenExpiry(t *testing.T) {
+	idp := newFakeIdP(t)
+	idp.tokenTTL = 2 * time.Second
+	srv, _ := newTestServer(t, idp)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	client := loginClient(t, ts)
+	resp, err := client.Get(ts.URL + "/admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("immediately after login: HTTP %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	time.Sleep(3 * time.Second) // past the 2s token TTL, nowhere near the 8h SessionTTL
+
+	resp, err = client.Get(ts.URL + "/admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// The client follows the redirect to /admin/login automatically (default
+	// CheckRedirect), so the final response is the login page, not /admin.
+	if u := resp.Request.URL.Path; u != "/admin/login" {
+		t.Fatalf("after the access token's own expiry, session still valid at %s (want redirected to /admin/login)", u)
 	}
 }
 
@@ -276,6 +319,160 @@ func TestCSRFRequired(t *testing.T) {
 	}
 	if _, err := st.GetBeamhallBySlug(context.Background(), "nope"); err == nil {
 		t.Fatal("beamhall created despite missing CSRF")
+	}
+}
+
+// TestCSRFTokenIsPerSessionNotStatic proves the fix: the CSRF token must
+// not be a static value derived only from the operator's subject (the same
+// admin logging in twice would otherwise always get the same token, and one
+// session's token would work for another). Two independent logins for the
+// same subject must get different tokens, and a token minted for one session
+// must be rejected on the other.
+func TestCSRFTokenIsPerSessionNotStatic(t *testing.T) {
+	idp := newFakeIdP(t)
+	srv, st := newTestServer(t, idp)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	clientA := loginClient(t, ts)
+	clientB := loginClient(t, ts) // same fixed subject as clientA — a second, independent session
+
+	csrfA := csrfFromDashboard(t, clientA, ts)
+	csrfB := csrfFromDashboard(t, clientB, ts)
+	if csrfA == csrfB {
+		t.Fatal("two independent sessions for the same subject got the same CSRF token")
+	}
+
+	// Session A's own token works for session A.
+	post(t, clientA, ts.URL+"/admin/beamhalls", url.Values{"csrf": {csrfA},
+		"slug": {"team-a"}, "display_name": {"A"}, "runtime_class": {"runc"},
+		"live_slots": {"1"}, "max_beams": {"5"}, "max_db": {"1"}})
+	if _, err := st.GetBeamhallBySlug(context.Background(), "team-a"); err != nil {
+		t.Fatalf("session A's own CSRF token was rejected: %v", err)
+	}
+
+	// Session A's token replayed against session B must be rejected.
+	resp := post(t, clientB, ts.URL+"/admin/beamhalls", url.Values{"csrf": {csrfA},
+		"slug": {"team-b"}, "display_name": {"B"}, "runtime_class": {"runc"},
+		"live_slots": {"1"}, "max_beams": {"5"}, "max_db": {"1"}})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("session B accepted session A's CSRF token: HTTP %d", resp.StatusCode)
+	}
+	if _, err := st.GetBeamhallBySlug(context.Background(), "team-b"); err == nil {
+		t.Fatal("beamhall created via a cross-session CSRF token replay")
+	}
+}
+
+// TestLogoutRequiresAuthAndCSRF proves the fix: POST /admin/logout must be
+// gated the same as every other mutating endpoint — behind requireAdmin and
+// checkCSRF — not reachable by an unauthenticated caller or via a forced-logout
+// CSRF request forged by a third-party page.
+func TestLogoutRequiresAuthAndCSRF(t *testing.T) {
+	idp := newFakeIdP(t)
+	srv, _ := newTestServer(t, idp)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	anon := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := anon.PostForm(ts.URL+"/admin/logout", url.Values{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || !strings.HasSuffix(resp.Header.Get("Location"), "/admin/login") {
+		t.Fatalf("unauthenticated logout: want redirect to login, got %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	client := loginClient(t, ts)
+
+	resp2 := post(t, client, ts.URL+"/admin/logout", url.Values{})
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("logout without CSRF: want 403, got %d", resp2.StatusCode)
+	}
+	dashResp, err := client.Get(ts.URL + "/admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashResp.Body.Close()
+	if dashResp.StatusCode != http.StatusOK {
+		t.Fatalf("session was cleared despite the missing-CSRF logout being refused: HTTP %d", dashResp.StatusCode)
+	}
+
+	csrf := csrfFromDashboard(t, client, ts)
+	post(t, client, ts.URL+"/admin/logout", url.Values{"csrf": {csrf}})
+	dashResp2, err := client.Get(ts.URL + "/admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashResp2.Body.Close()
+	if u := dashResp2.Request.URL.Path; u != "/admin/login" {
+		t.Fatalf("after logout with a valid CSRF token, session still active at %s", u)
+	}
+}
+
+// TestExternalSecureDerivation proves the fix: the session cookie's
+// Secure attribute must reflect whether the BROWSER reaches this console
+// over HTTPS, not just whether this appliance's own listener terminates TLS
+// (cfg.Secure/GatewayTLS) — behind a TLS-terminating reverse proxy talking
+// plain HTTP to beamhalld, cfg.Secure alone would issue the cookie without
+// Secure even though the real connection is HTTPS.
+func TestExternalSecureDerivation(t *testing.T) {
+	cases := []struct {
+		name           string
+		baseURL        string
+		cfgSecure      bool
+		forwardedProto string
+		want           bool
+	}{
+		{"BaseURL https wins over proxy header", "https://beamhall.acme.internal", false, "http", true},
+		{"BaseURL http wins even if proxy claims https", "http://beamhall.acme.internal", true, "https", false},
+		{"no BaseURL: proxy https overrides plain-HTTP own listener", "", false, "https", true},
+		{"no BaseURL: proxy http overrides TLS-terminating own listener", "", true, "http", false},
+		{"no BaseURL, no proxy header: falls back to cfg.Secure=true", "", true, "", true},
+		{"no BaseURL, no proxy header: falls back to cfg.Secure=false", "", false, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{cfg: Config{BaseURL: tc.baseURL, Secure: tc.cfgSecure}}
+			r := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
+			if tc.forwardedProto != "" {
+				r.Header.Set("X-Forwarded-Proto", tc.forwardedProto)
+			}
+			if got := s.externalSecure(r); got != tc.want {
+				t.Errorf("externalSecure = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRedirectURIRejectsUnrecognizedHost proves the fix: when BaseURL is
+// empty (latent in production — config.Load always defaults AdminBaseURL,
+// but this guards the fallback path against future regressions), redirectURI
+// must not echo an arbitrary client-supplied Host header into the
+// IdP-registered OAuth redirect URI. A Host matching BaseDomain (or a
+// subdomain of it) is honored; anything else falls back to BaseDomain.
+func TestRedirectURIRejectsUnrecognizedHost(t *testing.T) {
+	s := &Server{cfg: Config{BaseDomain: "beamhall.acme.internal", Secure: true}}
+
+	cases := []struct {
+		name string
+		host string
+		want string
+	}{
+		{"exact BaseDomain", "beamhall.acme.internal", "https://beamhall.acme.internal/admin/callback"},
+		{"subdomain of BaseDomain", "console.beamhall.acme.internal", "https://console.beamhall.acme.internal/admin/callback"},
+		{"BaseDomain with port", "beamhall.acme.internal:8443", "https://beamhall.acme.internal:8443/admin/callback"},
+		{"attacker-controlled Host", "evil.attacker.example", "https://beamhall.acme.internal/admin/callback"},
+		{"lookalike suffix, not a real subdomain", "evilbeamhall.acme.internal", "https://beamhall.acme.internal/admin/callback"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/admin/callback", nil)
+			r.Host = tc.host
+			if got := s.redirectURI(r); got != tc.want {
+				t.Errorf("redirectURI(Host=%q) = %q, want %q", tc.host, got, tc.want)
+			}
+		})
 	}
 }
 

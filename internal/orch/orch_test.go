@@ -108,9 +108,10 @@ func (f *fakeDriver) Exec(ctx context.Context, h driver.Handle, cmd []string, s 
 
 // fakeGateway records the route table mutations.
 type fakeGateway struct {
-	mu      sync.Mutex
-	routes  map[string]gateway.Route
-	retired []string
+	mu        sync.Mutex
+	routes    map[string]gateway.Route
+	retired   []string
+	upsertErr error // when set, Upsert fails instead of recording the route
 }
 
 func newFakeGateway() *fakeGateway { return &fakeGateway{routes: map[string]gateway.Route{}} }
@@ -118,6 +119,9 @@ func newFakeGateway() *fakeGateway { return &fakeGateway{routes: map[string]gate
 func (g *fakeGateway) Upsert(ctx context.Context, r gateway.Route) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.upsertErr != nil {
+		return g.upsertErr
+	}
 	g.routes[r.Hostname] = r
 	return nil
 }
@@ -305,6 +309,51 @@ func TestDeployHappyPath(t *testing.T) {
 	}
 }
 
+// TestSecretRefsDedupesSharedAndChannelSpecificKey proves the fix: a
+// user-set shared secret and a channel-specific secret (a database DSN)
+// sharing the same key must not both be injected — every secret mounts to
+// /run/secrets/<key> regardless of channel, so two refs with the same key
+// would collide on that path. The channel-specific one must win.
+func TestSecretRefsDedupesSharedAndChannelSpecificKey(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	prov := &fakeProvisioner{}
+	WithDatabaseProvisioner(prov)(w.o)
+
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	if err != nil {
+		t.Fatalf("CreateBeam: %v", err)
+	}
+	// A user-set shared secret using the SAME key a "main" database's DSN
+	// would use (dbSecretKey("main") == "MAIN_URL").
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, "MAIN_URL", []byte("manually-set-value")); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+	if _, err := w.o.CreateDatabase(ctx, w.build, w.bh.ID, beam.ID, "main"); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	beam, err = w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID,
+		DeployRequest{ImageRef: "reg/tracker:1", ImageDigest: "sha256:abc"})
+	if err != nil {
+		t.Fatalf("DeployBeam: %v", err)
+	}
+
+	spec := w.drv.deploys[len(w.drv.deploys)-1]
+	var matches []driver.SecretMount
+	for _, m := range spec.Secrets {
+		if m.MountPath == "/run/secrets/MAIN_URL" {
+			matches = append(matches, m)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("want exactly one mount at /run/secrets/MAIN_URL (Docker rejects a duplicate target), got %d: %+v", len(matches), matches)
+	}
+	if !strings.Contains(string(matches[0].Value), "postgres://") {
+		t.Fatalf("the channel-specific database DSN should win over the shared secret, got %q", matches[0].Value)
+	}
+}
+
 func TestDeployStartFailure(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
@@ -328,6 +377,34 @@ func TestDeployStartFailure(t *testing.T) {
 	last := recs[len(recs)-1].Event
 	if last.ResultStatus != "failed" || !strings.Contains(last.Reason, "entrypoint crashed") {
 		t.Fatalf("outcome event = %+v", last)
+	}
+}
+
+// TestSpawnWorkloadCleansUpOnStartFailure is a regression test:
+// once
+// drv.Deploy has created a container (with its secrets already staged), a
+// later failure in the bring-up sequence (here, drv.Start) must tear that
+// container down — not leak it and its staged secret files with nothing
+// left referencing them.
+func TestSpawnWorkloadCleansUpOnStartFailure(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "flaky", "Flaky", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.drv.startErr = errors.New("entrypoint crashed")
+
+	if _, err := w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID,
+		DeployRequest{ImageDigest: "sha256:bad"}); err == nil {
+		t.Fatal("expected the deploy to fail")
+	}
+	if len(w.drv.deploys) != 1 {
+		t.Fatalf("deploys = %d, want exactly 1 (the failed attempt)", len(w.drv.deploys))
+	}
+	deployedRef := "ctr-" + string(beam.ID) + fmt.Sprint(len(w.drv.deploys))
+	if len(w.drv.destroyed) != 1 || w.drv.destroyed[0] != deployedRef {
+		t.Fatalf("destroyed = %v, want the failed container %q cleaned up (not leaked)", w.drv.destroyed, deployedRef)
 	}
 }
 
@@ -517,6 +594,44 @@ func TestRedeploySupersedesPreviousRelease(t *testing.T) {
 	}
 }
 
+// TestRedeployFinalizeFailureLeavesBeamPointingAtNewRelease is a regression
+// test: if
+// finalizeActiveRelease fails (here, the gateway rejects the route Upsert)
+// AFTER the predecessor has already been retired/destroyed, the beam must
+// still point CurrentReleaseID at the new (running, active) release — not the
+// old one, which no longer has a workload to serve requests from.
+func TestRedeployFinalizeFailureLeavesBeamPointingAtNewRelease(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam := w.deployed(t, "app1")
+	firstRel := beam.CurrentReleaseID
+
+	w.gw.upsertErr = errors.New("caddy admin API unreachable")
+	if _, err := w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID,
+		DeployRequest{ImageRef: "reg/beam:2", ImageDigest: "sha256:def"}); err == nil {
+		t.Fatal("expected the redeploy to fail (gateway rejected the route)")
+	}
+	w.gw.upsertErr = nil
+
+	got, err := w.st.GetBeam(ctx, beam.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CurrentReleaseID == firstRel {
+		t.Fatalf("beam still points at the OLD release %s, which has no workload (retired/destroyed) — every subsequent op on this beam fails confusingly until it's destroyed", firstRel)
+	}
+	if got.CurrentReleaseID == "" {
+		t.Fatal("beam has no CurrentReleaseID at all after the failed finalize")
+	}
+	newRel, err := w.st.GetRelease(ctx, got.CurrentReleaseID)
+	if err != nil {
+		t.Fatalf("GetRelease(CurrentReleaseID): %v", err)
+	}
+	if newRel.Status != domain.ReleaseActive {
+		t.Fatalf("beam's CurrentReleaseID release status = %s, want active", newRel.Status)
+	}
+}
+
 func TestShowLogsScrubsSecrets(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
@@ -658,14 +773,19 @@ func TestDeployBeamFromSource(t *testing.T) {
 	}
 }
 
-// fakeProvisioner satisfies DatabaseProvisioner.
+// fakeProvisioner satisfies DatabaseProvisioner. Mutex-guarded (like
+// fakeDriver/fakeGateway) so concurrency tests exercise a race in the
+// orchestrator, not a data race in this test double.
 type fakeProvisioner struct {
+	mu          sync.Mutex
 	provisioned []resource.Request
 	dropped     []string
 	setErr      bool // makes the vault path fail via an invalid... (unused)
 }
 
 func (p *fakeProvisioner) Provision(ctx context.Context, req resource.Request) (resource.Provisioned, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.provisioned = append(p.provisioned, req)
 	db := "bh_" + req.BeamhallSlug + "_" + req.BeamSlug + "_" + req.Name
 	return resource.Provisioned{
@@ -676,6 +796,8 @@ func (p *fakeProvisioner) Provision(ctx context.Context, req resource.Request) (
 }
 
 func (p *fakeProvisioner) Drop(ctx context.Context, pr resource.Provisioned) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.dropped = append(p.dropped, pr.Database)
 	return nil
 }
@@ -754,6 +876,96 @@ func TestCreateDatabaseSealsDSNAndInjectsOnDeploy(t *testing.T) {
 	}
 }
 
+// TestConcurrentCreateBeamNeverExceedsQuota is a regression test:
+// concurrent create_beam calls
+// racing for the beamhall's LAST beam slot (MaxBeams=5 in the world fixture)
+// must not both succeed — a plain count-then-insert lets both pass the same
+// pre-check and together exceed quota. Run with -race.
+func TestConcurrentCreateBeamNeverExceedsQuota(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	for i := 0; i < 4; i++ { // MaxBeams=5: fill 4 slots, leaving exactly 1
+		if _, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, fmt.Sprintf("filler-%d", i), "", "node"); err != nil {
+			t.Fatalf("filler CreateBeam %d: %v", i, err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	results := make([]error, 2)
+	for i := range 2 {
+		go func(i int) {
+			defer wg.Done()
+			_, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, fmt.Sprintf("race-%d", i), "", "node")
+			results[i] = err
+		}(i)
+	}
+	wg.Wait()
+
+	succeeded := 0
+	for _, err := range results {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("succeeded = %d of 2 concurrent create_beam calls for the last slot (MaxBeams=5), want exactly 1", succeeded)
+	}
+	n, err := w.st.CountBeamsByBeamhall(ctx, w.bh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Fatalf("beam count = %d, want exactly 5 (quota exceeded)", n)
+	}
+}
+
+// TestConcurrentCreateDatabaseNeverExceedsQuota is a regression test:
+// two concurrent create_database
+// calls racing for the beamhall's LAST db slot (MaxDBCount=1 in the world
+// fixture) must not both succeed — a plain count-then-insert lets both pass
+// the same pre-check and together exceed quota. Run with -race.
+func TestConcurrentCreateDatabaseNeverExceedsQuota(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	prov := &fakeProvisioner{}
+	WithDatabaseProvisioner(prov)(w.o)
+	beam := w.deployed(t, "tracker")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	results := make([]error, 2)
+	for i := range 2 {
+		go func(i int) {
+			defer wg.Done()
+			_, err := w.o.CreateDatabase(ctx, w.build, w.bh.ID, beam.ID, fmt.Sprintf("db%d", i))
+			results[i] = err
+		}(i)
+	}
+	wg.Wait()
+
+	succeeded := 0
+	for _, err := range results {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("succeeded = %d of 2 concurrent create_database calls for the last slot (MaxDBCount=1), want exactly 1", succeeded)
+	}
+	n, err := w.st.CountResourcesByType(ctx, w.bh.ID, domain.ResourceDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("database resource count = %d, want exactly 1 (quota exceeded)", n)
+	}
+	// The loser's provisioned database must have been rolled back, not leaked.
+	if len(prov.dropped) != 1 {
+		t.Fatalf("dropped = %v, want the loser's provisioned database rolled back exactly once", prov.dropped)
+	}
+}
+
 // create_database is idempotent per (beam,name): a re-call returns the same key
 // without re-provisioning — a non-expert agent may call it twice.
 func TestCreateDatabaseIdempotent(t *testing.T) {
@@ -802,6 +1014,39 @@ func TestDestroyReclaimsDatabase(t *testing.T) {
 	}
 	if n, _ := w.st.CountResourcesByType(ctx, w.bh.ID, domain.ResourceDatabase); n != 0 {
 		t.Fatalf("db quota count after destroy = %d, want 0 (slot reclaimed)", n)
+	}
+	// The sealed DSN must not survive the beam's destruction as a
+	// decryptable orphan.
+	if _, err := w.st.GetSecret(ctx, w.bh.ID, beam.ID, "MAIN_URL", domain.ChannelPreview); err == nil {
+		t.Fatal("sealed database DSN still present after destroy")
+	}
+}
+
+// TestDestroySweepsUserSecrets proves the fix: a beam-scoped secret set
+// directly via set_secret (no domain.Resource row) must be swept on destroy,
+// not left as a decryptable orphan with no way to ever reach or delete it
+// again. A beamhall-wide secret (no beam) must survive.
+func TestDestroySweepsUserSecrets(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, "API_TOKEN", []byte("s3cr3t")); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, "", "SHARED_KEY", []byte("shared")); err != nil {
+		t.Fatalf("SetSecret (beamhall-wide): %v", err)
+	}
+
+	if err := w.o.DestroyBeam(ctx, w.admin, w.bh.ID, beam.ID); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+
+	if _, err := w.st.GetSecret(ctx, w.bh.ID, beam.ID, "API_TOKEN", ""); err == nil {
+		t.Fatal("beam-scoped user secret still present after destroy")
+	}
+	if _, err := w.st.GetSecret(ctx, w.bh.ID, "", "SHARED_KEY", ""); err != nil {
+		t.Fatalf("beamhall-wide secret was swept by an unrelated beam's destroy: %v", err)
 	}
 }
 
@@ -867,6 +1112,82 @@ func TestPromoteIsolatesLiveDatabase(t *testing.T) {
 	if len(prov.dropped) != 2 {
 		t.Fatalf("dropped %d databases on destroy, want 2 (preview + live)", len(prov.dropped))
 	}
+}
+
+// TestRepromoteGatewayFailureLeavesProductionRouteIntact is a regression
+// test: a
+// re-promote whose gateway Upsert fails must leave the OLD live route active
+// (never zero active routes for the stable hostname) and beam.LiveReleaseID
+// unchanged — so a restart's boot-route-restore still finds a route to
+// program, instead of production 404ing until someone re-promotes.
+func TestRepromoteGatewayFailureLeavesProductionRouteIntact(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam := w.deployed(t, "tracker")
+
+	if _, err := w.o.PromoteToLive(ctx, w.admin, w.bh.ID, beam.ID); err != nil {
+		t.Fatalf("promote v1: %v", err)
+	}
+	got, _ := w.st.GetBeam(ctx, beam.ID)
+	liveRel1 := got.LiveReleaseID
+	routes1, err := w.st.ListRoutesByBeam(ctx, beam.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var liveRouteID domain.ID
+	for _, r := range routes1 {
+		if r.Kind == domain.RouteLive && r.Status == domain.RouteActive {
+			liveRouteID = r.ID
+		}
+	}
+	if liveRouteID == "" {
+		t.Fatal("setup: no active live route after first promote")
+	}
+
+	// New preview build, then re-promote — but the gateway rejects the Upsert
+	// (a Caddy admin API hiccup).
+	if _, err := w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID,
+		DeployRequest{ImageRef: "reg/beam:2", ImageDigest: "sha256:def"}); err != nil {
+		t.Fatalf("redeploy preview: %v", err)
+	}
+	w.gw.upsertErr = errors.New("caddy admin API unreachable")
+	if _, err := w.o.PromoteToLive(ctx, w.admin, w.bh.ID, beam.ID); err == nil {
+		t.Fatal("re-promote should have failed when the gateway rejected the Upsert")
+	}
+	w.gw.upsertErr = nil
+
+	// Production is untouched: same live release, same active route.
+	got, _ = w.st.GetBeam(ctx, beam.ID)
+	if got.LiveReleaseID != liveRel1 {
+		t.Fatalf("live release changed to %s despite a failed re-promote, want unchanged %s", got.LiveReleaseID, liveRel1)
+	}
+	rt, err := w.st.GetRoute(ctx, liveRouteID)
+	if err != nil {
+		t.Fatalf("GetRoute: %v", err)
+	}
+	if rt.Status != domain.RouteActive {
+		t.Fatalf("original live route status = %s, want still active (zero-active-route window after a failed re-promote)", rt.Status)
+	}
+	// Exactly one active route for the live hostname — no orphaned duplicate
+	// from a partially-applied swap.
+	active := 0
+	for _, r := range mustListRoutes(t, w, beam.ID) {
+		if r.Kind == domain.RouteLive && r.Status == domain.RouteActive {
+			active++
+		}
+	}
+	if active != 1 {
+		t.Fatalf("active live routes = %d, want exactly 1", active)
+	}
+}
+
+func mustListRoutes(t *testing.T, w *world, beamID domain.ID) []domain.Route {
+	t.Helper()
+	rs, err := w.st.ListRoutesByBeam(context.Background(), beamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
 }
 
 func TestDeployCrashOnStartupIsDiagnosed(t *testing.T) {

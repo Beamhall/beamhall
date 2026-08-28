@@ -105,17 +105,25 @@ func (k *Keycloak) CreateClient(ctx context.Context, spec ClientSpec) (Client, e
 	_ = k.detachAudienceScopes(ctx, uuid)
 
 	// POST-ASSERT the audience-isolation invariant against the client's EFFECTIVE
-	// mappers (own + from assigned scopes). Refuse + clean up if violated.
-	if spec.ForbiddenAudience != "" {
-		bad, aerr := k.clientInjectsAudience(ctx, uuid, spec.ForbiddenAudience)
-		if aerr != nil {
-			_ = k.DeleteClient(ctx, uuid)
-			return Client{}, fmt.Errorf("create client %q: audience post-assert failed: %w", spec.ClientID, aerr)
-		}
-		if bad {
-			_ = k.DeleteClient(ctx, uuid)
-			return Client{}, fmt.Errorf("create client %q: refusing — an effective mapper/scope injects the Beamhall resource URI into the app token (would permit backplane replay)", spec.ClientID)
-		}
+	// mappers (own + from assigned scopes). Refuse + clean up if violated. An
+	// empty ForbiddenAudience is NOT treated as "skip the check" — every real
+	// caller (orch.WithProvisionedAuth) always supplies the appliance's
+	// configured audience, so a blank value here means the caller/config is
+	// broken, not that isolation is intentionally unneeded; silently skipping
+	// would have let a misconfiguration slip an audience-injecting client
+	// through with no isolation check at all.
+	if spec.ForbiddenAudience == "" {
+		_ = k.DeleteClient(ctx, uuid)
+		return Client{}, fmt.Errorf("create client %q: refusing — ForbiddenAudience is empty, so the audience-isolation post-assert cannot run (this indicates a caller/config bug, not an intentional opt-out)", spec.ClientID)
+	}
+	bad, aerr := k.clientInjectsAudience(ctx, uuid, spec.ForbiddenAudience)
+	if aerr != nil {
+		_ = k.DeleteClient(ctx, uuid)
+		return Client{}, fmt.Errorf("create client %q: audience post-assert failed: %w", spec.ClientID, aerr)
+	}
+	if bad {
+		_ = k.DeleteClient(ctx, uuid)
+		return Client{}, fmt.Errorf("create client %q: refusing — an effective mapper/scope injects the Beamhall resource URI into the app token (would permit backplane replay)", spec.ClientID)
 	}
 
 	secret, err := k.GetClientSecret(ctx, uuid)
@@ -371,10 +379,16 @@ func (k *Keycloak) detachAudienceScopes(ctx context.Context, clientUUID string) 
 
 // clientInjectsAudience reports whether the client's EFFECTIVE protocol mappers
 // (own + from assigned scopes, via Keycloak's evaluate-scopes endpoint) would put
-// the forbidden resource URI into a token's `aud`.
+// the forbidden resource URI into a token's `aud`. Evaluated against every
+// scope actually assignable to this client (not just "openid") so a mapper
+// reachable only via an optional scope isn't missed.
 func (k *Keycloak) clientInjectsAudience(ctx context.Context, clientUUID, forbidden string) (bool, error) {
+	scope, err := k.clientEvaluableScope(ctx, clientUUID)
+	if err != nil {
+		return false, err
+	}
 	resp, err := k.do(ctx, http.MethodGet,
-		"/clients/"+url.PathEscape(clientUUID)+"/evaluate-scopes/protocol-mappers?scope=openid", nil)
+		"/clients/"+url.PathEscape(clientUUID)+"/evaluate-scopes/protocol-mappers?scope="+url.QueryEscape(scope), nil)
 	if err != nil {
 		return false, err
 	}
@@ -387,8 +401,14 @@ func (k *Keycloak) clientInjectsAudience(ctx context.Context, clientUUID, forbid
 		return false, fmt.Errorf("decode effective mappers: %w", err)
 	}
 	for _, m := range mappers {
-		if m.ProtocolMapper == "oidc-audience-mapper" && m.Config["included.custom.audience"] == forbidden {
-			return true, nil
+		if m.ProtocolMapper == "oidc-audience-mapper" {
+			// included.custom.audience: an arbitrary literal string.
+			// included.client.audience: another Keycloak client's clientId —
+			// checked too, since the forbidden value could itself be
+			// registered as (or match) a client id.
+			if m.Config["included.custom.audience"] == forbidden || m.Config["included.client.audience"] == forbidden {
+				return true, nil
+			}
 		}
 		// A hardcoded-claim mapper writing the aud claim directly.
 		if m.Config["claim.name"] == "aud" {
@@ -400,6 +420,32 @@ func (k *Keycloak) clientInjectsAudience(ctx context.Context, clientUUID, forbid
 		}
 	}
 	return false, nil
+}
+
+// clientEvaluableScope builds the full space-separated scope string —
+// "openid" plus every default/optional client scope actually assignable to
+// this client — so clientInjectsAudience's evaluate-scopes call considers
+// every mapper a real token request could pull in, not just the "openid"
+// scope alone.
+func (k *Keycloak) clientEvaluableScope(ctx context.Context, clientUUID string) (string, error) {
+	names := []string{"openid"}
+	for _, kind := range []string{"default-client-scopes", "optional-client-scopes"} {
+		resp, err := k.do(ctx, http.MethodGet, "/clients/"+url.PathEscape(clientUUID)+"/"+kind, nil)
+		if err != nil {
+			return "", err
+		}
+		var scopes []struct {
+			Name string `json:"name"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&scopes)
+		resp.Body.Close()
+		for _, s := range scopes {
+			if s.Name != "" && s.Name != "openid" {
+				names = append(names, s.Name)
+			}
+		}
+	}
+	return strings.Join(names, " "), nil
 }
 
 func (k *Keycloak) listClientRoles(ctx context.Context, clientUUID string) ([]kcRole, error) {

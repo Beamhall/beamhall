@@ -2,12 +2,14 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/Beamhall/beamhall/internal/domain"
 	"github.com/Beamhall/beamhall/internal/policy"
 	"github.com/Beamhall/beamhall/internal/resource"
+	"github.com/Beamhall/beamhall/internal/store"
 )
 
 // DatabaseProvisioner is the managed-database seam
@@ -98,7 +100,27 @@ func (o *Orchestrator) createDatabase(ctx context.Context, actor Actor, beamhall
 		Spec:                map[string]string{"name": name, "database": pr.Database, "role": pr.Role},
 		BackingHandle:       pr.Database,
 	}
-	if err := o.st.CreateResource(ctx, res); err != nil {
+	// Atomic count+insert (not a separate CheckDatabaseQuota-then-CreateResource):
+	// two concurrent create_database calls could otherwise each pass the
+	// pre-check above and together exceed max_db_count.
+	if err := o.st.CreateResourceWithQuota(ctx, res, bh.Quota.MaxDBCount); err != nil {
+		// Don't leave a provisioned database (with a sealed DSN) that lost the
+		// quota race and was never recorded — same rollback spirit as the
+		// vault.Set failure path above.
+		if derr := o.dbProv.Drop(ctx, pr); derr != nil {
+			o.log.Error("rollback of provisioned database failed", "db", pr.Database, "err", derr)
+		}
+		if derr := o.vault.Delete(ctx, ref); derr != nil {
+			o.log.Error("rollback of sealed connection secret failed", "key", key, "err", derr)
+		}
+		if errors.Is(err, store.ErrQuota) {
+			// The pre-check above passed but a concurrent create_database won
+			// the race — surface the same friendly QuotaError shape it would
+			// have produced had it run after the race instead of before.
+			if qerr := o.pep.CheckDatabaseQuota(ctx, bh); qerr != nil {
+				return "", qerr
+			}
+		}
 		return "", err
 	}
 	o.log.Info("database provisioned", "beam", beamID, "database", pr.Database, "secret_key", key)

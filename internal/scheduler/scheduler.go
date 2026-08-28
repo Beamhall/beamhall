@@ -56,8 +56,10 @@ type Scheduler struct {
 	pauseTimeout time.Duration
 	log          *slog.Logger
 
-	mu    sync.Mutex
-	armed map[string]time.Time // beamID -> absolute deadline (in-memory mirror of Store)
+	mu        sync.Mutex
+	armed     map[string]time.Time // beamID -> absolute deadline (in-memory mirror of Store)
+	inFlight  map[string]bool      // beams whose fire() is currently running (claimed, not yet resolved)
+	cancelled map[string]bool      // in-flight beams Disarmed mid-fire — their retry path must not re-arm
 
 	wake   chan struct{}
 	cancel context.CancelFunc
@@ -89,6 +91,8 @@ func New(store Store, pause PauseFunc, opts ...Option) *Scheduler {
 		pauseTimeout: 30 * time.Second,
 		log:          slog.Default(),
 		armed:        make(map[string]time.Time),
+		inFlight:     make(map[string]bool),
+		cancelled:    make(map[string]bool),
 		wake:         make(chan struct{}, 1),
 	}
 	for _, o := range opts {
@@ -147,12 +151,19 @@ func (s *Scheduler) ArmAfter(ctx context.Context, beamID string, d time.Duration
 }
 
 // Disarm cancels beam's pending pause (promote_to_live / manual pause / destroy).
+// If beam's fire() is currently in flight (loop claimed it and is running
+// PauseFunc right now), a plain delete from armed would be a no-op — mark it
+// cancelled instead so a retryable fire() failure doesn't resurrect the timer
+// once that in-flight call returns.
 func (s *Scheduler) Disarm(ctx context.Context, beamID string) error {
 	if err := s.store.Delete(ctx, beamID); err != nil {
 		return fmt.Errorf("delete armed pause: %w", err)
 	}
 	s.mu.Lock()
 	delete(s.armed, beamID)
+	if s.inFlight[beamID] {
+		s.cancelled[beamID] = true
+	}
 	s.mu.Unlock()
 	s.signal()
 	return nil
@@ -166,6 +177,7 @@ func (s *Scheduler) loop(ctx context.Context) {
 		fire, next, hasNext := due(s.armed, s.now())
 		for _, id := range fire {
 			delete(s.armed, id) // claim it; re-armed on retry by fire()
+			s.inFlight[id] = true
 		}
 		s.mu.Unlock()
 
@@ -195,12 +207,26 @@ func (s *Scheduler) loop(ctx context.Context) {
 }
 
 // fire runs PauseFunc for a due beam. On success it deletes the persisted entry;
-// on failure it re-Arms a bounded retry so the deadline is never silently lost.
+// on failure it re-Arms a bounded retry so the deadline is never silently lost —
+// UNLESS the beam was Disarmed while this call was in flight, in which case
+// re-arming would resurrect a timer the caller explicitly cancelled (e.g. a
+// promote_to_live racing a firing auto-pause).
 func (s *Scheduler) fire(ctx context.Context, beamID string) {
 	pctx, cancel := context.WithTimeout(ctx, s.pauseTimeout)
 	err := s.pause(pctx, beamID)
 	cancel()
+
+	s.mu.Lock()
+	cancelledMidFlight := s.cancelled[beamID]
+	delete(s.inFlight, beamID)
+	delete(s.cancelled, beamID)
+	s.mu.Unlock()
+
 	if err != nil {
+		if cancelledMidFlight {
+			s.log.Info("preview pause failed but the beam was disarmed while in flight; not re-arming", "beam", beamID, "err", err)
+			return
+		}
 		s.log.Warn("preview pause failed; retrying", "beam", beamID, "retry_in", s.retry, "err", err)
 		if aerr := s.Arm(ctx, beamID, s.now().Add(s.retry)); aerr != nil {
 			s.log.Error("failed to re-arm pause retry", "beam", beamID, "err", aerr)

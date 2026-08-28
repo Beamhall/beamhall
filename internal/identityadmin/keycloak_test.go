@@ -124,6 +124,26 @@ func TestCreateUser(t *testing.T) {
 	}
 }
 
+// TestCreateUserZeroValueEnabledIsDisabled locks in the fix: NewUser has
+// no CreateUser-side defaulting for Enabled — the zero value (false) must
+// create a disabled account, not an active one. (This was previously
+// documented as defaulting to true, which the code never did; the doc was
+// corrected to match this behavior rather than the other way around, since
+// disabled-unless-asked-for is the safer default.)
+func TestCreateUserZeroValueEnabledIsDisabled(t *testing.T) {
+	kc, f := newTestKC(t)
+	u, err := kc.CreateUser(context.Background(), NewUser{Username: "carol", Email: "carol@corp.example"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.Enabled {
+		t.Fatalf("zero-value Enabled produced an active account: %+v", u)
+	}
+	if !f.created || f.createdUser.Enabled {
+		t.Fatalf("server received Enabled=true for a caller that never set it: %+v", f.createdUser)
+	}
+}
+
 func TestCreateUserIdempotentOnUsername(t *testing.T) {
 	kc, f := newTestKC(t)
 	f.users = []kcUser{{ID: "existing-1", Username: "bob", Email: "bob@corp.example", Enabled: true}}

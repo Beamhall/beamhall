@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Beamhall/beamhall/internal/domain"
@@ -105,6 +106,136 @@ func TestRollbackRejectsForeignOrCurrentRelease(t *testing.T) {
 	}
 }
 
+// TestRollbackRejectsPreviewChannelRelease is a regression test:
+// an older,
+// superseded PREVIEW release must not be a valid rollback target — only the
+// two checks for "is it the current live release" and "is it the current
+// preview release" existed before, and both pass for a superseded preview
+// release, which would then get pinned to production carrying its preview
+// secret scope (the preview DB DSN under the app's shared key).
+func TestRollbackRejectsPreviewChannelRelease(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam := w.deployed(t, "tracker")
+	previewV1 := beam.CurrentReleaseID // about to be superseded, never a live release
+
+	if _, err := w.o.PromoteToLive(ctx, w.admin, w.bh.ID, beam.ID); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	// A second preview deploy supersedes v1 — it is now neither the current
+	// live release nor the current preview release, just an old preview build.
+	if _, err := w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID,
+		DeployRequest{ImageRef: "reg/beam:2", ImageDigest: "sha256:def"}); err != nil {
+		t.Fatalf("redeploy preview: %v", err)
+	}
+	for _, r := range releasesOf(t, w, beam.ID) {
+		if r.ID == previewV1 && r.Status != domain.ReleaseSuperseded {
+			t.Fatalf("setup: v1 release status = %s, want superseded", r.Status)
+		}
+	}
+
+	if _, err := w.o.RollbackBeam(ctx, w.admin, w.bh.ID, beam.ID, previewV1); err == nil {
+		t.Fatal("rollback to a superseded PREVIEW release should be rejected")
+	} else if !strings.Contains(err.Error(), "preview build") {
+		t.Fatalf("rollback error = %q, want it to name the release as a preview build", err.Error())
+	}
+	// Production must be untouched: still on the release PromoteToLive minted.
+	got, _ := w.st.GetBeam(ctx, beam.ID)
+	if got.LiveReleaseID == previewV1 {
+		t.Fatal("production was pinned to a preview-channel release")
+	}
+}
+
+// TestDestroySweepsOrphanedReleaseWorkloads is a further regression test:
+// destroy must tear down EVERY release's workload, not just the two pointers
+// (CurrentReleaseID/LiveReleaseID) — a release left over from a partial
+// finalize failure or any other path that references a running
+// container without ever becoming the beam's pointer would otherwise survive
+// the beam's own destruction, permanently orphaned.
+func TestDestroySweepsOrphanedReleaseWorkloads(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam := w.deployed(t, "tracker")
+
+	// An orphaned release: a real workload handle, but never pointed to by
+	// the beam's CurrentReleaseID or LiveReleaseID.
+	build := &domain.Build{BeamID: beam.ID, SourceKind: domain.SourceImageRef, Status: domain.BuildSucceeded}
+	if err := w.st.CreateBuild(ctx, build); err != nil {
+		t.Fatalf("create build for orphan release: %v", err)
+	}
+	orphan := &domain.Release{
+		BeamID: beam.ID, BuildID: build.ID, Version: 2, Channel: domain.ChannelPreview, Status: domain.ReleasePending,
+	}
+	if err := w.st.CreateRelease(ctx, orphan); err != nil {
+		t.Fatalf("create orphan release: %v", err)
+	}
+	// CreateRelease doesn't persist the workload handle — it's set separately
+	// once a container exists (SetReleaseWorkload), matching the real flow.
+	if err := w.st.SetReleaseWorkload(ctx, orphan.ID, domain.WorkloadHandle{Driver: "fake", Ref: "ctr-orphan"}); err != nil {
+		t.Fatalf("set orphan workload: %v", err)
+	}
+
+	if err := w.o.DestroyBeam(ctx, w.admin, w.bh.ID, beam.ID); err != nil {
+		t.Fatalf("DestroyBeam: %v", err)
+	}
+
+	foundOrphan := false
+	for _, ref := range w.drv.destroyed {
+		if ref == "ctr-orphan" {
+			foundOrphan = true
+		}
+	}
+	if !foundOrphan {
+		t.Fatalf("destroyed = %v, want the orphaned release's workload (ctr-orphan) cleaned up", w.drv.destroyed)
+	}
+	got, err := w.st.GetRelease(ctx, orphan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.ReleaseSuperseded {
+		t.Fatalf("orphan release status = %s, want superseded", got.Status)
+	}
+}
+
+// TestConcurrentDeployAndDestroyNeverResurrects is a regression test:
+// a deploy and a
+// destroy racing on the SAME beam must not interleave their read-modify-write
+// on the Beam row. Before the per-beam lock, a deploy that read the beam
+// before a concurrent destroy archived it could finish later and blindly
+// persist beam.Status="active" over top of "archived" — resurrecting a
+// beam whose managed resources (db, route, quota slot) were already reclaimed.
+// Run with -race; the fake driver/gateway are themselves mutex-guarded so any
+// data race reported is in the orchestrator, not the test doubles.
+func TestConcurrentDeployAndDestroyNeverResurrects(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam := w.deployed(t, "tracker")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID,
+			DeployRequest{ImageRef: "reg/beam:2", ImageDigest: "sha256:def"})
+	}()
+	go func() {
+		defer wg.Done()
+		_ = w.o.DestroyBeam(ctx, w.admin, w.bh.ID, beam.ID)
+	}()
+	wg.Wait()
+
+	// Whichever operation the lock let run second must have seen the first
+	// one's committed result, not raced past it — so exactly one terminal
+	// state is possible: destroyed. A resurrection would show up as "active".
+	got, err := w.st.GetBeam(ctx, beam.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.BeamArchived {
+		t.Fatalf("beam status = %s, want archived (a non-archived result means destroy was resurrected by a racing deploy)", got.Status)
+	}
+}
+
 func TestDestroyArchivesAndFreesQuotaAndSlug(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
@@ -167,6 +298,68 @@ func TestShowMetrics(t *testing.T) {
 	if stats.CPUPct != 12.5 || stats.MemBytes != 64<<20 {
 		t.Fatalf("stats = %+v", stats)
 	}
+}
+
+// TestCrossHallBeamAccessRefused is a regression test:
+// pause, resume,
+// show_logs, show_metrics, show_email, and show_object_store must all refuse
+// a beamID that belongs to a DIFFERENT beamhall than the one the caller is
+// authorized (a member) in — not just trust that every caller happens to
+// resolve beams by slug-within-hall first.
+func TestCrossHallBeamAccessRefused(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+
+	// A second beamhall, with its own beam, that w.build has no membership in.
+	otherHall := &domain.Beamhall{
+		Slug: "other", DisplayName: "Other", Status: domain.BeamhallActive,
+		NetworkPolicy: domain.NetworkPolicy{EgressMode: domain.EgressDenyAll},
+		Quota:         domain.ResourceQuota{MaxBeams: 5, MaxLiveSlots: 1, MaxDBCount: 1},
+		LiveSlotLimit: 1,
+	}
+	otherSC := &domain.SecurityContext{
+		RuntimeClass: domain.RuntimeRunsc, CapDrop: []string{"ALL"}, NoNewPrivileges: true,
+		ReadOnlyRootfs: true, Tmpfs: []string{"/tmp"}, Template: domain.TemplateWebApp,
+		CgroupLimits: domain.ResourceLimits{CPUQuota: 100000, MemBytes: 256 << 20, PidsMax: 128},
+	}
+	if err := w.st.CreateBeamhall(ctx, otherHall, otherSC); err != nil {
+		t.Fatalf("create other beamhall: %v", err)
+	}
+	otherBeam := &domain.Beam{
+		BeamhallID: otherHall.ID, Slug: "victim", Mode: domain.ModePreview,
+		State: domain.StateRunning, SecurityTemplate: domain.TemplateWebApp,
+	}
+	if err := w.st.CreateBeam(ctx, otherBeam); err != nil {
+		t.Fatalf("create beam in other hall: %v", err)
+	}
+
+	// w.build is a member of w.bh ("ops"), NOT otherHall — the PEP passes
+	// membership for w.bh.ID, but the supplied beam actually lives in
+	// otherHall. Every call below must be refused BY THE CONTAINMENT CHECK
+	// specifically (asserted on the error text, not just "some error") — a
+	// beam missing a release/route/workload would already error out for an
+	// unrelated reason first, which would let this test pass without actually
+	// exercising the fix.
+	const wantErr = "is not in beamhall"
+	check := func(name string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Errorf("%s reached a beam in a different beamhall (no error)", name)
+		} else if !strings.Contains(err.Error(), wantErr) {
+			t.Errorf("%s error = %q, want it to name the cross-beamhall refusal (%q)", name, err.Error(), wantErr)
+		}
+	}
+	check("PausePreview", w.o.PausePreview(ctx, w.build, w.bh.ID, otherBeam.ID))
+	_, err := w.o.ResumePreview(ctx, w.build, w.bh.ID, otherBeam.ID)
+	check("ResumePreview", err)
+	_, err = w.o.ShowLogs(ctx, w.build, w.bh.ID, otherBeam.ID, driver.LogOptions{})
+	check("ShowLogs", err)
+	_, err = w.o.ShowMetrics(ctx, w.build, w.bh.ID, otherBeam.ID)
+	check("ShowMetrics", err)
+	_, err = w.o.ShowEmail(ctx, w.build, w.bh.ID, otherBeam.ID)
+	check("ShowEmail", err)
+	_, err = w.o.ShowObjectStore(ctx, w.build, w.bh.ID, otherBeam.ID)
+	check("ShowObjectStore", err)
 }
 
 func TestBuildSlotCapRefusesOverflow(t *testing.T) {

@@ -96,14 +96,31 @@ type Principal struct {
 	Beamhall domain.ID
 	Beam     domain.ID
 	Actor    domain.ID
+	// pushGrant is the EXACT grant Validate matched (push tokens only; nil
+	// for read). Claim/Unclaim act on this captured pointer rather than a
+	// fresh (beamhall,beam) map lookup, so a concurrent Mint that replaces
+	// the map slot mid-deploy can never cause them to touch the wrong,
+	// freshly-minted grant.
+	pushGrant *grant
 }
 
-// Validate checks a push token against the grant for (beamhall, beam). It is
-// single-use for build triggering: AdvertisedReferences may validate it
-// repeatedly (git does info/refs then receive-pack), so consumption is
-// explicit via Consume after a successful push.
+// Validate checks a push token against the grant for (beamhall, beam) and, on
+// success, returns the exact matched grant embedded in Principal for a later
+// Claim/Unclaim. It has no side effects itself — AdvertisedReferences may
+// validate it repeatedly (git does info/refs then receive-pack) — so the
+// actual push handler must call Claim before starting the build/deploy.
 func (s *TokenStore) Validate(beamhall, beam domain.ID, token string) (Principal, bool) {
-	return s.validate(kindPush, beamhall, beam, token)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g := s.grants[grantKey(kindPush, beamhall, beam)]
+	if g == nil || g.used || s.now().After(g.expiresAt) {
+		return Principal{}, false
+	}
+	want := sha256.Sum256([]byte(token))
+	if subtle.ConstantTimeCompare(g.hash[:], want[:]) != 1 {
+		return Principal{}, false
+	}
+	return Principal{Beamhall: g.beamhall, Beam: g.beam, Actor: g.actor, pushGrant: g}, true
 }
 
 // ValidateRead checks a read token against the grant for (beamhall, beam). Read
@@ -127,12 +144,34 @@ func (s *TokenStore) validate(kind tokenKind, beamhall, beam domain.ID, token st
 	return Principal{Beamhall: g.beamhall, Beam: g.beam, Actor: g.actor}, true
 }
 
-// Consume marks the push token spent (after a successful push+build), so it
-// cannot be replayed.
-func (s *TokenStore) Consume(beamhall, beam domain.ID) {
+// Claim atomically marks princ's push token used — CAS-style: succeeds only
+// if it is still unused and unexpired. Call this right before starting the
+// build/deploy, not from Validate: two concurrent receive-pack requests
+// presenting the identical valid token would otherwise both pass Validate
+// and both proceed to deploy, since neither observes the other's consumption
+// until after the (slow) deploy completes. Only
+// one Claim call for a given grant can ever succeed.
+func (s *TokenStore) Claim(princ Principal) bool {
+	if princ.pushGrant == nil {
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if g := s.grants[grantKey(kindPush, beamhall, beam)]; g != nil {
-		g.used = true
+	if princ.pushGrant.used || s.now().After(princ.pushGrant.expiresAt) {
+		return false
 	}
+	princ.pushGrant.used = true
+	return true
+}
+
+// Unclaim reverts a successful Claim after a failed deploy: the pushed
+// commit already landed on main, so the token stays valid for the same
+// fix-and-retry push instead of forcing a re-mint.
+func (s *TokenStore) Unclaim(princ Principal) {
+	if princ.pushGrant == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	princ.pushGrant.used = false
 }

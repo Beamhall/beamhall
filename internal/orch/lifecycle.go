@@ -14,10 +14,18 @@ import (
 
 // PauseFunc is what the durable scheduler fires when a preview's
 // continuous-runtime window expires. It is the same path as a manual pause
-// but attributed to the system actor and the pause_timer event.
+// but attributed to the system actor and the pause_timer event. The
+// scheduler only knows a beam ID (no caller-supplied beamhall claim to
+// validate against), so it looks the beam's own hall up first and passes
+// that through as ground truth — pause() still runs its containment check
+// uniformly for both callers.
 func (o *Orchestrator) PauseFunc() scheduler.PauseFunc {
 	return func(ctx context.Context, beamID string) error {
-		return o.pause(ctx, domain.ID(beamID), domain.EvPauseTimer)
+		beam, err := o.st.GetBeam(ctx, domain.ID(beamID))
+		if err != nil {
+			return err
+		}
+		return o.pause(ctx, beam.BeamhallID, domain.ID(beamID), domain.EvPauseTimer)
 	}
 }
 
@@ -26,7 +34,7 @@ func (o *Orchestrator) PausePreview(ctx context.Context, actor Actor, beamhallID
 	if err := o.authorize(ctx, actor, policy.ActionPausePreview, beamhallID, beamID); err != nil {
 		return err
 	}
-	err := o.pause(ctx, beamID, domain.EvPausePreview)
+	err := o.pause(ctx, beamhallID, beamID, domain.EvPausePreview)
 	if err == nil {
 		err = o.sched.Disarm(ctx, string(beamID))
 	}
@@ -34,14 +42,14 @@ func (o *Orchestrator) PausePreview(ctx context.Context, actor Actor, beamhallID
 }
 
 // pause freezes the workload and retires the preview route — a paused
-// preview's URL is gone; resume mints a fresh one (PLAN §5.6).
-func (o *Orchestrator) pause(ctx context.Context, beamID domain.ID, ev domain.Event) error {
-	beam, err := o.st.GetBeam(ctx, beamID)
+// preview's URL is gone; resume mints a fresh one (PLAN §5.6). Routed through
+// operableBeam (not a bare GetBeam) so a beamID belonging to a different
+// beamhall than the PEP authorized against is refused here too, not just by
+// callers that happen to resolve beams by slug-within-hall.
+func (o *Orchestrator) pause(ctx context.Context, beamhallID, beamID domain.ID, ev domain.Event) error {
+	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return err
-	}
-	if beam.Status == domain.BeamArchived {
-		return fmt.Errorf("beam %s has been destroyed", beamID)
 	}
 	if err := beam.Apply(ev); err != nil {
 		return err
@@ -78,17 +86,14 @@ func (o *Orchestrator) ResumePreview(ctx context.Context, actor Actor, beamhallI
 	if err := o.authorize(ctx, actor, policy.ActionResumePreview, beamhallID, beamID); err != nil {
 		return "", err
 	}
-	hostname, err = o.resume(ctx, beamID)
+	hostname, err = o.resume(ctx, beamhallID, beamID)
 	return hostname, o.outcome(ctx, actor, policy.ActionResumePreview, beamhallID, beamID, err)
 }
 
-func (o *Orchestrator) resume(ctx context.Context, beamID domain.ID) (string, error) {
-	beam, err := o.st.GetBeam(ctx, beamID)
+func (o *Orchestrator) resume(ctx context.Context, beamhallID, beamID domain.ID) (string, error) {
+	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return "", err
-	}
-	if beam.Status == domain.BeamArchived {
-		return "", fmt.Errorf("beam %s has been destroyed", beamID)
 	}
 	if err := beam.Apply(domain.EvResumePreview); err != nil {
 		return "", err
@@ -127,6 +132,14 @@ func (o *Orchestrator) PromoteToLive(ctx context.Context, actor Actor, beamhallI
 	if err := o.authorize(ctx, actor, policy.ActionPromoteToLive, beamhallID, beamID); err != nil {
 		return "", err
 	}
+	// Serialize against any other deploy/promote/rollback/destroy on this beam,
+	// and against a concurrent ApprovePromotion/RejectPromotion for the same
+	// beam — locked here, at the caller, rather than inside o.promote
+	// itself, because approvePromotion must hold the SAME lock across its own
+	// read-decide-DecidePromotionRequest sequence (not just the o.promote
+	// call), and o.promote has no way to know it's already covered.
+	unlock := o.beamLocks.lock(beamID)
+	defer unlock()
 	hostname, err = o.promote(ctx, actor, beamhallID, beamID)
 	return hostname, o.outcome(ctx, actor, policy.ActionPromoteToLive, beamhallID, beamID, err)
 }
@@ -144,7 +157,7 @@ func (o *Orchestrator) ShowLogs(ctx context.Context, actor Actor, beamhallID, be
 }
 
 func (o *Orchestrator) showLogs(ctx context.Context, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error) {
-	beam, err := o.st.GetBeam(ctx, beamID)
+	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return nil, err
 	}

@@ -3,10 +3,12 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -42,7 +44,13 @@ var _ Backplane = (*orch.Orchestrator)(nil)
 
 // Config configures the Admin console.
 type Config struct {
-	BaseURL      string // external base, e.g. https://beamhall.acme.internal
+	BaseURL string // external base, e.g. https://beamhall.acme.internal
+	// BaseDomain is the appliance's base domain (config.Config.BaseDomain).
+	// Used ONLY as a Host-header allowlist for the OIDC redirect URI when
+	// BaseURL is empty — config.Load always defaults AdminBaseURL, so that
+	// path is latent in production, but redirectURI must not trust an
+	// arbitrary client-supplied Host header should it ever be reached.
+	BaseDomain   string
 	Issuer       string // OIDC issuer (same IdP the MCP layer trusts)
 	ClientID     string // admin OAuth client
 	ClientSecret string
@@ -122,7 +130,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /admin/login", s.handleLogin)
 	mux.HandleFunc("GET /admin/callback", s.handleCallback)
-	mux.HandleFunc("POST /admin/logout", s.handleLogout)
+	mux.Handle("POST /admin/logout", s.requireAdmin(s.handleLogout))
 
 	// Authenticated views + actions.
 	mux.Handle("GET /admin/{$}", s.requireAdmin(s.handleDashboard))
@@ -166,26 +174,67 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: stateCookie, Value: state, Path: "/admin", HttpOnly: true,
-		Secure: s.cfg.Secure, SameSite: http.SameSiteLaxMode, MaxAge: 600,
+		Secure: s.externalSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: 600,
 	})
 	http.Redirect(w, r, prov.authCodeURL(state, s.redirectURI(r)), http.StatusFound)
 }
 
 // redirectURI is this appliance's OIDC callback, derived from the request so
 // it works behind a reverse proxy. BaseURL overrides it when set (a fixed
-// externally-registered redirect).
+// externally-registered redirect) — the common case, since config.Load
+// always defaults it. Only when BaseURL is empty does this fall back to the
+// request's own Host header, and even then only if it matches BaseDomain (or
+// a subdomain of it); an unrecognized Host falls back to BaseDomain itself
+// rather than echoing an arbitrary client-supplied value into the
+// IdP-registered redirect URI.
 func (s *Server) redirectURI(r *http.Request) string {
 	if s.cfg.BaseURL != "" {
 		return strings.TrimRight(s.cfg.BaseURL, "/") + "/admin/callback"
 	}
-	scheme := "https"
-	if !s.cfg.Secure {
-		scheme = "http"
+	scheme := "http"
+	if s.externalSecure(r) {
+		scheme = "https"
+	}
+	host := r.Host
+	// Only enforce the allowlist when there's actually a domain to check
+	// against — config.Load always populates BaseDomain in production, but a
+	// test/embedding harness that configures neither BaseURL nor BaseDomain
+	// (e.g. an httptest.Server whose only reachable address IS its ephemeral
+	// host:port, with no meaningful "base domain" at all) keeps the prior
+	// trust-the-request behavior rather than being forced onto an unusable
+	// empty host.
+	if s.cfg.BaseDomain != "" && !hostAllowed(host, s.cfg.BaseDomain) {
+		host = s.cfg.BaseDomain
+	}
+	return scheme + "://" + host + "/admin/callback"
+}
+
+// hostAllowed reports whether host (an HTTP Host header, optionally with a
+// port) is baseDomain itself or a subdomain of it.
+func hostAllowed(host, baseDomain string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return host == baseDomain || strings.HasSuffix(host, "."+baseDomain)
+}
+
+// externalSecure reports whether the browser reaches this admin console over
+// HTTPS — used for both redirectURI's scheme and every session/state
+// cookie's Secure attribute, so they can never disagree. cfg.Secure alone
+// (this appliance's own listener/GatewayTLS) is wrong behind a
+// TLS-terminating reverse proxy that talks plain HTTP to beamhalld: the
+// browser connection is HTTPS even though this process's own listener isn't.
+// BaseURL, when configured (the common case), is
+// authoritative; otherwise X-Forwarded-Proto; cfg.Secure is the last resort
+// for a direct connection with neither set.
+func (s *Server) externalSecure(r *http.Request) bool {
+	if s.cfg.BaseURL != "" {
+		return strings.HasPrefix(s.cfg.BaseURL, "https://")
 	}
 	if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
-		scheme = p
+		return p == "https"
 	}
-	return scheme + "://" + r.Host + "/admin/callback"
+	return s.cfg.Secure
 }
 
 func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -229,18 +278,41 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	sess := session{Subject: subject, Issuer: issuer, Email: email,
-		Identity: string(identID), ExpiresAt: time.Now().Add(s.cfg.SessionTTL).Unix()}
-	if err := s.codec.setSession(w, sess, s.cfg.Secure); err != nil {
+	// Cap the session at the underlying access token's own expiry, not just
+	// SessionTTL: an admin's admin:it grant can be revoked at the IdP (group
+	// removal, offboarding) mid-session, and revocation only actually takes
+	// effect once whatever credential is still open expires. A session
+	// cookie outliving the (typically much shorter-lived) access token that
+	// minted it would keep the console open well past that.
+	// This
+	// doesn't achieve immediate revocation (that needs IdP introspection on
+	// every request), but it bounds the window to the token's own lifetime
+	// instead of a flat 8h regardless of it.
+	expiresAt := time.Now().Add(s.cfg.SessionTTL)
+	if !info.Expiration.IsZero() && info.Expiration.Before(expiresAt) {
+		expiresAt = info.Expiration
+	}
+	csrfNonce, err := randomToken()
+	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	clearCookie(w, stateCookie, s.cfg.Secure)
+	sess := session{Subject: subject, Issuer: issuer, Email: email,
+		Identity: string(identID), ExpiresAt: expiresAt.Unix(), CSRFNonce: csrfNonce}
+	if err := s.codec.setSession(w, sess, s.externalSecure(r)); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	clearCookie(w, stateCookie, s.externalSecure(r))
 	http.Redirect(w, r, "/admin", http.StatusFound)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	clearSession(w, s.cfg.Secure)
+	if err := s.checkCSRF(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	clearSession(w, s.externalSecure(r))
 	http.Redirect(w, r, "/admin/login", http.StatusFound)
 }
 
@@ -259,7 +331,7 @@ func (s *Server) requireAdmin(h http.HandlerFunc) http.Handler {
 		}
 		sess, err := s.codec.decode(c.Value)
 		if err != nil || sess.expired(time.Now()) {
-			clearSession(w, s.cfg.Secure)
+			clearSession(w, s.externalSecure(r))
 			http.Redirect(w, r, "/admin/login", http.StatusFound)
 			return
 		}
@@ -280,14 +352,17 @@ func (s *Server) actor(r *http.Request) orch.Actor {
 	return orch.Actor{ID: domain.ID(op.Identity), ITAdmin: true, SourceIP: clientIP(r)}
 }
 
-// csrfToken is a per-session token bound to the operator's subject. Forms
-// embed it; mutating handlers verify it (defense beyond SameSite=Lax).
+// csrfToken is bound to the operator's subject AND a random nonce minted
+// fresh at login (session.CSRFNonce) — not just the subject, which would
+// make the token the same value every time one operator logs in. Forms embed
+// it; mutating handlers verify it (defense beyond SameSite=Lax).
 func (s *Server) csrfToken(r *http.Request) string {
-	return s.codec.sign("csrf:" + operatorOf(r).Subject)
+	op := operatorOf(r)
+	return s.codec.sign("csrf:" + op.Subject + ":" + op.CSRFNonce)
 }
 
 func (s *Server) checkCSRF(r *http.Request) error {
-	if r.FormValue("csrf") != s.csrfToken(r) {
+	if subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.csrfToken(r))) != 1 {
 		return errors.New("CSRF token mismatch — reload the page and retry")
 	}
 	return nil

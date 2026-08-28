@@ -88,6 +88,49 @@ func (s *Store) RetireRoute(ctx context.Context, id domain.ID) error {
 	}))
 }
 
+// SwapActiveRoute atomically retires oldRouteID (when non-empty) and inserts
+// newRoute as the new active route, in one transaction. Both share newRoute's
+// hostname's unique-active-hostname slot (routes_active_hostname allows only
+// one active row per hostname), so a caller that retired the old row and
+// created the new one as two separate calls has a real window in between with
+// zero active routes for that hostname — and if the create then fails, the
+// route table is stuck in that zero-route state. Call this only after the
+// gateway has already accepted the new backend (gw.Upsert): a failure here
+// (e.g. oldRouteID was already retired by a concurrent caller) then never
+// leaves the gateway and the store disagreeing about which backend serves the
+// hostname, and the caller keeps the old route intact to retry against.
+func (s *Store) SwapActiveRoute(ctx context.Context, oldRouteID domain.ID, newRoute *domain.Route) error {
+	if newRoute.ID == "" {
+		newRoute.ID = NewID()
+	}
+	if newRoute.CreatedAt.IsZero() {
+		newRoute.CreatedAt = s.now()
+	}
+	return s.withTx(ctx, func(q *db.Queries) error {
+		if oldRouteID != "" {
+			if err := affected(q.RetireRoute(ctx, db.RetireRouteParams{
+				RetiredAt: ns(s.now()),
+				ID:        string(oldRouteID),
+			})); err != nil {
+				return err
+			}
+		}
+		return mapErr(q.InsertRoute(ctx, db.InsertRouteParams{
+			ID:          string(newRoute.ID),
+			BeamID:      string(newRoute.BeamID),
+			ReleaseID:   string(newRoute.ReleaseID),
+			Kind:        string(newRoute.Kind),
+			Hostname:    newRoute.Hostname,
+			RandomToken: newRoute.RandomToken,
+			BackendAddr: newRoute.BackendAddr,
+			TlsCertRef:  newRoute.TLSCertRef,
+			Status:      string(newRoute.Status),
+			CreatedAt:   ns(newRoute.CreatedAt),
+			RetiredAt:   ns(newRoute.RetiredAt),
+		}))
+	})
+}
+
 func routeFromRow(r db.Route) domain.Route {
 	return domain.Route{
 		ID:          domain.ID(r.ID),

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -278,7 +279,19 @@ func (s *Server) deployBeam(ctx context.Context, req *sdkmcp.CallToolRequest, ar
 		return nil, deployOut{}, fmt.Errorf("give either source_tarball or image_ref+image_digest, not both")
 
 	case args.SourceTarball != "":
-		raw, err := base64.StdEncoding.DecodeString(args.SourceTarball)
+		// Reject on encoded length before ever decoding: a maliciously huge
+		// source_tarball string would otherwise force a full-size decoded
+		// allocation before the size cap below ever gets a chance to reject
+		// it. base64 expands 3 bytes to 4, so this
+		// is a same-order-of-magnitude bound, not exact.
+		if base64.StdEncoding.DecodedLen(len(args.SourceTarball)) > maxTarballBytes {
+			return nil, deployOut{}, fmt.Errorf("source_tarball exceeds %d MB; push to the beam's managed git remote instead", maxTarballBytes>>20)
+		}
+		// Decode through a bounded reader so a crafted/corrupt encoding that
+		// decodes larger than its estimated length still can't allocate past
+		// the cap.
+		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(args.SourceTarball))
+		raw, err := io.ReadAll(io.LimitReader(dec, maxTarballBytes+1))
 		if err != nil {
 			return nil, deployOut{}, fmt.Errorf("source_tarball is not valid base64: %w", err)
 		}

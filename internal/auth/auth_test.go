@@ -29,6 +29,9 @@ type testIdP struct {
 	fetches atomic.Int64
 	// hidden keys are signed with but not published (rotation simulation)
 	hideRSA atomic.Bool
+	// block, when non-nil, makes the JWKS handler wait for it to be closed
+	// before responding — simulates a slow/hanging IdP.
+	block atomic.Pointer[chan struct{}]
 }
 
 func newTestIdP(t *testing.T) *testIdP {
@@ -44,6 +47,9 @@ func newTestIdP(t *testing.T) *testIdP {
 	idp := &testIdP{t: t, rsaKey: rsaKey, ecKey: ecKey}
 	idp.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		idp.fetches.Add(1)
+		if bp := idp.block.Load(); bp != nil {
+			<-*bp
+		}
 		b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 		keys := []map[string]string{}
 		if !idp.hideRSA.Load() {
@@ -135,6 +141,68 @@ func TestVerifyValidToken(t *testing.T) {
 		if info.Extra[ExtraSubject] != "user-1" || info.Extra[ExtraJTI] != "jti-1" || info.Extra[ExtraEmail] != "dev@acme.test" {
 			t.Errorf("extra = %v", info.Extra)
 		}
+	}
+}
+
+// TestFlatRolesClaimIgnoredByDefault proves the fix: a top-level `roles`
+// claim (no nested realm_access) must NOT elevate a caller unless the IdP
+// opted into TrustFlatRolesClaim — otherwise an IdP where that claim is
+// user-assertable would let anyone self-assert an admin role.
+func TestFlatRolesClaimIgnoredByDefault(t *testing.T) {
+	idp := newTestIdP(t)
+	v := newVerifier(t, idp) // default Config: TrustFlatRolesClaim unset (false)
+	tok := idp.mint("rsa-1", func(c jwt.MapClaims) {
+		c["roles"] = []any{"beamhall-it"}
+	})
+	info, err := v.Verify(context.Background(), tok, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasRole(info, DefaultAdminRole) {
+		t.Fatal("a flat top-level roles claim elevated the caller despite TrustFlatRolesClaim being off")
+	}
+}
+
+// TestNestedRealmAccessRolesAlwaysTrusted proves realm_access.roles (the
+// Keycloak-native, non-user-assertable form) elevates regardless of
+// TrustFlatRolesClaim — only the flat top-level claim is gated.
+func TestNestedRealmAccessRolesAlwaysTrusted(t *testing.T) {
+	idp := newTestIdP(t)
+	v := newVerifier(t, idp)
+	tok := idp.mint("rsa-1", func(c jwt.MapClaims) {
+		c["realm_access"] = map[string]any{"roles": []any{DefaultAdminRole}}
+	})
+	info, err := v.Verify(context.Background(), tok, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasRole(info, DefaultAdminRole) {
+		t.Fatal("realm_access.roles should elevate the caller regardless of TrustFlatRolesClaim")
+	}
+}
+
+// TestFlatRolesClaimTrustedWhenOptedIn proves the opt-in path itself still
+// works for an IdP the operator has explicitly configured to trust it.
+func TestFlatRolesClaimTrustedWhenOptedIn(t *testing.T) {
+	idp := newTestIdP(t)
+	v, err := NewVerifier(Config{
+		Issuer:              testIssuer,
+		Audience:            testAudience,
+		JWKSURL:             idp.srv.URL,
+		TrustFlatRolesClaim: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := idp.mint("rsa-1", func(c jwt.MapClaims) {
+		c["roles"] = []any{"beamhall-it"}
+	})
+	info, err := v.Verify(context.Background(), tok, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasRole(info, DefaultAdminRole) {
+		t.Fatal("a flat top-level roles claim should elevate the caller once the IdP opts in via TrustFlatRolesClaim")
 	}
 }
 
@@ -246,6 +314,94 @@ func TestJWKSKeyRotationRefetch(t *testing.T) {
 	}
 	if got := idp.fetches.Load(); got != before {
 		t.Fatalf("unknown kid inside cooldown caused %d extra JWKS fetches", got-before)
+	}
+}
+
+// TestStaleKnownKidRevalidatesAfterTTL proves the fix: a known kid must
+// not be trusted forever. If the IdP rotates key material in place (same kid,
+// new key — e.g. an in-place cert renewal), a token signed with the old key
+// must eventually stop verifying once the cache ages past keysTTL, and one
+// signed with the newly rotated key must start verifying.
+func TestStaleKnownKidRevalidatesAfterTTL(t *testing.T) {
+	idp := newTestIdP(t)
+	v := newVerifier(t, idp)
+
+	// Prime the cache with the original ec-1 key.
+	if _, err := v.Verify(context.Background(), idp.mint("ec-1", nil), nil); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	// Mint a token with the OLD key before rotating it out.
+	oldSignedTok := idp.mint("ec-1", nil)
+
+	// Rotate: the IdP now publishes a DIFFERENT key under the SAME kid.
+	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idp.ecKey = newKey
+
+	// Within keysTTL, the cache must keep serving the old (still cached) key
+	// without re-hitting the IdP — the old-signed token still verifies.
+	if _, err := v.Verify(context.Background(), oldSignedTok, nil); err != nil {
+		t.Fatalf("old-signed token rejected before the cache aged out: %v", err)
+	}
+
+	// Age the cache past keysTTL (also past refetchCooldown, since TTL > cooldown).
+	v.jwks.lastFetch = time.Now().Add(-keysTTL - time.Second)
+
+	// The old-signed token must now be rejected (cache revalidated, picked up
+	// the rotated key)...
+	if _, err := v.Verify(context.Background(), oldSignedTok, nil); err == nil {
+		t.Fatal("token signed with the pre-rotation key still verified after the cache aged past keysTTL")
+	}
+	// ...and a token signed with the newly rotated key must verify.
+	if _, err := v.Verify(context.Background(), idp.mint("ec-1", nil), nil); err != nil {
+		t.Fatalf("token signed with the post-rotation key rejected: %v", err)
+	}
+}
+
+// TestKnownKidNotBlockedByConcurrentSlowRefetch proves the fix: a
+// verification for an already-cached kid must not stall behind an unrelated
+// caller's unknown-kid refetch hanging on a slow/unresponsive IdP.
+func TestKnownKidNotBlockedByConcurrentSlowRefetch(t *testing.T) {
+	idp := newTestIdP(t)
+	v := newVerifier(t, idp)
+
+	// Prime the cache with ec-1 so it's a fast, no-network cache hit below.
+	known := idp.mint("ec-1", nil)
+	if _, err := v.Verify(context.Background(), known, nil); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	// Make the JWKS endpoint hang, then trigger a refetch via an unknown kid
+	// from a separate goroutine (age the cache past the cooldown first).
+	block := make(chan struct{})
+	idp.block.Store(&block)
+	t.Cleanup(func() { close(block) })
+	v.jwks.lastFetch = time.Time{}
+
+	tok := idp.mint("rsa-1", nil)
+	parts := strings.SplitN(tok, ".", 2)
+	hdr := `{"alg":"RS256","kid":"ghost"}`
+	forged := base64.RawURLEncoding.EncodeToString([]byte(hdr)) + "." + parts[1]
+	go v.Verify(context.Background(), forged, nil) //nolint:errcheck // intentionally hangs until block closes
+
+	// Give the refetch goroutine a moment to actually enter the hung HTTP call.
+	time.Sleep(50 * time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := v.Verify(context.Background(), known, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("known-kid verify failed: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("verifying an already-cached kid blocked behind a concurrent slow refetch of an unrelated unknown kid")
 	}
 }
 

@@ -212,11 +212,14 @@ func (o *Orchestrator) ShowEmail(ctx context.Context, actor Actor, beamhallID, b
 	if err := o.authorize(ctx, actor, policy.ActionShowEmail, beamhallID, beamID); err != nil {
 		return EmailInfo{}, err
 	}
-	info, err := o.showEmail(ctx, beamID)
+	info, err := o.showEmail(ctx, beamhallID, beamID)
 	return info, o.outcome(ctx, actor, policy.ActionShowEmail, beamhallID, beamID, err)
 }
 
-func (o *Orchestrator) showEmail(ctx context.Context, beamID domain.ID) (EmailInfo, error) {
+func (o *Orchestrator) showEmail(ctx context.Context, beamhallID, beamID domain.ID) (EmailInfo, error) {
+	if _, err := o.operableBeam(ctx, beamhallID, beamID); err != nil {
+		return EmailInfo{}, err
+	}
 	resources, err := o.st.ListResourcesByBeam(ctx, beamID)
 	if err != nil {
 		return EmailInfo{}, err
@@ -403,8 +406,15 @@ func (o *Orchestrator) DrainEmailAudit(ctx context.Context, after int64) (int64,
 		o.appendEmailAudit(ctx, se)
 	}
 	if next < after {
-		// Broker ring reset (restart): adopt its high-water so we don't loop.
-		next = after
+		// The broker's own counter is now BELOW our cursor — its ring reset
+		// (a restart), not a transient blip we should paper over. Adopt its
+		// reported high-water (not clamp back up to our stale one), or every
+		// subsequent pull keeps asking for "newer than a cursor the broker's
+		// fresh counter will now never reach again" — silently dropping every
+		// email-send audit event until the counter climbs back past the old
+		// value.
+		o.log.Warn("email broker audit cursor reset (broker restarted?) — adopting its new high-water",
+			"prev_cursor", after, "broker_cursor", next)
 	}
 	return next, nil
 }

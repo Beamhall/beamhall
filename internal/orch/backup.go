@@ -139,6 +139,18 @@ func (o *Orchestrator) RequestRestoreBackup(ctx context.Context, actor Actor, na
 // executeRestoreBackup runs on four-eyes approval. It does NOT overwrite the
 // live data dir (the store is open); it verifies the archive and returns the
 // operator runbook to apply it under a stopped daemon.
+//
+// The runbook deliberately does NOT chain "&& systemctl start beamhalld"
+// after the restore step. beamhalld restore always drops the recovered
+// secret key at <dataDir>/secret.key, but when this appliance loads its key
+// out-of-band (SecretKeyFile != the in-data-dir default) that is not where
+// the daemon reads it from on boot — starting immediately either fails
+// closed (key file missing at SecretKeyFile) or, worse, boots against a
+// stale pre-existing key there, silently leaving every restored secret
+// undecryptable. Auto-chaining start also skipped this relocation step;
+// listing it as
+// its own step here mirrors runRestore's CLI message so an operator pasting
+// this runbook can't miss it.
 func (o *Orchestrator) executeRestoreBackup(payload []byte) (string, error) {
 	var p restoreBackupPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -149,6 +161,24 @@ func (o *Orchestrator) executeRestoreBackup(payload []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("verify backup %q: %w", p.Name, err)
 	}
-	return fmt.Sprintf("backup %q verified (created %s). Restore overwrites the whole control plane, so apply it on the appliance host under a stopped daemon:\n  systemctl stop beamhalld && beamhalld restore %s && systemctl start beamhalld",
-		p.Name, man.CreatedAt, path), nil
+
+	steps := []string{
+		"systemctl stop beamhalld",
+		fmt.Sprintf("beamhalld restore %s", path),
+	}
+	msg := fmt.Sprintf("backup %q verified (created %s). Restore overwrites the whole control plane, so apply it on the appliance host under a stopped daemon — run these as SEPARATE steps (do not chain with &&, so you can check each one before continuing):",
+		p.Name, man.CreatedAt)
+
+	inDataDirDefault := filepath.Join(o.backupDataDir, "secret.key")
+	if o.backupKeyPath != "" && o.backupKeyPath != inDataDirDefault {
+		steps = append(steps,
+			fmt.Sprintf("install -m0400 %s/secret.key %s   # IMPORTANT: this appliance reads its key out-of-band from %s — the restore drops the recovered key in the data dir; it must be relocated BEFORE the next step or boot fails closed or (worse) starts against the wrong key, leaving every restored secret undecryptable",
+				o.backupDataDir, o.backupKeyPath, o.backupKeyPath))
+	}
+	steps = append(steps, "systemctl start beamhalld")
+
+	for _, s := range steps {
+		msg += "\n  " + s
+	}
+	return msg, nil
 }

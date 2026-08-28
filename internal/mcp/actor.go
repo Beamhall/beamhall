@@ -45,6 +45,16 @@ func (s *Server) resolveActor(ctx context.Context, req *sdkmcp.CallToolRequest, 
 		}
 		return orch.Actor{}, fmt.Errorf("resolve identity: %w", err)
 	}
+	// Enforce the per-identity kill switch (admin_set_identity_status) at the
+	// boundary, not just in the PEP: admin_* tools authorize on actor.ITAdmin
+	// alone (requireIT) and never call the PEP, so a disabled IT-admin identity
+	// with a still-valid token would otherwise keep full admin power — including
+	// the ability to re-enable itself. Checking here closes both the admin and
+	// the builder path (which does route through the PEP's own status check) at
+	// one chokepoint.
+	if ident.Status != domain.IdentityActive {
+		return orch.Actor{}, fmt.Errorf("identity %q is %s on this Beamhall appliance — ask IT to re-enable it", subject, ident.Status)
+	}
 	jti, _ := info.Extra[auth.ExtraJTI].(string)
 	return orch.Actor{
 		ID:       ident.ID,

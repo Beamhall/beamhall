@@ -199,9 +199,73 @@ func TestTokenStoreLifecycle(t *testing.T) {
 	if !ok || p.Actor != "actor" {
 		t.Fatalf("validate = %v %+v", ok, p)
 	}
-	s.Consume("h", "b")
+	if !s.Claim(p) {
+		t.Fatal("claim failed on a freshly validated grant")
+	}
 	if _, ok := s.Validate("h", "b", tok); ok {
-		t.Error("consumed token still valid")
+		t.Error("claimed token still valid")
+	}
+}
+
+// TestConcurrentClaimOnlyOneSucceeds proves the fix directly: two
+// concurrent receive-pack requests presenting the identical valid token both
+// pass Validate (it has no side effects), but only one Claim call for that
+// grant can ever succeed — the other must be refused before it would have
+// started a second, redundant build/deploy.
+func TestConcurrentClaimOnlyOneSucceeds(t *testing.T) {
+	s := NewTokenStore(time.Minute)
+	tok, _ := s.Mint("h", "b", "actor")
+
+	// Both requests independently validate first, exactly as info/refs then
+	// receive-pack (or two genuinely concurrent pushes) would.
+	p1, ok1 := s.Validate("h", "b", tok)
+	p2, ok2 := s.Validate("h", "b", tok)
+	if !ok1 || !ok2 {
+		t.Fatalf("both concurrent validations should succeed: %v %v", ok1, ok2)
+	}
+
+	var wg sync.WaitGroup
+	results := make([]bool, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); results[0] = s.Claim(p1) }()
+	go func() { defer wg.Done(); results[1] = s.Claim(p2) }()
+	wg.Wait()
+
+	if results[0] == results[1] {
+		t.Fatalf("exactly one concurrent claim must succeed, got %v and %v", results[0], results[1])
+	}
+}
+
+// TestClaimActsOnCapturedGrantNotAFreshMint proves the fix: Claim (and
+// Unclaim) act on the EXACT grant Validate returned, not a fresh
+// (beamhall,beam) map lookup. Pre-fix, Consume looked the grant up by key —
+// so if a push's deploy took long enough that the agent re-minted a fresh
+// token for the same beam before the OLD push finished, the old push's
+// post-deploy consumption would find and invalidate the NEW grant instead
+// (it "currently occupies the key"), killing a token before it was ever used.
+func TestClaimActsOnCapturedGrantNotAFreshMint(t *testing.T) {
+	s := NewTokenStore(time.Minute)
+	oldTok, _ := s.Mint("h", "b", "actor-1")
+	p, ok := s.Validate("h", "b", oldTok)
+	if !ok {
+		t.Fatal("validate on the original grant failed")
+	}
+
+	// A re-mint mid-deploy (e.g. the agent requested a fresh push command
+	// while the old push's deploy was still running) replaces the
+	// (beamhall,beam) slot with a brand new grant.
+	newTok, _ := s.Mint("h", "b", "actor-2")
+
+	// The original (now stale, no longer in the map) push's deploy succeeds;
+	// it claims its OWN captured grant.
+	if !s.Claim(p) {
+		t.Fatal("claim on the original grant failed")
+	}
+
+	// The freshly minted token must be completely unaffected — still valid,
+	// never touched by the old push's claim.
+	if _, ok := s.Validate("h", "b", newTok); !ok {
+		t.Fatal("claiming a stale grant invalidated the freshly re-minted token before it was ever used")
 	}
 }
 
@@ -340,9 +404,12 @@ func TestReadTokenStore(t *testing.T) {
 	if _, ok := s.ValidateRead("h", "b", ptok); ok {
 		t.Error("push token validated as read")
 	}
-	// Consuming the push token must not kill the read token.
-	s.Consume("h", "b")
+	// Claiming the push token must not kill the read token.
+	pp, ok := s.Validate("h", "b", ptok)
+	if !ok || !s.Claim(pp) {
+		t.Fatal("claim failed on a freshly validated push grant")
+	}
 	if _, ok := s.ValidateRead("h", "b", rtok); !ok {
-		t.Error("read token died when push token was consumed")
+		t.Error("read token died when push token was claimed")
 	}
 }

@@ -41,6 +41,7 @@ type Policy struct {
 // use New.
 type Reconciler struct {
 	bin        string   // iptables binary
+	restoreBin string   // iptables-restore binary (atomic chain replace)
 	alwaysDeny []string // applied to every bridge before the allowlist
 }
 
@@ -49,13 +50,19 @@ type Reconciler struct {
 func New(extraAlwaysDeny ...string) *Reconciler {
 	return &Reconciler{
 		bin:        "iptables",
+		restoreBin: "iptables-restore",
 		alwaysDeny: append(append([]string{}, AlwaysDeny...), extraAlwaysDeny...),
 	}
 }
 
 // Reconcile makes the live ruleset match policies exactly: it ensures the chain
-// exists and is hooked from DOCKER-USER, then flushes and rebuilds the chain.
-// Safe to call repeatedly and on boot.
+// exists and is hooked from DOCKER-USER, then atomically replaces the chain's
+// entire rule set in one iptables-restore transaction. A flush-then-rebuild
+// approach (one exec per rule) leaves a real window where the chain is empty —
+// every bridge's egress falls through DOCKER-USER to Docker's default-ACCEPT
+// during that window, including to the cloud metadata address — and this runs
+// on every deploy (bridges are lazy-created), not just at boot. Safe to call
+// repeatedly and on boot.
 func (r *Reconciler) Reconcile(ctx context.Context, policies []Policy) error {
 	if err := r.ensureChain(ctx); err != nil {
 		return err
@@ -63,8 +70,40 @@ func (r *Reconciler) Reconcile(ctx context.Context, policies []Policy) error {
 	if err := r.ensureHook(ctx); err != nil {
 		return err
 	}
-	if err := r.run(ctx, "-F", chain); err != nil {
-		return fmt.Errorf("flush %s: %w", chain, err)
+
+	script, err := r.buildScript(policies)
+	if err != nil {
+		return err
+	}
+	if err := r.restore(ctx, script); err != nil {
+		return fmt.Errorf("atomically replace %s: %w", chain, err)
+	}
+	return nil
+}
+
+// buildScript renders policies as an iptables-restore script that fully
+// replaces the BEAMHALL-EGRESS chain's contents in one transaction. Pure and
+// side-effect-free (no exec), so the ruleset it would apply — including the
+// injection guard — can be checked without root or a real iptables.
+func (r *Reconciler) buildScript(policies []Policy) ([]byte, error) {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "*filter\n:%s -\n", chain)
+
+	// Permanent, bridge-independent backstop: metadata/link-local is denied
+	// for EVERY bridge — including one omitted from this Reconcile call
+	// entirely (a stale/orphaned bridge, or a race where a container starts
+	// on a bridge before its policy is registered). The per-bridge loop
+	// below only ever covered bridges actually present in policies, leaving
+	// any other bridge's containers free to reach the metadata endpoint with
+	// no rule matching them at all — the steady-state cousin of the
+	// reconcile flush-window gap. DROP is terminal, so this
+	// also makes the per-bridge always-deny rules below redundant for the
+	// same CIDRs; they're dropped in favor of this single unconditional set.
+	for _, cidr := range r.alwaysDeny {
+		if !restoreSafe(cidr) {
+			return nil, fmt.Errorf("egress: unsafe always-deny entry %q", cidr)
+		}
+		fmt.Fprintf(&buf, "-A %s -d %s -j DROP\n", chain, cidr)
 	}
 
 	// Note: we deliberately do NOT add a conntrack ESTABLISHED,RELATED RETURN
@@ -81,22 +120,46 @@ func (r *Reconciler) Reconcile(ctx context.Context, policies []Policy) error {
 		if p.Bridge == "" {
 			continue
 		}
-		// Always-deny first: metadata/link-local/host/mgmt — beats any allow.
-		for _, cidr := range r.alwaysDeny {
-			if err := r.run(ctx, "-A", chain, "-i", p.Bridge, "-d", cidr, "-j", "DROP"); err != nil {
-				return err
-			}
+		if !restoreSafe(p.Bridge) {
+			return nil, fmt.Errorf("egress: unsafe bridge name %q", p.Bridge)
 		}
+		// (Always-deny is the bridge-independent block above, ahead of this
+		// loop — it already covers this bridge, so no per-bridge repeat here.)
 		// Allowlist: permitted destinations RETURN to DOCKER-USER (accepted).
 		for _, cidr := range p.Allow {
-			if err := r.run(ctx, "-A", chain, "-i", p.Bridge, "-d", cidr, "-j", "RETURN"); err != nil {
-				return err
+			if !restoreSafe(cidr) {
+				return nil, fmt.Errorf("egress: unsafe allowlist entry %q for bridge %s", cidr, p.Bridge)
 			}
+			fmt.Fprintf(&buf, "-A %s -i %s -d %s -j RETURN\n", chain, p.Bridge, cidr)
 		}
 		// Default-deny everything else leaving this bridge.
-		if err := r.run(ctx, "-A", chain, "-i", p.Bridge, "-j", "DROP"); err != nil {
-			return err
-		}
+		fmt.Fprintf(&buf, "-A %s -i %s -j DROP\n", chain, p.Bridge)
+	}
+	buf.WriteString("COMMIT\n")
+	return buf.Bytes(), nil
+}
+
+// restoreSafe reports whether s is safe to embed as a single field in an
+// iptables-restore script line. An embedded newline (unlike an exec.Command
+// argv element, which iptables-restore never sees split) would start a new
+// line the restore parser executes as its own command against the live
+// ruleset — so this is not a formatting nicety, it is what keeps a malformed
+// or malicious CIDR/bridge value from injecting arbitrary firewall rules.
+func restoreSafe(s string) bool {
+	return s != "" && !strings.ContainsAny(s, "\n\r\x00")
+}
+
+// restore applies an iptables-restore script atomically. --noflush means only
+// chains the script declares (here, just BEAMHALL-EGRESS) are replaced; every
+// other chain in the table (DOCKER-USER, DOCKER's own chains, …) is untouched.
+func (r *Reconciler) restore(ctx context.Context, rules []byte) error {
+	cmd := exec.CommandContext(ctx, r.restoreBin, "-w", "--noflush")
+	cmd.Stdin = bytes.NewReader(rules)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		return fmt.Errorf("%s: %w: %s", r.restoreBin, err, msg)
 	}
 	return nil
 }

@@ -204,6 +204,12 @@ func Restore(archivePath, dataDir string) error {
 				return err
 			}
 			mode := os.FileMode(h.Mode) & 0o777
+			if name == keyName || name == dbName {
+				// Never honor an archive-supplied mode for the secret root key
+				// or the database — a tampered or externally-produced archive
+				// must not be able to restore the key world-readable.
+				mode = 0o600
+			}
 			out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 			if err != nil {
 				return err

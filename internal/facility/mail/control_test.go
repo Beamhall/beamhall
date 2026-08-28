@@ -62,7 +62,7 @@ func TestControlChannelRoundTrip(t *testing.T) {
 	if err := sendVia(addr, creds.Username, creds.Password, "x@old.example", "u@dest.example", sampleMsg); err == nil {
 		t.Fatal("old sender should now be rejected")
 	}
-	if err := sendVia(addr, creds.Username, creds.Password, "x@new.example", "u@dest.example", sampleMsg); err != nil {
+	if err := sendVia(addr, creds.Username, creds.Password, "x@new.example", "u@dest.example", msgFrom("x@new.example")); err != nil {
 		t.Fatalf("new sender should work: %v", err)
 	}
 

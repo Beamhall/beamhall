@@ -31,7 +31,12 @@ func TestDockerDriverLifecycle(t *testing.T) {
 	if image == "" {
 		image = "bh-smoke-beam"
 	}
-	d, err := NewDockerDriver("/tmp/bh-it-secrets")
+	// /dev/shm, not /tmp: NewDockerDriver now requires a tmpfs-backed secrets
+	// root (secrets must never be staged to persistent disk), and /tmp
+	// isn't guaranteed tmpfs on every distro whereas /dev/shm always is.
+	secretsDir := "/dev/shm/bh-it-secrets"
+	t.Cleanup(func() { _ = os.RemoveAll(secretsDir) })
+	d, err := NewDockerDriver(secretsDir)
 	if err != nil {
 		t.Fatalf("driver: %v", err)
 	}

@@ -10,6 +10,41 @@ import (
 
 // CreateResource persists a Resource, filling ID and timestamps if unset.
 func (s *Store) CreateResource(ctx context.Context, r *domain.Resource) error {
+	params, err := resourceInsertParams(s, r)
+	if err != nil {
+		return err
+	}
+	return mapErr(s.q.InsertResource(ctx, params))
+}
+
+// CreateResourceWithQuota atomically counts the beamhall's resources of r's
+// own type and inserts r inside one transaction — a plain count-then-insert
+// (as two separate calls) leaves a window where two concurrent
+// create_database calls can each pass their own count check and together
+// exceed maxCount. Returns
+// ErrQuota, not the insert, when the beamhall is already at (or maxCount is
+// unset/non-positive).
+func (s *Store) CreateResourceWithQuota(ctx context.Context, r *domain.Resource, maxCount int) error {
+	params, err := resourceInsertParams(s, r)
+	if err != nil {
+		return err
+	}
+	return mapErr(s.withTx(ctx, func(q *db.Queries) error {
+		n, err := q.CountResourcesByBeamhallAndType(ctx, db.CountResourcesByBeamhallAndTypeParams{
+			BeamhallID: string(r.BeamhallID),
+			Type:       string(r.Type),
+		})
+		if err != nil {
+			return err
+		}
+		if maxCount <= 0 || int(n) >= maxCount {
+			return fmt.Errorf("%w: %d of %d %s resources in use", ErrQuota, n, maxCount, r.Type)
+		}
+		return q.InsertResource(ctx, params)
+	}))
+}
+
+func resourceInsertParams(s *Store, r *domain.Resource) (db.InsertResourceParams, error) {
 	if r.ID == "" {
 		r.ID = NewID()
 	}
@@ -19,13 +54,13 @@ func (s *Store) CreateResource(ctx context.Context, r *domain.Resource) error {
 	r.UpdatedAt = r.CreatedAt
 	connRef, err := encJSON(r.ConnectionSecretRef)
 	if err != nil {
-		return fmt.Errorf("encode connection secret ref: %w", err)
+		return db.InsertResourceParams{}, fmt.Errorf("encode connection secret ref: %w", err)
 	}
 	spec, err := encJSON(r.Spec)
 	if err != nil {
-		return fmt.Errorf("encode spec: %w", err)
+		return db.InsertResourceParams{}, fmt.Errorf("encode spec: %w", err)
 	}
-	return mapErr(s.q.InsertResource(ctx, db.InsertResourceParams{
+	return db.InsertResourceParams{
 		ID:                   string(r.ID),
 		BeamhallID:           string(r.BeamhallID),
 		BeamID:               string(r.BeamID),
@@ -37,7 +72,7 @@ func (s *Store) CreateResource(ctx context.Context, r *domain.Resource) error {
 		BackingHandle:        r.BackingHandle,
 		CreatedAt:            ns(r.CreatedAt),
 		UpdatedAt:            ns(r.UpdatedAt),
-	}))
+	}, nil
 }
 
 // GetResource returns the Resource with the given id.

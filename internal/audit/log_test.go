@@ -357,6 +357,52 @@ func TestPruneThenUncheckpointedDeletionStillDetected(t *testing.T) {
 	}
 }
 
+// TestPruneToEmptyThenAppendStillVerifies is a regression test:
+// pruning
+// every live event (e.g. age-based retention when the whole log has aged
+// out — the only mode the daemon runs unattended) must not desync the next
+// append's PrevHash from the checkpoint anchor Verify resumes from.
+func TestPruneToEmptyThenAppendStillVerifies(t *testing.T) {
+	l, st, _ := newLogger(t)
+	ctx := context.Background()
+	appendN(t, l, 5)
+
+	// Prune everything: a MaxAge policy evaluated against a "now" an hour past
+	// every event's timestamp sweeps the whole log — matching how
+	// BEAMHALL_AUDIT_RETENTION_DAYS behaves once every event has aged out.
+	// (MaxAge<=0 means "ignore this constraint", so it must stay positive.)
+	pruned, err := l.Prune(ctx, RetentionPolicy{MaxAge: time.Nanosecond}, "operator-cli", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if pruned != 5 {
+		t.Fatalf("pruned = %d, want 5 (the whole log)", pruned)
+	}
+	recs, err := st.ListAuditEvents(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("expected an empty table after a full prune, got %d rows", len(recs))
+	}
+	if issues := mustVerify(t, l); len(issues) != 0 {
+		t.Fatalf("chain not verifiable immediately after a full prune: %v", issues)
+	}
+
+	// The next append is where the bug lived: without the fix it reseeds
+	// PrevHash="" (genesis) instead of continuing from the checkpoint anchor.
+	// appendN assumes a pristine log (asserts seq==1 for its first event), so
+	// append directly here — AUTOINCREMENT continues past the pruned rows.
+	ev := domain.AuditEvent{ActorID: "actor-1", BeamhallID: "bh-1", BeamID: "beam-1",
+		Action: "post-prune", Decision: domain.DecisionAllow, Reason: "test"}
+	if _, err := l.Append(ctx, &ev); err != nil {
+		t.Fatalf("Append after full prune: %v", err)
+	}
+	if issues := mustVerify(t, l); len(issues) != 0 {
+		t.Fatalf("false chain-break after appending post full-prune: %v", issues)
+	}
+}
+
 func TestPruneNoPolicyIsNoop(t *testing.T) {
 	l, _, _ := newLogger(t)
 	appendN(t, l, 3)

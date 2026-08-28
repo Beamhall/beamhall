@@ -117,20 +117,40 @@ func (o *Orchestrator) finalizeLiveRelease(ctx context.Context, beam *domain.Bea
 	hostname := o.liveHost(beam.Slug, bh.Slug)
 	prevLive := beam.LiveReleaseID
 
-	// Free the stable hostname's active-route row before minting the new one
-	// (the unique active-hostname index allows only one). We deliberately do NOT
-	// gw.Retire(hostname) — mintRoute's Upsert below repoints the same hostname
-	// to the new backend in one step, so there is no production gap.
+	// Find the previous live release's active route row, if any, to retire —
+	// looked up but not yet touched (see below).
+	var oldRouteID domain.ID
 	if prevLive != "" {
 		if prevRel, err := o.st.GetRelease(ctx, prevLive); err == nil && prevRel.RouteID != "" {
 			if rt, err := o.st.GetRoute(ctx, prevRel.RouteID); err == nil && rt.Status == domain.RouteActive {
-				if err := o.st.RetireRoute(ctx, rt.ID); err != nil {
-					return "", err
-				}
+				oldRouteID = rt.ID
 			}
 		}
 	}
-	if _, err := o.mintRoute(ctx, beam, relID, hostname, gateway.Live, backendAddr); err != nil {
+
+	// Tell the gateway FIRST, before any DB mutation. Upsert repoints the
+	// stable hostname to the new backend in one step — no gw.Retire, so there
+	// is no production gap. If this fails, nothing else has changed: the old
+	// route row is still active and the old workload is still serving.
+	if err := o.gw.Upsert(ctx, gateway.Route{Hostname: hostname, BackendAddr: backendAddr, Kind: gateway.Live}); err != nil {
+		return "", fmt.Errorf("finalize live release: gateway upsert: %w", err)
+	}
+
+	// Only now touch the store: retire the old route and create the new one
+	// as one atomic swap. The unique active-hostname index allows only one
+	// active row per hostname, so retire-then-separately-create has a real
+	// window with zero active routes for it if the create then fails — and
+	// since the gateway has already been told the truth above, a failure here
+	// can never leave gateway and store disagreeing about which backend
+	// serves the hostname.
+	newRoute := &domain.Route{
+		BeamID: beam.ID, ReleaseID: relID, Kind: domain.RouteLive,
+		Hostname: hostname, BackendAddr: backendAddr, Status: domain.RouteActive,
+	}
+	if err := o.st.SwapActiveRoute(ctx, oldRouteID, newRoute); err != nil {
+		return "", fmt.Errorf("finalize live release: swap route: %w", err)
+	}
+	if err := o.st.SetReleaseRoute(ctx, relID, newRoute.ID); err != nil {
 		return "", err
 	}
 	if err := o.st.ActivateRelease(ctx, relID); err != nil {

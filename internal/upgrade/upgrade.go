@@ -43,9 +43,18 @@ type Result struct {
 type Stager interface {
 	Enabled() bool
 	CurrentVersion() string
-	// Stage downloads, checksum-verifies, and stages the target version, returning
-	// the operator apply/rollback runbook. It does NOT touch the live binary.
-	Stage(ctx context.Context, version string) (Result, error)
+	// Stage downloads, checksum-verifies, and stages the target version,
+	// returning the operator apply/rollback runbook. It does NOT touch the
+	// live binary. expectedSHA256 (hex, case-insensitive) MUST match the
+	// downloaded artifact's checksum — it is the human approver's own
+	// independently-obtained digest (e.g. read off the GitHub release page),
+	// not derived from anything this call downloads itself. Without it, the
+	// only integrity check is the release host's own checksums.txt fetched
+	// from the SAME base URL as the binary — meaning a compromised or
+	// MITM'd release channel can serve a malicious binary AND a matching
+	// checksums.txt together, and the four-eyes approver would be signing
+	// off on a floating version string with no way to catch that.
+	Stage(ctx context.Context, version, expectedSHA256 string) (Result, error)
 }
 
 // Disabled is the fail-closed default: self-upgrade is unavailable.
@@ -53,7 +62,7 @@ type Disabled struct{ Version string }
 
 func (Disabled) Enabled() bool            { return false }
 func (d Disabled) CurrentVersion() string { return d.Version }
-func (Disabled) Stage(context.Context, string) (Result, error) {
+func (Disabled) Stage(context.Context, string, string) (Result, error) {
 	return Result{}, ErrNotEnabled
 }
 
@@ -88,10 +97,21 @@ func (r Release) client() *http.Client {
 	return http.DefaultClient
 }
 
-func (r Release) Stage(ctx context.Context, version string) (Result, error) {
+// expectedSHA256Re matches a bare hex-encoded SHA-256 digest, case-insensitive.
+var expectedSHA256Re = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+
+func (r Release) Stage(ctx context.Context, version, expectedSHA256 string) (Result, error) {
 	if !versionRe.MatchString(version) {
 		return Result{}, fmt.Errorf("invalid target version %q (want e.g. v0.1.11)", version)
 	}
+	// The release host's checksums.txt is fetched from the SAME base URL as
+	// the binary — a compromised or MITM'd channel can serve a matching pair,
+	// so that alone isn't real integrity. expectedSHA256 must come from the
+	// human approver's own independently-obtained digest.
+	if !expectedSHA256Re.MatchString(expectedSHA256) {
+		return Result{}, fmt.Errorf("expected_sha256 must be a 64-character hex SHA-256 digest (got %q) — read it off the GitHub release page's checksums.txt, not from this appliance", expectedSHA256)
+	}
+	expectedSHA256 = strings.ToLower(expectedSHA256)
 	bare := strings.TrimPrefix(version, "v")
 	tag := "v" + bare
 	if tag == "v"+strings.TrimPrefix(r.Current, "v") {
@@ -100,12 +120,13 @@ func (r Release) Stage(ctx context.Context, version string) (Result, error) {
 	asset := fmt.Sprintf("beamhall_%s_%s_%s.tar.gz", bare, r.GOOS, r.GOARCH)
 	base := strings.TrimRight(r.BaseURL, "/") + "/" + tag
 
-	// 1. Expected checksum from checksums.txt.
+	// 1. Expected checksum from checksums.txt (same-channel — see above).
 	want, err := r.fetchChecksum(ctx, base+"/checksums.txt", asset)
 	if err != nil {
 		return Result{}, err
 	}
-	// 2. Download the asset and verify its checksum.
+	// 2. Download the asset and verify its checksum against BOTH the
+	// same-channel checksums.txt and the approver's independent digest.
 	blob, err := r.fetch(ctx, base+"/"+asset)
 	if err != nil {
 		return Result{}, err
@@ -114,6 +135,9 @@ func (r Release) Stage(ctx context.Context, version string) (Result, error) {
 	got := hex.EncodeToString(sum[:])
 	if got != want {
 		return Result{}, fmt.Errorf("checksum mismatch for %s: got %s, release lists %s", asset, got, want)
+	}
+	if got != expectedSHA256 {
+		return Result{}, fmt.Errorf("checksum mismatch for %s: got %s, approver expected %s — do not stage; the release channel may be compromised", asset, got, expectedSHA256)
 	}
 	// 3. Extract beamhalld and stage it.
 	bin, err := extractBeamhalld(blob)

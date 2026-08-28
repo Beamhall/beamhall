@@ -40,6 +40,14 @@ TimeoutStopSec=20
 StateDirectory=beamhall
 StateDirectoryMode=0700
 
+# Runtime directory (tmpfs by systemd guarantee, cleared on stop/reboot) for
+# staging decrypted secrets before they're bind-mounted into a beam container.
+# The driver refuses to start if this path isn't tmpfs-backed — decrypted
+# credentials must never land on persistent disk (or a disk/VM snapshot).
+RuntimeDirectory=beamhall
+RuntimeDirectoryMode=0700
+Environment=BEAMHALL_SECRETS_DIR=%t/beamhall/secrets
+
 # --- hardening (compatible with Docker-socket access) ---
 # Egress isolation (the BEAMHALL-EGRESS iptables/nf_tables chain hooked from
 # DOCKER-USER) runs in-process and needs CAP_NET_ADMIN. Running as the

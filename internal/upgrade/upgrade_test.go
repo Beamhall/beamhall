@@ -18,7 +18,9 @@ import (
 // fakeRelease serves a GoReleaser-style release: a tarball containing an
 // executable "beamhalld" (a shell script that prints the version) plus a
 // checksums.txt. corrupt=true makes checksums.txt list the wrong digest.
-func fakeRelease(t *testing.T, bareVer string, corrupt bool) *httptest.Server {
+// Returns the server and the tarball's REAL digest (what a genuine approver
+// reading the real release page would see), regardless of corrupt.
+func fakeRelease(t *testing.T, bareVer string, corrupt bool) (*httptest.Server, string) {
 	t.Helper()
 	asset := fmt.Sprintf("beamhall_%s_linux_amd64.tar.gz", bareVer)
 
@@ -36,18 +38,19 @@ func fakeRelease(t *testing.T, bareVer string, corrupt bool) *httptest.Server {
 	tgz := tarbuf.Bytes()
 
 	sum := sha256.Sum256(tgz)
-	digest := hex.EncodeToString(sum[:])
+	realDigest := hex.EncodeToString(sum[:])
+	listedDigest := realDigest
 	if corrupt {
-		digest = strings.Repeat("0", 64)
+		listedDigest = strings.Repeat("0", 64)
 	}
-	checksums := digest + "  " + asset + "\n"
+	checksums := listedDigest + "  " + asset + "\n"
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v"+bareVer+"/"+asset, func(w http.ResponseWriter, r *http.Request) { w.Write(tgz) })
 	mux.HandleFunc("/v"+bareVer+"/checksums.txt", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(checksums)) })
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, realDigest
 }
 
 func newRelease(t *testing.T, srv *httptest.Server, current string) Release {
@@ -59,9 +62,9 @@ func newRelease(t *testing.T, srv *httptest.Server, current string) Release {
 }
 
 func TestStageVerifiesAndStages(t *testing.T) {
-	srv := fakeRelease(t, "0.1.11", false)
+	srv, digest := fakeRelease(t, "0.1.11", false)
 	r := newRelease(t, srv, "v0.1.10")
-	res, err := r.Stage(context.Background(), "v0.1.11")
+	res, err := r.Stage(context.Background(), "v0.1.11", digest)
 	if err != nil {
 		t.Fatalf("Stage: %v", err)
 	}
@@ -79,22 +82,67 @@ func TestStageVerifiesAndStages(t *testing.T) {
 	}
 }
 
-func TestStageRejectsChecksumMismatch(t *testing.T) {
-	srv := fakeRelease(t, "0.1.11", true) // checksums.txt lists a wrong digest
+// TestStageAcceptsUppercaseExpectedDigest confirms the approver's digest is
+// compared case-insensitively (a human transcribing hex is likely to vary case).
+func TestStageAcceptsUppercaseExpectedDigest(t *testing.T) {
+	srv, digest := fakeRelease(t, "0.1.11", false)
 	r := newRelease(t, srv, "v0.1.10")
-	_, err := r.Stage(context.Background(), "v0.1.11")
+	if _, err := r.Stage(context.Background(), "v0.1.11", strings.ToUpper(digest)); err != nil {
+		t.Fatalf("Stage with uppercase expected digest: %v", err)
+	}
+}
+
+func TestStageRejectsChecksumMismatch(t *testing.T) {
+	srv, digest := fakeRelease(t, "0.1.11", true) // checksums.txt lists a wrong digest
+	r := newRelease(t, srv, "v0.1.10")
+	_, err := r.Stage(context.Background(), "v0.1.11", digest)
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("want checksum mismatch, got %v", err)
 	}
 }
 
-func TestStageRejectsBadVersionAndSameVersion(t *testing.T) {
-	srv := fakeRelease(t, "0.1.11", false)
+// TestStageRejectsExpectedDigestMismatch is a regression test:
+// even when
+// the downloaded asset matches the SAME-CHANNEL checksums.txt exactly (i.e. a
+// compromised/MITM'd release host serving a matching pair), Stage must still
+// refuse if the asset doesn't match the approver's independently-obtained
+// digest — that mismatch is precisely what catches a compromised channel.
+func TestStageRejectsExpectedDigestMismatch(t *testing.T) {
+	srv, _ := fakeRelease(t, "0.1.11", false) // checksums.txt is internally consistent
 	r := newRelease(t, srv, "v0.1.10")
-	if _, err := r.Stage(context.Background(), "../../etc/passwd"); err == nil {
+	wrongButWellFormed := strings.Repeat("ab", 32)
+	_, err := r.Stage(context.Background(), "v0.1.11", wrongButWellFormed)
+	if err == nil || !strings.Contains(err.Error(), "approver expected") {
+		t.Fatalf("want an approver-digest mismatch refusal, got %v", err)
+	}
+	entries, rdErr := os.ReadDir(r.StagingDir)
+	if rdErr != nil {
+		t.Fatalf("read staging dir: %v", rdErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a binary was staged despite the expected-digest mismatch: %v", entries)
+	}
+}
+
+// TestStageRejectsMalformedExpectedDigest guards the required-field check
+// itself (empty, wrong length, non-hex) before any network call.
+func TestStageRejectsMalformedExpectedDigest(t *testing.T) {
+	srv, digest := fakeRelease(t, "0.1.11", false)
+	r := newRelease(t, srv, "v0.1.10")
+	for _, bad := range []string{"", "not-hex-and-wrong-length", digest[:63], digest + "0"} {
+		if _, err := r.Stage(context.Background(), "v0.1.11", bad); err == nil {
+			t.Errorf("expected_sha256 %q should have been rejected as malformed", bad)
+		}
+	}
+}
+
+func TestStageRejectsBadVersionAndSameVersion(t *testing.T) {
+	srv, digest := fakeRelease(t, "0.1.11", false)
+	r := newRelease(t, srv, "v0.1.10")
+	if _, err := r.Stage(context.Background(), "../../etc/passwd", digest); err == nil {
 		t.Error("must reject a non-version target")
 	}
-	if _, err := r.Stage(context.Background(), "v0.1.10"); err == nil {
+	if _, err := r.Stage(context.Background(), "v0.1.10", digest); err == nil {
 		t.Error("must reject upgrading to the current version")
 	}
 }
@@ -107,7 +155,7 @@ func TestDisabledStager(t *testing.T) {
 	if s.CurrentVersion() != "v0.1.10" {
 		t.Error("CurrentVersion")
 	}
-	if _, err := s.Stage(context.Background(), "v0.1.11"); err != ErrNotEnabled {
+	if _, err := s.Stage(context.Background(), "v0.1.11", strings.Repeat("a", 64)); err != ErrNotEnabled {
 		t.Errorf("want ErrNotEnabled, got %v", err)
 	}
 }

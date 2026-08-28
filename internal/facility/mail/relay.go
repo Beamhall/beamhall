@@ -104,6 +104,12 @@ func (s *session) Data(r io.Reader) error {
 	switch err := s.p.deliver(s.reg, s.from, s.to, data); {
 	case err == nil:
 		return nil
+	case errors.Is(err, ErrHeaderFromNotPermitted):
+		return &smtp.SMTPError{
+			Code:         550,
+			EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+			Message:      "From header address not permitted for this beam",
+		}
 	case errors.Is(err, ErrRateLimited):
 		return &smtp.SMTPError{
 			Code:         451,

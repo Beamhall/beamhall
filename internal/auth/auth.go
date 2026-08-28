@@ -44,6 +44,15 @@ type Config struct {
 	Leeway time.Duration
 	// HTTPClient overrides the JWKS fetch client (tests).
 	HTTPClient *http.Client
+	// TrustFlatRolesClaim also reads a top-level `roles` array claim (in
+	// addition to Keycloak's nested `realm_access.roles`) when computing
+	// realm roles for admin elevation. Off by default: a flat top-level
+	// `roles` claim is, on some IdPs/client configurations, something the
+	// end user can influence (a self-service profile attribute mapped
+	// straight into the token), which would let a non-admin self-assert
+	// DefaultAdminRole. Only enable this for an IdP you've confirmed mints
+	// `roles` from a source the token subject cannot control.
+	TrustFlatRolesClaim bool
 }
 
 // Extra* are the keys of the claims the verifier copies into TokenInfo.Extra
@@ -175,15 +184,17 @@ func (v *Verifier) Verify(ctx context.Context, token string, _ *http.Request) (*
 	if email, _ := claims["email"].(string); email != "" {
 		info.Extra[ExtraEmail] = email
 	}
-	if roles := rolesOf(claims); len(roles) > 0 {
+	if roles := rolesOf(claims, v.cfg.TrustFlatRolesClaim); len(roles) > 0 {
 		info.Extra[ExtraRoles] = roles
 	}
 	return info, nil
 }
 
-// rolesOf reads realm roles IdP-agnostically: Keycloak's nested
-// `realm_access.roles` array and/or a flat top-level `roles` array.
-func rolesOf(claims jwt.MapClaims) []string {
+// rolesOf reads realm roles: Keycloak's nested `realm_access.roles` array,
+// always trusted, and — only when trustFlat is set (Config.TrustFlatRolesClaim,
+// opt-in per IdP) — a flat top-level `roles` array too. The flat form is not
+// trusted by default because on some IdPs it can be a user-assertable claim.
+func rolesOf(claims jwt.MapClaims, trustFlat bool) []string {
 	var out []string
 	if ra, ok := claims["realm_access"].(map[string]any); ok {
 		if arr, ok := ra["roles"].([]any); ok {
@@ -194,10 +205,12 @@ func rolesOf(claims jwt.MapClaims) []string {
 			}
 		}
 	}
-	if arr, ok := claims["roles"].([]any); ok {
-		for _, v := range arr {
-			if s, ok := v.(string); ok {
-				out = append(out, s)
+	if trustFlat {
+		if arr, ok := claims["roles"].([]any); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					out = append(out, s)
+				}
 			}
 		}
 	}

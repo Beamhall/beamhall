@@ -16,14 +16,17 @@ import (
 // live Keycloak.
 type clientStub struct {
 	// inputs
-	existing     []kcClient         // GET /clients?clientId=
-	effMappers   []kcProtocolMapper // GET .../evaluate-scopes/protocol-mappers
-	deleteStatus int                // status for DELETE /clients/{uuid} (default 204)
+	existing       []kcClient         // GET /clients?clientId=
+	effMappers     []kcProtocolMapper // GET .../evaluate-scopes/protocol-mappers
+	deleteStatus   int                // status for DELETE /clients/{uuid} (default 204)
+	defaultScopes  []string           // GET .../default-client-scopes names
+	optionalScopes []string           // GET .../optional-client-scopes names
 	// recordings
-	postBody    kcClient
-	posted      bool
-	putBody     map[string]any
-	deletedUUID string
+	postBody       kcClient
+	posted         bool
+	putBody        map[string]any
+	deletedUUID    string
+	evaluatedScope string // the ?scope= sent to evaluate-scopes/protocol-mappers
 }
 
 func (s *clientStub) handler(uuid string) http.Handler {
@@ -60,12 +63,13 @@ func (s *clientStub) handler(uuid string) http.Handler {
 		}
 	})
 	mux.HandleFunc(base+"/"+uuid+"/default-client-scopes", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]any{})
+		_ = json.NewEncoder(w).Encode(scopeList(s.defaultScopes))
 	})
 	mux.HandleFunc(base+"/"+uuid+"/optional-client-scopes", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]any{})
+		_ = json.NewEncoder(w).Encode(scopeList(s.optionalScopes))
 	})
 	mux.HandleFunc(base+"/"+uuid+"/evaluate-scopes/protocol-mappers", func(w http.ResponseWriter, r *http.Request) {
+		s.evaluatedScope = r.URL.Query().Get("scope")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.effMappers)
 	})
@@ -74,6 +78,16 @@ func (s *clientStub) handler(uuid string) http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]string{"value": "sealed-secret"})
 	})
 	return mux
+}
+
+// scopeList shapes plain scope names into the {"name": "..."} objects the
+// real default/optional-client-scopes endpoints return.
+func scopeList(names []string) []map[string]string {
+	out := make([]map[string]string, len(names))
+	for i, n := range names {
+		out[i] = map[string]string{"name": n}
+	}
+	return out
 }
 
 func newClientTestKC(t *testing.T, s *clientStub, uuid string) *Keycloak {
@@ -159,6 +173,76 @@ func TestCreateClientRefusesForbiddenAudience(t *testing.T) {
 	}
 	if s.deletedUUID != "c-1" {
 		t.Fatalf("a refused client must be deleted; deletedUUID=%q", s.deletedUUID)
+	}
+}
+
+// TestCreateClientRefusesEmptyForbiddenAudience proves the fix: an empty
+// ForbiddenAudience must fail closed (refuse + clean up), not silently skip
+// the audience-isolation post-assert. Every real caller always supplies the
+// appliance's configured audience, so a blank value means a caller/config
+// bug, not an intentional opt-out.
+func TestCreateClientRefusesEmptyForbiddenAudience(t *testing.T) {
+	s := &clientStub{effMappers: []kcProtocolMapper{audienceMapper("beam-blue-app-preview")}}
+	kc := newClientTestKC(t, s, "c-1")
+	_, err := kc.CreateClient(context.Background(), ClientSpec{
+		ClientID:     "beam-blue-app-preview",
+		RedirectURIs: []string{"https://abc.preview.beamhall.internal/auth/callback"},
+		// ForbiddenAudience deliberately left empty.
+	})
+	if err == nil || !strings.Contains(err.Error(), "ForbiddenAudience is empty") {
+		t.Fatalf("expected a fail-closed refusal for empty ForbiddenAudience, got %v", err)
+	}
+	if s.deletedUUID != "c-1" {
+		t.Fatalf("a refused client must be deleted; deletedUUID=%q", s.deletedUUID)
+	}
+}
+
+// TestCreateClientDetectsClientAudienceMapper proves the detector fix:
+// an oidc-audience-mapper using included.client.audience (another client's
+// clientId, as opposed to included.custom.audience's arbitrary literal) must
+// also be caught when it matches the forbidden value.
+func TestCreateClientDetectsClientAudienceMapper(t *testing.T) {
+	s := &clientStub{effMappers: []kcProtocolMapper{{
+		Name: "leak-via-client-audience", Protocol: "openid-connect", ProtocolMapper: "oidc-audience-mapper",
+		Config: map[string]string{"included.client.audience": "https://beamhall.internal/mcp"},
+	}}}
+	kc := newClientTestKC(t, s, "c-1")
+	_, err := kc.CreateClient(context.Background(), ClientSpec{
+		ClientID:          "beam-blue-app-preview",
+		RedirectURIs:      []string{"https://abc.preview.beamhall.internal/auth/callback"},
+		ForbiddenAudience: "https://beamhall.internal/mcp",
+	})
+	if err == nil || !strings.Contains(err.Error(), "backplane replay") {
+		t.Fatalf("expected audience-isolation refusal via included.client.audience, got %v", err)
+	}
+	if s.deletedUUID != "c-1" {
+		t.Fatalf("a refused client must be deleted; deletedUUID=%q", s.deletedUUID)
+	}
+}
+
+// TestCreateClientEvaluatesNonOpenidScopes proves the detector fix: the
+// effective-mappers check must be evaluated against every scope actually
+// assignable to the client (default + optional), not just "openid" — a
+// mapper reachable only via an optional scope would otherwise never be
+// examined at all.
+func TestCreateClientEvaluatesNonOpenidScopes(t *testing.T) {
+	s := &clientStub{
+		effMappers:     []kcProtocolMapper{audienceMapper("beam-blue-app-preview")},
+		defaultScopes:  []string{"profile"},
+		optionalScopes: []string{"offline_access", "custom-audience-scope"},
+	}
+	kc := newClientTestKC(t, s, "c-1")
+	if _, err := kc.CreateClient(context.Background(), ClientSpec{
+		ClientID:          "beam-blue-app-preview",
+		RedirectURIs:      []string{"https://abc.preview.beamhall.internal/auth/callback"},
+		ForbiddenAudience: "https://beamhall.internal/mcp",
+	}); err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+	for _, want := range []string{"openid", "profile", "offline_access", "custom-audience-scope"} {
+		if !strings.Contains(" "+s.evaluatedScope+" ", " "+want+" ") {
+			t.Errorf("evaluate-scopes call missing scope %q; got %q", want, s.evaluatedScope)
+		}
 	}
 }
 

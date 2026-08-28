@@ -12,6 +12,31 @@ import (
 // CreateBeam persists a Beam, filling ID and timestamps if unset. A duplicate
 // (beamhall, slug) returns ErrConflict.
 func (s *Store) CreateBeam(ctx context.Context, a *domain.Beam) error {
+	s.fillBeam(a)
+	return mapErr(s.q.InsertBeam(ctx, beamInsertParams(a)))
+}
+
+// CreateBeamWithQuota atomically counts the beamhall's active beams and
+// inserts the new one inside one transaction — a plain count-then-insert (as
+// two separate calls) leaves a window where two concurrent create_beam calls
+// can each pass their own count check and together exceed maxBeams.
+// Returns ErrQuota, not the insert,
+// when the beamhall is already at (or maxBeams is unset/non-positive).
+func (s *Store) CreateBeamWithQuota(ctx context.Context, a *domain.Beam, maxBeams int) error {
+	s.fillBeam(a)
+	return mapErr(s.withTx(ctx, func(q *db.Queries) error {
+		n, err := q.CountBeamsByBeamhall(ctx, string(a.BeamhallID))
+		if err != nil {
+			return err
+		}
+		if maxBeams <= 0 || int(n) >= maxBeams {
+			return fmt.Errorf("%w: %d of %d beams in use", ErrQuota, n, maxBeams)
+		}
+		return q.InsertBeam(ctx, beamInsertParams(a))
+	}))
+}
+
+func (s *Store) fillBeam(a *domain.Beam) {
 	if a.ID == "" {
 		a.ID = NewID()
 	}
@@ -22,7 +47,10 @@ func (s *Store) CreateBeam(ctx context.Context, a *domain.Beam) error {
 		a.Status = domain.BeamActive
 	}
 	a.UpdatedAt = a.CreatedAt
-	return mapErr(s.q.InsertBeam(ctx, db.InsertBeamParams{
+}
+
+func beamInsertParams(a *domain.Beam) db.InsertBeamParams {
+	return db.InsertBeamParams{
 		ID:                string(a.ID),
 		BeamhallID:        string(a.BeamhallID),
 		Slug:              a.Slug,
@@ -44,7 +72,7 @@ func (s *Store) CreateBeam(ctx context.Context, a *domain.Beam) error {
 		CreatedAt:         ns(a.CreatedAt),
 		UpdatedAt:         ns(a.UpdatedAt),
 		Status:            string(a.Status),
-	}))
+	}
 }
 
 // GetBeam returns the Beam with the given id.

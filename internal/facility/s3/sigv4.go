@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/johannesboyne/gofakes3"
 )
@@ -61,6 +62,29 @@ func (p *Provisioner) serve(w http.ResponseWriter, r *http.Request) {
 		p.emit(Event{BeamID: reg.beamID, Channel: reg.channel, Op: opOf(r, key), Bucket: bucket, Key: key, Result: "denied", Err: "cross-bucket access"})
 		s3Error(w, http.StatusForbidden, "AccessDenied", "access to this bucket is not allowed")
 		return
+	}
+	// The destination key is still percent-encoded here (segmented straight out of
+	// EscapedPath); reject a ".." segment once decoded — the storage engine builds
+	// the on-disk path with path.Join(bucket, key), which collapses ".." and can
+	// walk out of this beam's bucket directory into a sibling beam's.
+	if key != "" && keyEscapesBucket(key, url.PathUnescape) {
+		p.emit(Event{BeamID: reg.beamID, Channel: reg.channel, Op: opOf(r, key), Bucket: bucket, Key: key, Result: "denied", Err: "path traversal in object key"})
+		s3Error(w, http.StatusForbidden, "AccessDenied", "invalid object key")
+		return
+	}
+	// A server-side copy (X-Amz-Copy-Source) names its OWN bucket/key for the
+	// destination, but the copy SOURCE is a second, independent bucket/key that
+	// gofakes3 reads directly — the scope check above never sees it. Without this,
+	// any beam could copy any other beam's object into its own bucket and read it
+	// back. Parse exactly as gofakes3's copyObject does (same header, same
+	// SplitN/QueryUnescape) so this check and the engine agree on what it names.
+	if src := r.Header.Get("X-Amz-Copy-Source"); src != "" {
+		srcBucket, srcKey, ok := parseCopySource(src)
+		if !ok || srcBucket != reg.bucket || keyEscapesBucket(srcKey, func(s string) (string, error) { return s, nil }) {
+			p.emit(Event{BeamID: reg.beamID, Channel: reg.channel, Op: opOf(r, key), Bucket: bucket, Key: key, Result: "denied", Err: "cross-bucket copy source: " + src})
+			s3Error(w, http.StatusForbidden, "AccessDenied", "access to the copy source is not allowed")
+			return
+		}
 	}
 
 	op, mutation, quotaWrite := classify(r, key)
@@ -133,6 +157,20 @@ func (p *Provisioner) verify(r *http.Request) (*registration, bool) {
 	date, region, service := cp[1], cp[2], cp[3]
 	amzDate := r.Header.Get("X-Amz-Date")
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
+
+	// Reject a missing/malformed/expired X-Amz-Date before doing the
+	// signature math: this header is itself part of what the client signs,
+	// so a captured, correctly-signed request would otherwise stay "valid"
+	// forever — replay is the SigV4 front's own job here, not something to
+	// leave to whatever skew tolerance the wrapped gofakes3 engine happens
+	// to apply past this layer.
+	reqTime, err := time.Parse("20060102T150405Z", amzDate)
+	if err != nil {
+		return nil, false
+	}
+	if skew := p.now().Sub(reqTime); skew > p.clockSkew || skew < -p.clockSkew {
+		return nil, false
+	}
 
 	var ch strings.Builder
 	for _, h := range strings.Split(signed, ";") {
@@ -208,8 +246,14 @@ func canonicalQuery(v url.Values) string {
 
 // normalizeChunked replaces an aws-chunked streaming body (signed, unsigned, and
 // the *-TRAILER variants modern SDKs default to) with a plain decoded stream the
-// storage engine can read. It streams (no full-body buffering) and trusts the
-// declared decoded length, which the SDK signs.
+// storage engine can read. It streams (no full-body buffering). The declared
+// decoded length is the SDK-signed contract for how many bytes the stream may
+// yield — chunkReader enforces it as a hard ceiling (not just a value it
+// reports), because gofakes3/s3afero drain the reader until it errors or hits
+// EOF rather than stopping at the declared size themselves: without the cap, a
+// request could under-declare X-Amz-Decoded-Content-Length (defeating the
+// quota pre-check below, which trusts that header) while its actual
+// aws-chunked framing carried arbitrarily more data.
 func normalizeChunked(r *http.Request) error {
 	sha := r.Header.Get("X-Amz-Content-Sha256")
 	if !strings.HasPrefix(sha, "STREAMING-") {
@@ -219,7 +263,7 @@ func normalizeChunked(r *http.Request) error {
 	if err != nil {
 		return fmt.Errorf("missing X-Amz-Decoded-Content-Length: %w", err)
 	}
-	r.Body = &chunkReader{br: bufio.NewReader(r.Body), orig: r.Body}
+	r.Body = &chunkReader{br: bufio.NewReader(r.Body), orig: r.Body, limit: decLen}
 	r.ContentLength = decLen
 	r.Header.Set("Content-Length", strconv.FormatInt(decLen, 10))
 	r.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
@@ -230,12 +274,17 @@ func normalizeChunked(r *http.Request) error {
 
 // chunkReader strips aws-chunked framing on the fly: "<hexsize>[;sig]\r\n<data>\r\n"
 // repeated until a zero-size chunk, after which optional trailers are ignored.
+// limit bounds the total bytes it will ever yield (the declared decoded
+// length) — a stream trying to deliver more than that errors out instead of
+// silently continuing.
 type chunkReader struct {
 	br      *bufio.Reader
 	orig    io.Closer
 	remain  int64
 	started bool
 	done    bool
+	limit   int64
+	total   int64
 }
 
 func (c *chunkReader) Read(p []byte) (int, error) {
@@ -262,8 +311,16 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 			return 0, fmt.Errorf("bad chunk size %q: %w", hdr, err)
 		}
 		if n == 0 {
+			// The terminating zero-size chunk is legitimate regardless of
+			// total vs limit — it's how the stream signals EOF, not more data.
 			c.done = true
 			return 0, io.EOF
+		}
+		// Check the CUMULATIVE bound before consuming this chunk's data, not
+		// after: a chunk declaring more than the remaining budget is rejected
+		// up front rather than partially read.
+		if c.total+n > c.limit {
+			return 0, fmt.Errorf("aws-chunked body exceeds its declared X-Amz-Decoded-Content-Length (%d bytes)", c.limit)
 		}
 		c.remain = n
 	}
@@ -273,6 +330,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 	}
 	m, err := c.br.Read(p[:toRead])
 	c.remain -= int64(m)
+	c.total += int64(m)
 	return m, err
 }
 
@@ -347,6 +405,42 @@ func classify(r *http.Request, key string) (op string, mutation, quotaWrite bool
 }
 
 func opOf(r *http.Request, key string) string { op, _, _ := classify(r, key); return op }
+
+// keyEscapesBucket reports whether key, once decoded with decode, contains a
+// ".." path segment — the storage engine builds the on-disk object path with
+// path.Join(bucket, key), which collapses ".." and can walk into a sibling
+// beam's bucket directory (or above the buckets root). A decode error is
+// treated as suspicious and rejected rather than guessed at.
+func keyEscapesBucket(key string, decode func(string) (string, error)) bool {
+	decoded, err := decode(key)
+	if err != nil {
+		return true
+	}
+	for _, seg := range strings.Split(decoded, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCopySource mirrors gofakes3's own X-Amz-Copy-Source parsing
+// (GoFakeS3.copyObject): trim a leading "/", split once on "/" into bucket
+// and key, drop any "?versionId=..." suffix, then query-unescape the key.
+// Replicating it exactly means this scope check and the engine can never
+// disagree about which bucket/key a copy source names.
+func parseCopySource(source string) (bucket, key string, ok bool) {
+	parts := strings.SplitN(strings.TrimPrefix(source, "/"), "/", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return "", "", false
+	}
+	rawKey := strings.SplitN(parts[1], "?", 2)[0]
+	decoded, err := url.QueryUnescape(rawKey)
+	if err != nil {
+		return "", "", false
+	}
+	return parts[0], decoded, true
+}
 
 // --- small helpers ---
 

@@ -72,12 +72,40 @@ func (o *Orchestrator) approvePromotion(ctx context.Context, actor Actor, reques
 	if err != nil {
 		return "", req, err
 	}
+	// Serialize against any other deploy/promote/rollback/destroy on this
+	// beam, and against a concurrent RejectPromotion for the SAME request:
+	// without this, an approve and a reject can interleave so the beam
+	// goes live via this call's o.promote() while a concurrent reject wins
+	// the DecidePromotionRequest race below — the request record ends up
+	// "rejected" even though production already shipped. Held for this
+	// call's entire read-decide-persist sequence, not just around o.promote,
+	// which is why the lock lives here rather than inside o.promote itself.
+	unlock := o.beamLocks.lock(req.BeamID)
+	defer unlock()
+	// Re-read: another decision may have landed while we waited for the lock.
+	req, err = o.st.GetPromotionRequest(ctx, requestID)
+	if err != nil {
+		return "", req, err
+	}
 	if req.Status != domain.PromotionPending {
 		return "", req, fmt.Errorf("request %s is already %s", requestID, req.Status)
 	}
 	// Four-eyes: the approver cannot be the requester.
 	if req.RequestedBy == actor.ID {
 		return "", req, fmt.Errorf("the requester cannot approve their own promotion (four-eyes)")
+	}
+	// The approver is signing off on the EXACT release named in the request
+	// (req.ReleaseID, pinned at request time). promote() always pins to
+	// whatever the preview channel is running NOW — if a deploy landed while
+	// this request was pending, approving it would ship a build the approver
+	// never reviewed, under the guise of an approval for the old one.
+	beam, err := o.st.GetBeam(ctx, req.BeamID)
+	if err != nil {
+		return "", req, err
+	}
+	if beam.CurrentReleaseID != req.ReleaseID {
+		return "", req, fmt.Errorf("the preview build has changed since this promotion was requested (requested %s, preview is now on %s) — reject this request and have it re-requested against the current build",
+			req.ReleaseID, beam.CurrentReleaseID)
 	}
 	hostname, err := o.promote(ctx, actor, req.BeamhallID, req.BeamID)
 	if err != nil {
@@ -99,6 +127,11 @@ func (o *Orchestrator) RejectPromotion(ctx context.Context, actor Actor, request
 	if err != nil {
 		return o.itAudit(ctx, actor, "reject_promotion", "", err)
 	}
+	// Same per-beam serialization as approvePromotion, so an approve
+	// racing this reject can't land the beam live while the request record
+	// ends up "rejected".
+	unlock := o.beamLocks.lock(req.BeamID)
+	defer unlock()
 	op := o.st.DecidePromotionRequest(ctx, requestID, domain.PromotionRejected, actor.ID, reason)
 	return o.itAudit(ctx, actor, "reject_promotion", req.BeamhallID, op)
 }

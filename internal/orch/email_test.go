@@ -16,6 +16,10 @@ type fakeEmailProv struct {
 	provisioned  []string
 	deregistered []string
 	senders      map[string][]string
+	// pullNext, when set, overrides PullEvents' echo-back-after default —
+	// lets a test simulate a broker restart (a next lower than after).
+	pullNext     *int64
+	pulledEvents []mail.SeqEvent
 }
 
 func (f *fakeEmailProv) Provision(_ context.Context, req mail.ProvisionRequest) (mail.Credentials, error) {
@@ -38,6 +42,9 @@ func (f *fakeEmailProv) SetSenders(_ context.Context, beamID string, allowed []s
 }
 func (f *fakeEmailProv) SetProvider(_ context.Context, _ mail.ProviderConfig) error { return nil }
 func (f *fakeEmailProv) PullEvents(_ context.Context, after int64) ([]mail.SeqEvent, int64, error) {
+	if f.pullNext != nil {
+		return f.pulledEvents, *f.pullNext, nil
+	}
 	return nil, after, nil
 }
 func (f *fakeEmailProv) Status(_ context.Context) (bool, int64, error) { return true, 0, nil }
@@ -191,6 +198,32 @@ func TestDestroyReclaimsEmail(t *testing.T) {
 	}
 	if len(fe.deregistered) != 1 || fe.deregistered[0] != string(beam.ID) {
 		t.Fatalf("broker deregister = %v", fe.deregistered)
+	}
+}
+
+// TestDrainEmailAuditAdoptsBrokerResetCursor is a regression test:
+// when the broker's own
+// reported cursor is BELOW ours (its ring reset — a restart), the drain must
+// adopt that lower value so the next pull can actually see new events, not
+// clamp back up to the stale cursor and silently skip everything until the
+// broker's fresh counter climbs back past it.
+func TestDrainEmailAuditAdoptsBrokerResetCursor(t *testing.T) {
+	w := newWorld(t)
+	fe := &fakeEmailProv{}
+	enableEmail(w, fe)
+	ctx := context.Background()
+
+	staleCursor := int64(10_000) // where we left off before the broker restarted
+	brokerCursor := int64(2)     // the broker's fresh post-restart high-water
+	fe.pullNext = &brokerCursor
+	fe.pulledEvents = []mail.SeqEvent{{Seq: 1, Event: mail.Event{BeamID: "b1", Result: "ok"}}}
+
+	next, err := w.o.DrainEmailAudit(ctx, staleCursor)
+	if err != nil {
+		t.Fatalf("DrainEmailAudit: %v", err)
+	}
+	if next != brokerCursor {
+		t.Fatalf("cursor = %d, want the broker's reported %d (clamping back to the stale cursor silently drops every future event)", next, brokerCursor)
 	}
 }
 

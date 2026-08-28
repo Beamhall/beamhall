@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 )
@@ -99,6 +101,49 @@ func TestReposSnapshotAndCheckout(t *testing.T) {
 		if err != nil || link != "app.js" {
 			t.Fatalf("symlink = %q (err %v)", link, err)
 		}
+	}
+}
+
+// TestCheckoutRejectsEscapingSymlinkTargets proves the fix: a symlink
+// whose FILE lives safely inside the checkout directory but whose TARGET is
+// absolute or escapes via ".." must be rejected, not materialized. Without
+// this, a malicious commit's symlink (e.g. "data" -> "/etc/shadow") would be
+// fed straight into pack build --path, which follows symlinks while scanning
+// the build context.
+func TestCheckoutRejectsEscapingSymlinkTargets(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		link string
+	}{
+		{"absolute target", "/etc/shadow"},
+		{"relative escape via ..", "../../../../etc/passwd"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repos := NewRepos(filepath.Join(t.TempDir(), "repos"))
+			p, err := repos.Ensure("ops", "tracker")
+			if err != nil {
+				t.Fatalf("Ensure: %v", err)
+			}
+			src := t.TempDir()
+			writeTree(t, src, map[string]string{"app.js": "console.log(1)"})
+			if err := os.Symlink(c.link, filepath.Join(src, "data")); err != nil {
+				t.Fatal(err)
+			}
+			sha, err := repos.ImportSnapshot(ctx, p, src, "hostile")
+			if err != nil {
+				t.Fatalf("ImportSnapshot: %v", err)
+			}
+			dst := t.TempDir()
+			err = repos.CheckoutTo(ctx, p, sha, dst)
+			if err == nil {
+				t.Fatalf("checkout accepted a symlink targeting %q", c.link)
+			}
+			if _, statErr := os.Lstat(filepath.Join(dst, "data")); statErr == nil {
+				t.Fatal("hostile symlink was materialized despite the checkout failing")
+			}
+		})
 	}
 }
 
@@ -289,5 +334,75 @@ func TestPackerDefaultNoAirgapArgs(t *testing.T) {
 	rec, _ := os.ReadFile(capture)
 	if strings.Contains(string(rec), "--pull-policy") || strings.Contains(string(rec), "--run-image") {
 		t.Fatalf("default build should not add air-gap flags:\n%s", rec)
+	}
+}
+
+// fakePackForking writes a script standing in for `pack build` that forks a
+// background child (recording its PID to pidFile) and then itself sleeps —
+// a stand-in for the fact that the real pack CLI's work happens in a
+// separate process (in production, containers on the build daemon; here, a
+// plain child process is enough to prove whether a timeout reaches beyond
+// the single tracked PID). The child's own sleep is deliberately long (30s):
+// the test only waits a couple of seconds for it to die, so a death observed
+// in that window can only be the timeout's kill reaching it, never the
+// child's own sleep completing on schedule.
+func fakePackForking(t *testing.T, pidFile string) string {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "pack")
+	body := fmt.Sprintf("#!/bin/sh\nsleep 30 &\necho $! > %s\nsleep 30\n", pidFile)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
+// TestBuildTimeoutKillsDescendants proves the fix two ways: (1) Build
+// actually returns close to the configured Timeout rather than blocking
+// until the descendant's own (here, 30s) lifetime ends — pre-fix, nothing
+// bounds how long Wait() waits for the orphan's inherited stdout pipe to
+// close, so the "runaway build" defense doesn't actually bound the call at
+// all; (2) the descendant is gone by the time Build returns, not merely
+// left running. fakePackForking's backgrounded child is the process-level
+// stand-in for pack's orphaned buildpack lifecycle work.
+func TestBuildTimeoutKillsDescendants(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	p := &Packer{
+		PackBin:  fakePackForking(t, pidFile),
+		Builder:  "b",
+		Registry: "unused.invalid:5000",
+		// Generous relative to the fork+exec+write the fake pack script needs
+		// to do before the timeout fires — a tight budget here flakes on a
+		// loaded machine (observed: the script's own startup can take >150ms).
+		Timeout: 500 * time.Millisecond,
+	}
+	var logs bytes.Buffer
+	start := time.Now()
+	_, err := p.Build(context.Background(), "ops/tracker", "abc", t.TempDir(), &logs)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected the build to time out")
+	}
+	// The child's own sleep is 30s; a fix-shaped return happens within a
+	// couple of seconds of the 500ms Timeout, nowhere near that.
+	if elapsed > 5*time.Second {
+		t.Fatalf("Build took %s to return after a %s timeout — the timeout does not actually bound the call (blocked on the orphaned descendant instead of killing it)", elapsed, p.Timeout)
+	}
+
+	var childPID int
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, rerr := os.ReadFile(pidFile); rerr == nil && len(b) > 0 {
+			fmt.Sscanf(string(b), "%d", &childPID)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if childPID == 0 {
+		t.Fatal("child PID was never recorded — test setup broken")
+	}
+	t.Cleanup(func() { syscall.Kill(childPID, syscall.SIGKILL) })
+
+	if err := syscall.Kill(childPID, 0); err == nil {
+		t.Fatalf("descendant PID %d of the timed-out build is still alive right after Build returned — killing the tracked PID alone did not reach it", childPID)
 	}
 }

@@ -75,6 +75,18 @@ const sampleMsg = "From: noreply@app.example.com\r\n" +
 	"\r\n" +
 	"body line\r\n"
 
+// msgFrom builds a sampleMsg variant whose From: header is from — used where
+// a test needs the header to match a non-default envelope sender (the header
+// allowlist check enforces the two consistently).
+func msgFrom(from string) string {
+	return "From: " + from + "\r\n" +
+		"To: user@dest.example\r\n" +
+		"Subject: Hello there\r\n" +
+		"Message-Id: <abc123@app.example.com>\r\n" +
+		"\r\n" +
+		"body line\r\n"
+}
+
 // sendVia performs one full SMTP submission and returns the first error.
 func sendVia(addr, user, pass, from, to, body string) error {
 	c, err := netsmtp.Dial(addr)
@@ -196,6 +208,35 @@ func TestRelayRejectsDisallowedSender(t *testing.T) {
 	}
 }
 
+func TestRelayRejectsSpoofedHeaderFrom(t *testing.T) {
+	fwd := &fakeForwarder{}
+	audit := &auditCapture{}
+	p := New(WithForwarder(fwd), WithAuditSink(audit.sink()))
+	creds, err := p.Provision(context.Background(), ProvisionRequest{BeamID: "B", AllowedSenders: []string{"app.example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := startRelay(t, p)
+	// Envelope sender is allowed, but the visible From: header claims an
+	// address the allowlist would never permit.
+	spoofed := "From: ceo@victim-corp.com\r\n" +
+		"To: user@dest.example\r\n" +
+		"Subject: Hello there\r\n" +
+		"\r\n" +
+		"body line\r\n"
+	err = sendVia(addr, creds.Username, creds.Password, "noreply@app.example.com", "u@dest.example", spoofed)
+	if err == nil {
+		t.Fatal("expected header From rejection, got nil")
+	}
+	if fwd.count() != 0 {
+		t.Fatalf("forwarder should have received nothing, got %d", fwd.count())
+	}
+	events := audit.snapshot()
+	if len(events) != 1 || events[0].Result != "rejected" {
+		t.Fatalf("expected one rejected audit event, got %+v", events)
+	}
+}
+
 func TestRelayRateLimit(t *testing.T) {
 	fwd := &fakeForwarder{}
 	p := New(WithForwarder(fwd))
@@ -304,7 +345,7 @@ func TestSetSendersUpdatesPolicy(t *testing.T) {
 	if err := p.SetSenders("B", []string{"new.example"}); err != nil {
 		t.Fatalf("set senders: %v", err)
 	}
-	if err := sendVia(addr, creds.Username, creds.Password, "x@new.example", "u@dest.example", sampleMsg); err != nil {
+	if err := sendVia(addr, creds.Username, creds.Password, "x@new.example", "u@dest.example", msgFrom("x@new.example")); err != nil {
 		t.Fatalf("send from new.example should work after SetSenders: %v", err)
 	}
 	if err := p.SetSenders("UNKNOWN", []string{"x"}); !errors.Is(err, ErrUnknownBeam) {

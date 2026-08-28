@@ -1,8 +1,11 @@
 package backup
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,6 +120,58 @@ func TestRestorePreservesExisting(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, keyName+".pre-restore")); err != nil {
 		t.Errorf("prior secret key not preserved: %v", err)
+	}
+}
+
+// TestRestoreForcesSecretKeyMode proves the fix: an archive is not a
+// trusted source of file permissions for the secret root key (or the
+// database) — a tampered or externally-produced archive claiming a
+// world-readable secret.key must still land on disk at 0600.
+func TestRestoreForcesSecretKeyMode(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "tampered.tar.gz")
+	out, err := os.OpenFile(archivePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(out)
+	tw := tar.NewWriter(gz)
+
+	man := Manifest{Format: formatV1, CreatedAt: time.Now().UTC().Format(time.RFC3339), HasKey: true}
+	manBytes, err := json.MarshalIndent(man, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTarBytes(tw, manifestName, 0o600, manBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTarBytes(tw, dbName, 0o600, []byte("restore never opens this file, so any bytes do")); err != nil {
+		t.Fatal(err)
+	}
+	// The attacker/archive-supplied mode: world-readable.
+	if err := writeTarBytes(tw, keyName, 0o644, []byte("AGE-SECRET-KEY-1TAMPEREDTAMPEREDTAMPEREDTAMPEREDTAMPERED")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir := t.TempDir()
+	if err := Restore(archivePath, dataDir); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	fi, err := os.Stat(filepath.Join(dataDir, keyName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("restored secret.key mode = %o, want 0600 regardless of the archive's claimed 0644", perm)
 	}
 }
 

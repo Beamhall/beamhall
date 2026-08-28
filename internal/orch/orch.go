@@ -80,6 +80,7 @@ type Orchestrator struct {
 	objStoreProv ObjectStoreProvisioner
 	repoRetire   func(beamhallSlug, beamSlug, id string) error
 	log          *slog.Logger
+	beamLocks    *beamLocks
 
 	baseDomain        string
 	defaultPauseAfter time.Duration
@@ -269,6 +270,7 @@ func New(st *store.Store, drv driver.RuntimeDriver, gw GatewayAPI, sched PauseSc
 		buildSem:          make(chan struct{}, 2),
 		idp:               identityadmin.Disabled{},
 		upgrader:          upgrade.Disabled{},
+		beamLocks:         newBeamLocks(),
 	}
 	for _, opt := range opts {
 		opt(o)

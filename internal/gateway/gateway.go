@@ -132,22 +132,46 @@ func (g *Gateway) Restore(routes []Route) {
 	}
 }
 
-// Upsert adds or replaces a route and reconciles Caddy.
+// Upsert adds or replaces a route and reconciles Caddy. Refuses a hostname
+// that belongs to a static route (bundled infrastructure, e.g. the bundled
+// Keycloak IdP): a beam must never be able to claim — and so, via render's
+// merge and AskHandler's on-demand TLS check, effectively hijack — a static
+// host.
 func (g *Gateway) Upsert(ctx context.Context, r Route) error {
 	g.mu.Lock()
+	if _, ok := g.static[r.Hostname]; ok {
+		g.mu.Unlock()
+		return fmt.Errorf("hostname %q is reserved for static infrastructure and cannot be used by a beam route", r.Hostname)
+	}
 	g.routes[r.Hostname] = r
 	cfg := g.render()
 	g.mu.Unlock()
 	return g.load(ctx, cfg)
 }
 
-// Retire removes a route and reconciles Caddy.
+// Retire removes a route and reconciles Caddy. The in-memory route set is
+// only left without the route once Caddy confirms the reconciled config: on a
+// failed load, the route is put back, so the in-memory state (and hence
+// whatever the caller persists to the routes DB row) stays consistent with
+// what Caddy is actually still serving — a later reconcile can then correctly
+// retry, instead of the route reading "retired" everywhere except in Caddy's
+// actual config, which resurrects on the next restore/restart and can
+// misroute a hostname whose backend IP was since reused by another beam.
 func (g *Gateway) Retire(ctx context.Context, hostname string) error {
 	g.mu.Lock()
+	existing, had := g.routes[hostname]
 	delete(g.routes, hostname)
 	cfg := g.render()
 	g.mu.Unlock()
-	return g.load(ctx, cfg)
+	if err := g.load(ctx, cfg); err != nil {
+		if had {
+			g.mu.Lock()
+			g.routes[hostname] = existing
+			g.mu.Unlock()
+		}
+		return err
+	}
+	return nil
 }
 
 // Snapshot returns the current routes, sorted by hostname (for the Admin UI and
@@ -170,9 +194,9 @@ func (g *Gateway) AskHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		domain := r.URL.Query().Get("domain")
 		g.mu.Lock()
-		_, ok := g.routes[domain]
+		_, ok := g.static[domain]
 		if !ok {
-			_, ok = g.static[domain]
+			_, ok = g.routes[domain]
 		}
 		g.mu.Unlock()
 		if ok {
@@ -210,11 +234,11 @@ func (g *Gateway) load(ctx context.Context, cfg *caddyConfig) error {
 // routes (bundled infra). Caller holds mu.
 func (g *Gateway) render() *caddyConfig {
 	merged := make(map[string]Route, len(g.routes)+len(g.static))
-	for h, r := range g.static {
+	for h, r := range g.routes {
 		merged[h] = r
 	}
-	for h, r := range g.routes { // beam routes win on a hostname clash
-		merged[h] = r
+	for h, r := range g.static { // static (bundled infra) wins on a hostname clash — Upsert
+		merged[h] = r // already refuses a beam route claiming a static host; this is defense-in-depth
 	}
 	hosts := make([]string, 0, len(merged))
 	for h := range merged {

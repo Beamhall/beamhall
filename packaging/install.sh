@@ -526,6 +526,12 @@ RestartSec=3
 TimeoutStopSec=20
 StateDirectory=beamhall
 StateDirectoryMode=0700
+# Runtime directory (tmpfs by systemd guarantee) for staging decrypted
+# secrets before they're bind-mounted into a beam container — the driver
+# refuses to start if this path isn't tmpfs-backed.
+RuntimeDirectory=beamhall
+RuntimeDirectoryMode=0700
+Environment=BEAMHALL_SECRETS_DIR=%t/beamhall/secrets
 AmbientCapabilities=CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=true

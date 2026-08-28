@@ -26,6 +26,11 @@ func (o *Orchestrator) RollbackBeam(ctx context.Context, actor Actor, beamhallID
 }
 
 func (o *Orchestrator) rollback(ctx context.Context, beamhallID, beamID, targetReleaseID domain.ID) (string, error) {
+	// Serialize against any other deploy/promote/rollback/destroy on this
+	// beam.
+	unlock := o.beamLocks.lock(beamID)
+	defer unlock()
+
 	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return "", err
@@ -49,6 +54,16 @@ func (o *Orchestrator) rollback(ctx context.Context, beamhallID, beamID, targetR
 	}
 	if targetReleaseID == beam.CurrentReleaseID {
 		return "", fmt.Errorf("release %s is the preview build, not a prior production release; to roll production back, target a prior live release", targetReleaseID)
+	}
+	if target.Channel != domain.ChannelLive {
+		// The two checks above only catch the CURRENT preview/live releases;
+		// any older, superseded preview release would otherwise pass both and
+		// get pinned to production carrying its preview secret scope (the
+		// preview DB DSN under the app's shared key) — a data crossover the
+		// dual-channel model exists to prevent. Enforced here, not just by an
+		// MCP-side picker, so every caller (incl. the Admin console, which
+		// posts a raw release id) is covered.
+		return "", fmt.Errorf("release %s is a preview build, not a prior production release; to roll production back, target a prior live release", targetReleaseID)
 	}
 	pullRef := target.ConfigSnapshot["pull_ref"]
 	if pullRef == "" {
@@ -114,6 +129,13 @@ func (o *Orchestrator) archivePreview(ctx context.Context, beamhallID, beamID do
 }
 
 func (o *Orchestrator) destroy(ctx context.Context, beamhallID, beamID domain.ID) error {
+	// Serialize against any other deploy/promote/rollback/destroy on this beam.
+	// archivePreview funnels into this function rather than locking
+	// itself, so ArchiveBeam and DestroyBeam share one acquisition here — no
+	// double-lock.
+	unlock := o.beamLocks.lock(beamID)
+	defer unlock()
+
 	beam, err := o.st.GetBeam(ctx, beamID)
 	if err != nil {
 		return err
@@ -129,14 +151,34 @@ func (o *Orchestrator) destroy(ctx context.Context, beamhallID, beamID domain.ID
 	}
 
 	// Tear down both channels' workloads + routes, if any.
+	swept := map[domain.ID]bool{}
 	if beam.CurrentReleaseID != "" {
 		if err := o.retireRelease(ctx, beam.CurrentReleaseID, domain.ReleaseSuperseded); err != nil {
 			o.log.Warn("retiring preview release on destroy", "release", beam.CurrentReleaseID, "err", err)
 		}
+		swept[beam.CurrentReleaseID] = true
 	}
 	if beam.LiveReleaseID != "" && beam.LiveReleaseID != beam.CurrentReleaseID {
 		if err := o.retireRelease(ctx, beam.LiveReleaseID, domain.ReleaseSuperseded); err != nil {
 			o.log.Warn("retiring live release on destroy", "release", beam.LiveReleaseID, "err", err)
+		}
+		swept[beam.LiveReleaseID] = true
+	}
+	// Sweep any OTHER release with a live workload handle that isn't one of
+	// the two pointers above — a partial finalize failure or a workload
+	// from before spawnWorkload's own cleanup can leave a pending/active
+	// release referencing a running container that destroying the beam would
+	// otherwise never reach, permanently orphaning it.
+	if rels, err := o.st.ListReleasesByBeam(ctx, beamID); err != nil {
+		o.log.Warn("listing releases to sweep orphaned workloads on destroy", "beam", beamID, "err", err)
+	} else {
+		for _, rel := range rels {
+			if swept[rel.ID] || rel.Workload.Ref == "" || rel.Status == domain.ReleaseSuperseded {
+				continue
+			}
+			if err := o.retireRelease(ctx, rel.ID, domain.ReleaseSuperseded); err != nil {
+				o.log.Warn("sweeping orphaned release workload on destroy", "release", rel.ID, "err", err)
+			}
 		}
 	}
 	if err := o.sched.Disarm(ctx, string(beamID)); err != nil {
@@ -148,6 +190,11 @@ func (o *Orchestrator) destroy(ctx context.Context, beamhallID, beamID domain.ID
 	// counting against the beamhall's quota. Without this, repeated
 	// archive/redeploy cycles silently exhaust max_db_count (lab finding).
 	o.reclaimResources(ctx, beamID)
+	// Sweep every remaining beam-scoped secret (arbitrary set_secret values
+	// have no Resource row to hang a reclaim off of, so without this catch-all
+	// they'd survive the beam's destruction with no way to ever reach or
+	// delete them again).
+	o.reclaimUserSecrets(ctx, beamhallID, beamID)
 
 	// Retire the managed git repo aside so a reused slug starts fresh (a stale
 	// inherited history otherwise forces divergent-push reconciliation; lab
@@ -185,11 +232,21 @@ func (o *Orchestrator) reclaimResources(ctx context.Context, beamID domain.ID) {
 		return
 	}
 	for _, r := range resources {
-		if r.Type == domain.ResourceDatabase && o.dbProv != nil {
-			if err := o.dbProv.Drop(ctx, resource.Provisioned{
-				Database: r.Spec["database"], Role: r.Spec["role"],
-			}); err != nil {
-				o.log.Warn("dropping database on destroy", "beam", beamID, "database", r.Spec["database"], "err", err)
+		if r.Type == domain.ResourceDatabase {
+			if o.dbProv != nil {
+				if err := o.dbProv.Drop(ctx, resource.Provisioned{
+					Database: r.Spec["database"], Role: r.Spec["role"],
+				}); err != nil {
+					o.log.Warn("dropping database on destroy", "beam", beamID, "database", r.Spec["database"], "err", err)
+				}
+			}
+			// Delete the sealed DSN — asymmetric with the auth/email/objstore
+			// reclaim paths below otherwise, and leaves a beamID-scoped
+			// decryptable connection string nothing ever cleans up.
+			if r.ConnectionSecretRef.Key != "" {
+				if err := o.vault.Delete(ctx, r.ConnectionSecretRef); err != nil {
+					o.log.Warn("deleting sealed database secret on destroy", "beam", beamID, "key", r.ConnectionSecretRef.Key, "err", err)
+				}
 			}
 		}
 		if r.Type == domain.ResourceAuthClient {
@@ -211,18 +268,43 @@ func (o *Orchestrator) reclaimResources(ctx context.Context, beamID domain.ID) {
 	}
 }
 
+// reclaimUserSecrets deletes every beam-scoped secret (domain.Secret rows
+// with BeamID == beamID) — a catch-all sweep for values a builder set
+// directly via set_secret, which have no domain.Resource row to hang a
+// per-type reclaim off of. Without this, an arbitrary secret set on a beam
+// survives its destruction as a decryptable orphan with no remaining way to
+// ever reach or delete it. Beamhall-wide secrets
+// (BeamID empty) are left alone — other beams in the beamhall may still read
+// them. Best-effort, same spirit as reclaimResources.
+func (o *Orchestrator) reclaimUserSecrets(ctx context.Context, beamhallID, beamID domain.ID) {
+	metas, err := o.st.ListSecretsByBeamhall(ctx, beamhallID)
+	if err != nil {
+		o.log.Warn("listing secrets to sweep on destroy", "beam", beamID, "err", err)
+		return
+	}
+	for _, m := range metas {
+		if m.BeamID != beamID {
+			continue
+		}
+		ref := domain.SecretRef{BeamhallID: beamhallID, BeamID: beamID, Key: m.Key, Channel: m.Channel}
+		if err := o.vault.Delete(ctx, ref); err != nil {
+			o.log.Warn("deleting user secret on destroy", "beam", beamID, "key", m.Key, "err", err)
+		}
+	}
+}
+
 // ShowMetrics returns a point-in-time resource sample for a beam's running
 // workload. Metrics carry no secret material, so no scrubbing is needed.
 func (o *Orchestrator) ShowMetrics(ctx context.Context, actor Actor, beamhallID, beamID domain.ID) (driver.Stats, error) {
 	if err := o.authorize(ctx, actor, policy.ActionShowMetrics, beamhallID, beamID); err != nil {
 		return driver.Stats{}, err
 	}
-	stats, err := o.showMetrics(ctx, beamID)
+	stats, err := o.showMetrics(ctx, beamhallID, beamID)
 	return stats, o.outcome(ctx, actor, policy.ActionShowMetrics, beamhallID, beamID, err)
 }
 
-func (o *Orchestrator) showMetrics(ctx context.Context, beamID domain.ID) (driver.Stats, error) {
-	beam, err := o.st.GetBeam(ctx, beamID)
+func (o *Orchestrator) showMetrics(ctx context.Context, beamhallID, beamID domain.ID) (driver.Stats, error) {
+	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return driver.Stats{}, err
 	}

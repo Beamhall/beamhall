@@ -284,8 +284,8 @@ func (f *fakeBackplane) EmailBrokerWired() bool       { return f.emailWired }
 func (f *fakeBackplane) ObjectStoreEnabled() bool     { return f.objStoreEnabled }
 func (f *fakeBackplane) ObjectStoreBrokerWired() bool { return f.objStoreWired }
 
-func (f *fakeBackplane) RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error) {
-	f.record("RequestUpgrade:"+version, actor)
+func (f *fakeBackplane) RequestUpgrade(ctx context.Context, actor orch.Actor, version, expectedSHA256 string) (domain.AdminActionRequest, error) {
+	f.record("RequestUpgrade:"+version+":"+expectedSHA256, actor)
 	if f.failWith != nil {
 		return domain.AdminActionRequest{}, f.failWith
 	}
@@ -543,6 +543,10 @@ func (fakeDirectory) GetIdentityByIssuerSubject(ctx context.Context, issuer, sub
 		return domain.Identity{ID: "ident-1", ExternalSubject: subject, IdPIssuer: issuer, Status: domain.IdentityActive}, nil
 	case "user-2":
 		return domain.Identity{ID: "ident-2", ExternalSubject: subject, IdPIssuer: issuer, Status: domain.IdentityActive}, nil
+	case "disabled-admin":
+		// A registered identity IT has since disabled (admin_set_identity_status)
+		// but whose IdP-issued token is still unexpired.
+		return domain.Identity{ID: "ident-3", ExternalSubject: subject, IdPIssuer: issuer, Status: domain.IdentityDisabled}, nil
 	default:
 		return domain.Identity{}, store.ErrNotFound
 	}
@@ -951,6 +955,32 @@ func TestUnknownIdentityRejected(t *testing.T) {
 	}
 }
 
+// TestDisabledIdentityRejected is a regression test:
+// a
+// disabled identity must be refused even when its token still carries
+// admin:it and is otherwise unexpired — the kill switch (admin_set_identity_
+// status) must not be bypassable by an admin token that outlives it, and the
+// admin_* tool family (gated on Actor.ITAdmin via requireIT, not the PEP)
+// must not be reachable by a disabled admin at all, including to undo its
+// own disablement.
+func TestDisabledIdentityRejected(t *testing.T) {
+	h := newHarness(t)
+	cs := h.connect(t, "as=disabled-admin;"+auth.ScopeAdminIT, nil)
+	res, err := cs.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name: "admin_register_identity", Arguments: map[string]any{
+			"issuer": "https://idp.test", "subject": "x",
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(callText(t, res), "disabled") {
+		t.Errorf("disabled identity: want a disabled-identity refusal, got %q", callText(t, res))
+	}
+	if len(h.bp.calls) != 0 {
+		t.Errorf("backplane reached by a disabled identity: %v", h.bp.calls)
+	}
+}
+
 func TestDeployBeamFromTarballWithProgress(t *testing.T) {
 	h := newHarness(t)
 	h.bp.srcCheck = func(srcDir string) error {
@@ -1084,6 +1114,39 @@ func TestTarballEscapeRejected(t *testing.T) {
 	}
 	if len(h.bp.calls) != 0 {
 		t.Errorf("backplane reached with hostile tarball: %v", h.bp.calls)
+	}
+}
+
+// TestSourceTarballRejectsOnEncodedLengthBeforeDecoding proves the fix:
+// an oversized source_tarball must be rejected on its encoded length before
+// ever being decoded. This string is deliberately invalid base64 ('!' is not
+// in the alphabet) — pre-fix, the code always decoded first and would fail
+// with a base64-decode error (masking the size problem, and for a
+// legitimately-encoded huge payload, forcing a full-size allocation before
+// the cap was ever checked). Fixed, the size check runs first, so the error
+// here must be the size-cap message, not a decode error.
+func TestSourceTarballRejectsOnEncodedLengthBeforeDecoding(t *testing.T) {
+	h := newHarness(t)
+	cs := h.connect(t, auth.ScopeBeamsDeploy, nil)
+
+	huge := strings.Repeat("!", 11<<20) // ~11MiB, over the 8MB cap's base64 equivalent
+	res, err := cs.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name: "deploy_beam",
+		Arguments: map[string]any{"beamhall": "ops", "beam": "tracker",
+			"source_tarball": huge},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := callText(t, res)
+	if !res.IsError || !strings.Contains(got, "exceeds") {
+		t.Fatalf("want the size-cap rejection, got %q", got)
+	}
+	if strings.Contains(got, "not valid base64") {
+		t.Fatalf("rejected via a base64-decode error — the oversized payload was decoded before its size was checked: %q", got)
+	}
+	if len(h.bp.calls) != 0 {
+		t.Errorf("backplane reached with an oversized tarball: %v", h.bp.calls)
 	}
 }
 

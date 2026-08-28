@@ -63,7 +63,49 @@ func NewDockerDriver(secretsRoot string) (*DockerDriver, error) {
 	if err := os.MkdirAll(secretsRoot, 0o700); err != nil {
 		return nil, fmt.Errorf("secrets root: %w", err)
 	}
+	// Decrypted secrets are staged here before being bind-mounted into a
+	// container; if this path isn't tmpfs, plaintext credentials land on
+	// persistent disk (and in any VM/disk snapshot) instead of RAM-backed
+	// storage that a reboot clears. Fail closed rather than silently
+	// defeating encryption-at-rest at the staging layer.
+	if ok, err := isTmpfs(secretsRoot); err != nil {
+		return nil, fmt.Errorf("secrets root %q: check tmpfs: %w", secretsRoot, err)
+	} else if !ok {
+		return nil, fmt.Errorf("secrets root %q is not a tmpfs mount — decrypted secrets must be staged off "+
+			"persistent disk; set BEAMHALL_SECRETS_DIR to a tmpfs path (the systemd unit provisions one via "+
+			"RuntimeDirectory)", secretsRoot)
+	}
+	// SecurityProfile.UsernsRemap documents workload isolation as depending on
+	// the daemon-wide userns-remap setting — Docker has no per-container way
+	// to opt a container INTO remap the daemon isn't already configured for,
+	// so this driver has never actually been able to enforce that field
+	// per-deploy. Assert it here instead, once, at startup, and fail closed:
+	// a daemon silently running without userns-remap must never accept a
+	// deploy that believes itself isolated.
+	infoCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	info, err := cli.Info(infoCtx)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("docker info: %w", err)
+	}
+	if !usernsRemapConfigured(info.SecurityOptions) {
+		return nil, fmt.Errorf("docker daemon is not configured with userns-remap (SecurityOptions=%v) — "+
+			"Beamhall's workload isolation depends on this daemon-wide setting; see scripts/lab-bootstrap.sh", info.SecurityOptions)
+	}
 	return &DockerDriver{cli: cli, secretsRoot: secretsRoot}, nil
+}
+
+// usernsRemapConfigured reports whether the daemon's advertised security
+// options include userns-remap. Docker's `docker info` exposes this as a
+// "name=userns" entry in SecurityOptions when the daemon was started with
+// --userns-remap (or the equivalent daemon.json setting).
+func usernsRemapConfigured(securityOptions []string) bool {
+	for _, opt := range securityOptions {
+		if opt == "name=userns" {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *DockerDriver) Name() string { return "docker" }

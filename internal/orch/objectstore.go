@@ -329,11 +329,14 @@ func (o *Orchestrator) ShowObjectStore(ctx context.Context, actor Actor, beamhal
 	if err := o.authorize(ctx, actor, policy.ActionShowObjectStore, beamhallID, beamID); err != nil {
 		return ObjectStoreInfo{}, err
 	}
-	info, err := o.showObjectStore(ctx, beamID)
+	info, err := o.showObjectStore(ctx, beamhallID, beamID)
 	return info, o.outcome(ctx, actor, policy.ActionShowObjectStore, beamhallID, beamID, err)
 }
 
-func (o *Orchestrator) showObjectStore(ctx context.Context, beamID domain.ID) (ObjectStoreInfo, error) {
+func (o *Orchestrator) showObjectStore(ctx context.Context, beamhallID, beamID domain.ID) (ObjectStoreInfo, error) {
+	if _, err := o.operableBeam(ctx, beamhallID, beamID); err != nil {
+		return ObjectStoreInfo{}, err
+	}
 	resources, err := o.st.ListResourcesByBeam(ctx, beamID)
 	if err != nil {
 		return ObjectStoreInfo{}, err
@@ -522,7 +525,15 @@ func (o *Orchestrator) DrainObjectStoreAudit(ctx context.Context, after int64) (
 		o.appendObjectStoreAudit(ctx, se)
 	}
 	if next < after {
-		next = after // broker ring reset (restart)
+		// The broker's own counter is now BELOW our cursor — its ring reset
+		// (a restart), not a transient blip we should paper over. Adopt its
+		// reported high-water (not clamp back up to our stale one), or every
+		// subsequent pull keeps asking for "newer than a cursor the broker's
+		// fresh counter will now never reach again" — silently dropping every
+		// object-store-op audit event until the counter climbs back past the
+		// old value.
+		o.log.Warn("object-store broker audit cursor reset (broker restarted?) — adopting its new high-water",
+			"prev_cursor", after, "broker_cursor", next)
 	}
 	return next, nil
 }

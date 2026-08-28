@@ -160,7 +160,7 @@ func TestNewAdminToolsRequireAdminScope(t *testing.T) {
 		"admin_restore_backup":         {"name": "b.tar.gz"},
 		"admin_delete_user":            {"user_id": "u-1"},
 		"admin_delete_group":           {"group_id": "g-1"},
-		"admin_request_upgrade":        {"version": "v0.1.11"},
+		"admin_request_upgrade":        {"version": "v0.1.11", "expected_sha256": strings.Repeat("ab", 32)},
 	} {
 		_, txt := h.call(t, cs, tool, args, true)
 		if !strings.Contains(txt, "insufficient_scope") {
@@ -356,11 +356,12 @@ func TestAdminRequestUpgradeFourEyes(t *testing.T) {
 	h.bp.sensitiveTier = true
 	h.bp.upgradeEnabled = true
 	cs := h.connect(t, auth.ScopeAdminIT, nil)
-	_, txt := h.call(t, cs, "admin_request_upgrade", map[string]any{"version": "v0.1.11"}, false)
+	digest := strings.Repeat("ab", 32)
+	_, txt := h.call(t, cs, "admin_request_upgrade", map[string]any{"version": "v0.1.11", "expected_sha256": digest}, false)
 	if !strings.Contains(txt, "DIFFERENT IT operator") || !strings.Contains(txt, "admin_approve_request") {
 		t.Fatalf("upgrade four-eyes reply: %q", txt)
 	}
-	assertCalled(t, h, "RequestUpgrade:v0.1.11")
+	assertCalled(t, h, "RequestUpgrade:v0.1.11:"+digest)
 }
 
 func TestToolListUpgradeGating(t *testing.T) {

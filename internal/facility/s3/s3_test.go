@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	minio "github.com/minio/minio-go/v7"
 	miniocreds "github.com/minio/minio-go/v7/pkg/credentials"
@@ -101,6 +102,104 @@ func TestLocalRoundTripAndIsolation(t *testing.T) {
 	}
 	if len(buckets) != 1 || buckets[0].Name != "beam-a-preview" {
 		t.Fatalf("ListBuckets leaked or wrong: %v", buckets)
+	}
+}
+
+// TestCrossBucketCopySourceDenied is a regression test:
+// a server-side copy
+// naming another beam's bucket as its source must be denied, even though the
+// copy's destination is the caller's own bucket.
+func TestCrossBucketCopySourceDenied(t *testing.T) {
+	p := New(WithStateDir(t.TempDir()))
+	ts := httptest.NewServer(p.Handler())
+	defer ts.Close()
+	ctx := context.Background()
+
+	register(t, p, "beamA", "preview", "AKA", "secretA", "beam-a-preview", 0)
+	register(t, p, "beamB", "preview", "AKB", "secretB", "beam-b-preview", 0)
+
+	ca := minioClient(t, ts.URL, "AKA", "secretA")
+	cb := minioClient(t, ts.URL, "AKB", "secretB")
+
+	secret := []byte("beamB-CONFIDENTIAL-DATA-1234567890")
+	if _, err := cb.PutObject(ctx, "beam-b-preview", "vault/secret.txt", bytes.NewReader(secret), int64(len(secret)), minio.PutObjectOptions{}); err != nil {
+		t.Fatalf("B seed PutObject: %v", err)
+	}
+
+	// A attempts a server-side copy FROM B's bucket into its own bucket.
+	if _, err := ca.CopyObject(ctx,
+		minio.CopyDestOptions{Bucket: "beam-a-preview", Object: "stolen.txt"},
+		minio.CopySrcOptions{Bucket: "beam-b-preview", Object: "vault/secret.txt"},
+	); err == nil {
+		t.Fatal("cross-bucket copy source was accepted (C1 regression)")
+	}
+	if _, err := ca.StatObject(ctx, "beam-a-preview", "stolen.txt", minio.StatObjectOptions{}); err == nil {
+		t.Fatal("beamB's object landed in beamA's bucket despite a denied copy")
+	}
+}
+
+// TestObjectKeyPathTraversalDenied is a regression test:
+// a ".."
+// segment in the object key must not be able to walk a write/delete out of
+// the caller's own bucket into a sibling beam's.
+func TestObjectKeyPathTraversalDenied(t *testing.T) {
+	p := New(WithStateDir(t.TempDir()))
+	ts := httptest.NewServer(p.Handler())
+	defer ts.Close()
+	ctx := context.Background()
+
+	register(t, p, "beamA", "preview", "AKA", "secretA", "beam-a-preview", 0)
+	register(t, p, "beamB", "preview", "AKB", "secretB", "beam-b-preview", 0)
+
+	ca := minioClient(t, ts.URL, "AKA", "secretA")
+	cb := minioClient(t, ts.URL, "AKB", "secretB")
+
+	seed := []byte("beamB-original-content")
+	if _, err := cb.PutObject(ctx, "beam-b-preview", "shared.txt", bytes.NewReader(seed), int64(len(seed)), minio.PutObjectOptions{}); err != nil {
+		t.Fatalf("B seed PutObject: %v", err)
+	}
+
+	payload := []byte("OVERWRITTEN-BY-BEAM-A")
+	if _, err := ca.PutObject(ctx, "beam-a-preview", "../beam-b-preview/shared.txt",
+		bytes.NewReader(payload), int64(len(payload)), minio.PutObjectOptions{}); err == nil {
+		t.Fatal("path-traversal object key was accepted (C2 regression)")
+	}
+
+	obj, err := cb.GetObject(ctx, "beam-b-preview", "shared.txt", minio.GetObjectOptions{})
+	if err != nil {
+		t.Fatalf("B GetObject after traversal attempt: %v", err)
+	}
+	got, err := io.ReadAll(obj)
+	if err != nil {
+		t.Fatalf("B GetObject read: %v", err)
+	}
+	if !bytes.Equal(got, seed) {
+		t.Fatalf("B's object was overwritten via path traversal: got %q want %q", got, seed)
+	}
+}
+
+// TestExpiredRequestDateRejected proves the fix: a correctly-signed
+// request whose X-Amz-Date is outside the server's clock-skew window must be
+// rejected — otherwise a captured, validly-signed request stays "valid"
+// forever and can be replayed. minio's client always signs with the real
+// wall clock, so this shifts the SERVER's reference clock (p.now) forward
+// instead of the client's, simulating a request arriving long after it was
+// signed (a replay, or extreme clock drift).
+func TestExpiredRequestDateRejected(t *testing.T) {
+	p := New(WithStateDir(t.TempDir()))
+	ts := httptest.NewServer(p.Handler())
+	defer ts.Close()
+	ctx := context.Background()
+
+	register(t, p, "beamA", "preview", "AKA", "secretA", "beam-a-preview", 0)
+	c := minioClient(t, ts.URL, "AKA", "secretA")
+
+	p.now = func() time.Time { return time.Now().Add(20 * time.Minute) }
+
+	body := []byte("late")
+	_, err := c.PutObject(ctx, "beam-a-preview", "x.txt", bytes.NewReader(body), int64(len(body)), minio.PutObjectOptions{})
+	if err == nil {
+		t.Fatal("request with a stale X-Amz-Date (beyond the clock-skew window) was accepted")
 	}
 }
 
@@ -337,6 +436,34 @@ func TestNormalizeChunkedVariants(t *testing.T) {
 				t.Fatalf("decoded body mismatch:\n got %q\nwant %q", got, data)
 			}
 		})
+	}
+}
+
+// TestChunkedBodyExceedingDeclaredLengthIsRejected is a regression test: a chunked body declaring a
+// small X-Amz-Decoded-Content-Length but actually carrying much more data
+// must error out once the excess is reached — not silently deliver the full
+// payload — since the quota pre-check trusts that declared header as the
+// upper bound on what a write can actually contain.
+func TestChunkedBodyExceedingDeclaredLengthIsRejected(t *testing.T) {
+	big := bytes.Repeat([]byte("y"), 64<<10) // 64 KiB, matching the finding's PoC
+	raw := buildChunked(big, true, false)
+	r := httptest.NewRequest(http.MethodPut, "/beam-a-preview/toobig.bin", bytes.NewReader(raw))
+	r.Header.Set("X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
+	r.Header.Set("X-Amz-Decoded-Content-Length", "1") // lies: declares 1 byte
+	r.Header.Set("Content-Encoding", "aws-chunked")
+	if err := normalizeChunked(r); err != nil {
+		t.Fatalf("normalizeChunked: %v", err)
+	}
+
+	got, err := io.ReadAll(r.Body)
+	if err == nil {
+		t.Fatalf("expected an error once the stream exceeded its declared length, got a clean %d-byte read", len(got))
+	}
+	if !strings.Contains(err.Error(), "exceeds its declared") {
+		t.Fatalf("error = %v, want an exceeds-declared-length refusal", err)
+	}
+	if len(got) > 1 {
+		t.Fatalf("delivered %d bytes before erroring, want at most the declared 1", len(got))
 	}
 }
 

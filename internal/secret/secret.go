@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"sync"
 
 	"filippo.io/age"
 
@@ -42,16 +43,50 @@ type Store interface {
 
 // Vault encrypts/decrypts secret values with an age X25519 identity and
 // persists them via a Store. It is safe for concurrent use (the identity and
-// recipient are immutable; the Store serializes writes).
+// recipient are immutable; refLocks serializes Set/Delete per secret ref —
+// see its doc comment).
 type Vault struct {
 	id    *age.X25519Identity
 	recip *age.X25519Recipient
 	store Store
+	locks *refLocks
 }
 
 // NewVault builds a vault sealed by id over st.
 func NewVault(id *age.X25519Identity, st Store) *Vault {
-	return &Vault{id: id, recip: id.Recipient(), store: st}
+	return &Vault{id: id, recip: id.Recipient(), store: st, locks: newRefLocks()}
+}
+
+// refLocks serializes Set/Delete for the SAME secret reference. Store (the
+// interface Vault talks to) has no transaction concept, so Set's read-stage-
+// flip-GC and Delete's read-delete-delete are each a sequence of independent
+// store calls — without this, a concurrent Set and Delete on one
+// (beamhall,beam,key,channel) can interleave their steps and resurrect a
+// value that was just deleted, or orphan a freshly-written blob.
+// This closes the
+// concurrent-request race; it does not make either sequence atomic against a
+// process crash mid-sequence (that would need a real DB transaction).
+type refLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func newRefLocks() *refLocks { return &refLocks{locks: make(map[string]*sync.Mutex)} }
+
+func (r *refLocks) lock(key string) func() {
+	r.mu.Lock()
+	l, ok := r.locks[key]
+	if !ok {
+		l = &sync.Mutex{}
+		r.locks[key] = l
+	}
+	r.mu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
+func refKey(ref domain.SecretRef) string {
+	return string(ref.BeamhallID) + "/" + string(ref.BeamID) + "/" + string(ref.Channel) + "/" + ref.Key
 }
 
 // LoadOrCreateKey loads the age identity sealing the vault from path, or — when
@@ -104,6 +139,9 @@ func LoadKey(path string) (*age.X25519Identity, error) {
 // timestamps) is returned. A rewrite stages new ciphertext under a fresh ref,
 // flips the metadata pointer, then GCs the superseded blob.
 func (v *Vault) Set(ctx context.Context, ref domain.SecretRef, value []byte, by domain.ID) (domain.Secret, error) {
+	unlock := v.locks.lock(refKey(ref))
+	defer unlock()
+
 	ct, err := v.encrypt(value)
 	if err != nil {
 		return domain.Secret{}, err
@@ -145,6 +183,9 @@ func (v *Vault) Set(ctx context.Context, ref domain.SecretRef, value []byte, by 
 
 // Delete removes a secret's metadata and its ciphertext. Idempotent.
 func (v *Vault) Delete(ctx context.Context, ref domain.SecretRef) error {
+	unlock := v.locks.lock(refKey(ref))
+	defer unlock()
+
 	sec, err := v.store.GetSecret(ctx, ref.BeamhallID, ref.BeamID, ref.Key, ref.Channel)
 	switch {
 	case err == nil:

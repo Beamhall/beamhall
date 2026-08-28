@@ -60,7 +60,12 @@ func TestOrchestratorJunctionVaultToContainer(t *testing.T) {
 	vault := secret.NewVault(key, st)
 	alog := audit.New(st)
 	pep := policy.New(st, alog)
-	drv, err := driver.NewDockerDriver(filepath.Join(t.TempDir(), "secrets"))
+	// /dev/shm, not t.TempDir(): NewDockerDriver now requires a tmpfs-backed
+	// secrets root (secrets must never be staged to persistent disk),
+	// and t.TempDir() is ordinary disk-backed storage under the module dir.
+	secretsDir := filepath.Join("/dev/shm", "bh-orch-it-secrets")
+	t.Cleanup(func() { _ = os.RemoveAll(secretsDir) })
+	drv, err := driver.NewDockerDriver(secretsDir)
 	if err != nil {
 		t.Fatalf("NewDockerDriver: %v", err)
 	}

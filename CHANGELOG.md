@@ -15,6 +15,59 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Security
+- **Object storage: cross-beam isolation holes closed.** A beam could read or
+  overwrite another beam's objects via `x-amz-copy-source`, and tamper across
+  prefixes via `..` key traversal; both now resolve against the requesting
+  beam's own namespace only. The storage quota can no longer be bypassed with a
+  lying `X-Amz-Decoded-Content-Length` or oversized chunks.
+- **Decrypted secrets never touch persistent disk.** Secret files are staged on
+  a tmpfs (`BEAMHALL_SECRETS_DIR`; the systemd unit provisions a
+  `RuntimeDirectory` for it) before being bind-mounted into a container, and
+  `beamhalld` **fails closed at startup** if the path isn't tmpfs-backed — or if
+  the Docker daemon isn't running userns-remap. Failed bring-ups now reliably
+  reclaim the container *and* its staged secret dir; arbitrary `set_secret`
+  values are swept on destroy.
+- **Per-beam serialization.** Deploys, promotes, rollbacks, destroys, and
+  four-eyes approve/reject on the same beam are serialized — a destroy racing a
+  slow build can no longer resurrect an archived beam, and approve/reject can
+  no longer disagree with what actually shipped.
+- **Promotion/rollback integrity.** Four-eyes approval pins the exact release
+  it approved; rollback refuses preview-channel releases (no production data
+  crossover); a failed re-promote or rollback leaves the existing live route
+  active instead of dropping production traffic — across restarts too.
+- **Egress reconciler is atomic.** Rule updates no longer flush to a transient
+  allow-all window, and the cloud-metadata deny (169.254.169.254 et al.) is
+  unconditional, covering bridges with no policy attached.
+- **Audit trail hardening.** The recorded `SourceIP` ignores client-supplied
+  `X-Forwarded-For` unless the peer is a configured trusted proxy; pruning the
+  entire log no longer manufactures a permanent false "chain broken" verdict.
+- **Admin console session hardening.** Sessions are capped at the IdP access
+  token's expiry, CSRF tokens are per-session (logout included), the OAuth
+  redirect URI rejects unrecognized hosts, and cookie `Secure` derivation is
+  explicit.
+- **Identity kill-switch applies to IT admins.** A disabled identity is
+  rejected even when it carries the admin role — an admin can no longer
+  re-enable themselves through a live session.
+- **Self-upgrade requires a pinned digest.** `admin_request_upgrade` demands an
+  operator-supplied `expected_sha256`, verified before the downloaded binary is
+  ever staged or executed — the release channel alone is no longer trusted.
+- **Mail facility.** The smarthost credential is only ever sent over verified
+  STARTTLS (opportunistic downgrade refused), and the sender allowlist is
+  enforced on the `From:` header, not just the SMTP envelope.
+- **Assorted fixes** from the same review: quota check-then-act races enforced
+  in the store, vault set/delete made atomic, restore forces `0600` on the
+  restored secret key and the DR runbook no longer auto-starts before
+  out-of-band key placement, build timeouts kill the whole `pack` process
+  group, broker audit-drain survives a broker restart without dropping events,
+  JWKS refetch hardening, and ~20 further low-severity hardening items.
+
+### Added
+- `BEAMHALL_OAUTH_TRUST_FLAT_ROLES` (default off): opt-in trust of a flat
+  top-level `roles` claim for admin elevation, for IdPs that can mint it from a
+  source the subject cannot influence. Keycloak's nested `realm_access.roles`
+  remains the default path.
+
 ## [0.4.0] - 2026-07-02
 
 ### Added

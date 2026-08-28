@@ -29,12 +29,20 @@ func (s *Store) AppendAuditEvent(ctx context.Context, ev *domain.AuditEvent) (in
 }
 
 // AuditChainAppend appends ev as the new chain head: inside a single write
-// transaction it reads the current head's hash ("" on an empty log), calls
-// seal so the caller can set ev.PrevHash and ev.Hash, then inserts. The
-// transaction (BEGIN IMMEDIATE, single connection) makes read→seal→insert
-// atomic against every other writer, so the chain cannot fork or skip even
-// under concurrent appends. ID and At are filled before seal runs, so the
-// hash can cover their final values.
+// transaction it reads the current head's hash, calls seal so the caller can
+// set ev.PrevHash and ev.Hash, then inserts. The transaction (BEGIN
+// IMMEDIATE, single connection) makes read→seal→insert atomic against every
+// other writer, so the chain cannot fork or skip even under concurrent
+// appends. ID and At are filled before seal runs, so the hash can cover
+// their final values.
+//
+// An empty table does not always mean genesis: a retention prune
+// (PruneAuditThrough) can legitimately remove every row, in which case the
+// surviving chain must continue from the prune checkpoint's anchor hash, not
+// "" — otherwise Verify (which resumes from that same checkpoint) sees a
+// prev_hash mismatch on the very next append and reports a permanent false
+// tamper alarm on an untampered log. The checkpoint read happens in this same
+// transaction so it is atomic with the head read and the insert.
 func (s *Store) AuditChainAppend(ctx context.Context, ev *domain.AuditEvent, seal func(prevHash string)) (int64, error) {
 	s.fillAuditEvent(ev)
 	var seq int64
@@ -44,7 +52,14 @@ func (s *Store) AuditChainAppend(ctx context.Context, ev *domain.AuditEvent, sea
 		case err == nil:
 			prev = row.Hash
 		case errors.Is(err, sql.ErrNoRows):
-			prev = "" // chain genesis
+			switch cp, cerr := q.LatestAuditCheckpoint(ctx); {
+			case cerr == nil:
+				prev = cp.AnchorHash // chain continues from the last prune
+			case errors.Is(cerr, sql.ErrNoRows):
+				prev = "" // true genesis: never pruned
+			default:
+				return cerr
+			}
 		default:
 			return err
 		}

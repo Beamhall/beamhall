@@ -36,7 +36,12 @@ func TestGatewayRoutesToContainer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	d, err := driver.NewDockerDriver("/tmp/bh-gw-secrets")
+	// /dev/shm, not /tmp: NewDockerDriver now requires a tmpfs-backed secrets
+	// root (secrets must never be staged to persistent disk), and /tmp
+	// isn't guaranteed tmpfs on every distro whereas /dev/shm always is.
+	secretsDir := "/dev/shm/bh-gw-secrets"
+	t.Cleanup(func() { _ = os.RemoveAll(secretsDir) })
+	d, err := driver.NewDockerDriver(secretsDir)
 	if err != nil {
 		t.Fatalf("driver: %v", err)
 	}

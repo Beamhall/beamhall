@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -81,6 +82,18 @@ func (p *Packer) Build(ctx context.Context, imageRepo, tag, srcDir string, logs 
 	}
 	cmd.Stdout = logs
 	cmd.Stderr = logs
+	// Put pack in its own process group so a timeout kills it AND any local
+	// descendants it forks, not just the tracked PID. This does not reach the buildpack
+	// lifecycle containers pack drives on the build daemon via the Docker
+	// API — those aren't OS-level children of this process at all, so a
+	// process-group signal can't touch them; reaping those on timeout needs
+	// a build-scoped label pack doesn't currently give us a way to attach to
+	// its ephemeral lifecycle containers, so that residual gap stays open.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 10 * time.Second
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("pack build %s: %w", image, err)
 	}

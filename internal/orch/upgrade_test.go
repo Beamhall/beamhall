@@ -9,31 +9,53 @@ import (
 )
 
 type fakeStager struct {
-	enabled bool
-	staged  string
+	enabled        bool
+	staged         string
+	stagedExpected string // the expectedSHA256 Stage was called with
 }
 
 func (f *fakeStager) Enabled() bool          { return f.enabled }
 func (f *fakeStager) CurrentVersion() string { return "v0.1.10" }
-func (f *fakeStager) Stage(_ context.Context, version string) (upgrade.Result, error) {
+func (f *fakeStager) Stage(_ context.Context, version, expectedSHA256 string) (upgrade.Result, error) {
 	f.staged = version
+	f.stagedExpected = expectedSHA256
 	return upgrade.Result{
 		Version: version, SHA256: strings.Repeat("a", 64), StagedPath: "/tmp/staged",
 		ApplyCmd: "APPLY-CMD", RollbackCmd: "ROLLBACK-CMD",
 	}, nil
 }
 
+// aDigest is a well-formed (but arbitrary) 64-char hex SHA-256 stand-in for
+// the approver's independently-obtained expected digest.
+var aDigest = strings.Repeat("ab", 32)
+
 func TestRequestUpgradeGates(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
 	// Self-upgrade disabled by default → refused even for it_admin.
-	if _, err := w.o.RequestUpgrade(ctx, itActor(w), "v0.1.11"); err == nil {
+	if _, err := w.o.RequestUpgrade(ctx, itActor(w), "v0.1.11", aDigest); err == nil {
 		t.Fatal("must refuse when self-upgrade is disabled")
 	}
 	// Enabled but sensitive tier off → still refused.
 	w.o.upgrader = &fakeStager{enabled: true}
-	if _, err := w.o.RequestUpgrade(ctx, itActor(w), "v0.1.11"); err == nil {
+	if _, err := w.o.RequestUpgrade(ctx, itActor(w), "v0.1.11", aDigest); err == nil {
 		t.Fatal("must refuse when the sensitive tier is off")
+	}
+}
+
+// TestRequestUpgradeRequiresExpectedDigest is part of the regression
+// coverage:
+// a malformed or missing expected_sha256 is refused at request time, before
+// a sensitive four-eyes request is even filed.
+func TestRequestUpgradeRequiresExpectedDigest(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.o.upgrader = &fakeStager{enabled: true}
+	w.o.idpSensitive = true
+	for _, bad := range []string{"", "not-a-digest", aDigest[:63]} {
+		if _, err := w.o.RequestUpgrade(ctx, itActor(w), "v0.1.11", bad); err == nil {
+			t.Errorf("expected_sha256 %q should have been refused", bad)
+		}
 	}
 }
 
@@ -44,7 +66,7 @@ func TestFourEyesSelfUpgradeStagesOnApproval(t *testing.T) {
 	w.o.upgrader = fs
 	w.o.idpSensitive = true
 
-	req, err := w.o.RequestUpgrade(ctx, itActor(w), "v0.1.11")
+	req, err := w.o.RequestUpgrade(ctx, itActor(w), "v0.1.11", aDigest)
 	if err != nil {
 		t.Fatalf("RequestUpgrade: %v", err)
 	}
@@ -63,6 +85,9 @@ func TestFourEyesSelfUpgradeStagesOnApproval(t *testing.T) {
 	}
 	if fs.staged != "v0.1.11" {
 		t.Fatalf("not staged on approval: %q", fs.staged)
+	}
+	if fs.stagedExpected != aDigest {
+		t.Fatalf("the approver's expected digest did not flow through to Stage: got %q, want %q", fs.stagedExpected, aDigest)
 	}
 	if !strings.Contains(out.Result, "APPLY-CMD") || !strings.Contains(out.Result, "ROLLBACK-CMD") {
 		t.Errorf("result missing the apply/rollback runbook: %q", out.Result)

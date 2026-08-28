@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -186,6 +187,51 @@ func TestResumeReArmsExtendsDeadline(t *testing.T) {
 	time.Sleep(250 * time.Millisecond)
 	if p.count("z") != 0 {
 		t.Fatalf("z paused at the old (shorter) deadline despite re-arm (count=%d)", p.count("z"))
+	}
+}
+
+// TestDisarmDuringInFlightPauseSkipsRetry is a regression test:
+// if Disarm races a
+// firing pause (e.g. promote_to_live disarming while the auto-pause timer's
+// PauseFunc is already running for the same beam) and that PauseFunc call
+// then fails, the scheduler must NOT re-arm a retry — that would resurrect a
+// timer the caller explicitly, and successfully, cancelled.
+func TestDisarmDuringInFlightPauseSkipsRetry(t *testing.T) {
+	st := newMemStore()
+	inFlight := make(chan struct{})
+	proceed := make(chan struct{})
+	var signalOnce sync.Once
+	var calls int32
+	fn := func(_ context.Context, beamID string) error {
+		atomic.AddInt32(&calls, 1)
+		signalOnce.Do(func() { close(inFlight) }) // tell the test PauseFunc is now running (only the first call)
+		<-proceed                                 // block until the test allows it to return
+		return errors.New("transient pause failure")
+	}
+	s := New(st, fn, quiet(), WithRetry(30*time.Millisecond))
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+
+	if err := s.ArmAfter(context.Background(), "race", 20*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	<-inFlight // PauseFunc is now blocked mid-call for "race"
+
+	if err := s.Disarm(context.Background(), "race"); err != nil {
+		t.Fatalf("Disarm: %v", err)
+	}
+	close(proceed) // let the in-flight PauseFunc return its error now
+
+	// Give the retry window plenty of time to have fired if the race were
+	// still open.
+	time.Sleep(200 * time.Millisecond)
+	if st.has("race") {
+		t.Fatal("beam was re-armed after being disarmed while its pause was in flight")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("PauseFunc called %d times, want exactly 1 (no retry after the mid-flight disarm)", got)
 	}
 }
 

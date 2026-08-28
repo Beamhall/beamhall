@@ -119,9 +119,10 @@ type NewUser struct {
 	Email     string
 	FirstName string
 	LastName  string
-	// Enabled defaults to true via CreateUser when the zero value is used by a
-	// caller that always wants active accounts; callers set false explicitly to
-	// stage a disabled account.
+	// Enabled is passed straight through to the IdP — there is no
+	// CreateUser-side defaulting. The zero value (false) creates a DISABLED
+	// account; a caller that wants an active account on creation must set
+	// this to true explicitly.
 	Enabled bool
 }
 

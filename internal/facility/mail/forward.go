@@ -52,15 +52,19 @@ func (f *SMTPForwarder) Forward(ctx context.Context, env Envelope) error {
 	}
 
 	if !f.cfg.DisableStartTLS {
-		if ok, _ := c.Extension("STARTTLS"); ok {
-			tcfg := &tls.Config{ServerName: host, InsecureSkipVerify: f.cfg.InsecureSkipVerify}
-			if err := c.StartTLS(tcfg); err != nil {
-				return fmt.Errorf("starttls: %w", err)
-			}
+		if ok, _ := c.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("starttls: smarthost %q did not advertise STARTTLS (capability stripped or unsupported); refusing to deliver in cleartext", f.cfg.Smarthost)
+		}
+		tcfg := &tls.Config{ServerName: host, InsecureSkipVerify: f.cfg.InsecureSkipVerify}
+		if err := c.StartTLS(tcfg); err != nil {
+			return fmt.Errorf("starttls: %w", err)
 		}
 	}
 
 	if f.cfg.Username != "" {
+		if _, tlsOK := c.TLSConnectionState(); !tlsOK && !f.cfg.DisableStartTLS {
+			return fmt.Errorf("auth: refusing to send smarthost credentials without an active TLS session")
+		}
 		if ok, _ := c.Extension("AUTH"); ok {
 			if err := c.Auth(netsmtp.PlainAuth("", f.cfg.Username, f.cfg.Password, host)); err != nil {
 				return fmt.Errorf("auth: %w", err)

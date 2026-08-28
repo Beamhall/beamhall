@@ -13,7 +13,7 @@
   <a href="/admin" class="text-sm hover:text-white text-slate-300">Beamhalls</a>
   <a href="/admin/audit" class="text-sm hover:text-white text-slate-300">Audit log</a>
   <span class="ml-auto text-sm text-slate-400">{{.Operator}}</span>
-  <form method="post" action="/admin/logout" class="inline"><button class="text-sm text-slate-300 hover:text-white">Log out</button></form>
+  <form method="post" action="/admin/logout" class="inline"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="text-sm text-slate-300 hover:text-white">Log out</button></form>
 </nav>
 <main class="max-w-5xl mx-auto px-6 py-8">
 {{if .Flash}}<div class="mb-4 rounded bg-amber-100 border border-amber-300 text-amber-900 px-4 py-2 text-sm">{{.Flash}}</div>{{end}}

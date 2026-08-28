@@ -96,7 +96,7 @@ type Backplane interface {
 	AdminListBackups(ctx context.Context, actor orch.Actor) ([]orch.BackupInfo, error)
 	RequestRestoreBackup(ctx context.Context, actor orch.Actor, name string) (domain.AdminActionRequest, error)
 	UpgradeEnabled() bool
-	RequestUpgrade(ctx context.Context, actor orch.Actor, version string) (domain.AdminActionRequest, error)
+	RequestUpgrade(ctx context.Context, actor orch.Actor, version, expectedSHA256 string) (domain.AdminActionRequest, error)
 	AdminCreateUser(ctx context.Context, actor orch.Actor, u identityadmin.NewUser) (identityadmin.User, error)
 	AdminListUsers(ctx context.Context, actor orch.Actor, query string, max int) ([]identityadmin.User, error)
 	AdminSetUserPassword(ctx context.Context, actor orch.Actor, userID, password string) error

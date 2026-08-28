@@ -323,6 +323,15 @@ func (s *Service) receivePack(w http.ResponseWriter, r *http.Request, ep *transp
 		return
 	}
 
+	// Claim the one-time token BEFORE starting the (slow) build/deploy: two
+	// concurrent receive-pack requests presenting the identical valid token
+	// both pass Validate (no side effects there), so without claiming here
+	// first, both would proceed to deploy.
+	if !s.tokens.Claim(princ) {
+		http.Error(w, "push token already claimed by a concurrent push", http.StatusForbidden)
+		return
+	}
+
 	// Build + deploy synchronously, streaming progress to the client as
 	// "remote:" lines.
 	var progress io.Writer = io.Discard
@@ -334,10 +343,11 @@ func (s *Service) receivePack(w http.ResponseWriter, r *http.Request, ep *transp
 	url, derr := s.deploy(r.Context(), princ, sha, progress)
 	if derr != nil {
 		// The build/deploy failed. The pushed commit is already on main, so
-		// DON'T spend the one-time token: the user fixes their code, commits,
-		// and re-runs the SAME `git push` (a fast-forward) without re-minting.
-		// Spending it here is what forced agents into a 403 → re-init →
-		// divergent-history spiral (lab finding).
+		// DON'T spend the one-time token: revert the claim so the user fixes
+		// their code, commits, and re-runs the SAME `git push` (a
+		// fast-forward) without re-minting. Spending it here is what forced
+		// agents into a 403 → re-init → divergent-history spiral (lab finding).
+		s.tokens.Unclaim(princ)
 		if mux != nil {
 			_, _ = mux.WriteChannel(sideband.ErrorMessage, []byte("deploy failed: "+oneLine(derr.Error())+"\n"))
 			_, _ = mux.WriteChannel(sideband.ProgressMessage,
@@ -345,8 +355,7 @@ func (s *Service) receivePack(w http.ResponseWriter, r *http.Request, ep *transp
 		}
 		s.failCommands(report, derr)
 	} else {
-		// Deploy succeeded: spend the one-time token now.
-		s.tokens.Consume(princ.Beamhall, princ.Beam)
+		// Deploy succeeded: the token is already claimed/spent.
 		if mux != nil {
 			_, _ = mux.WriteChannel(sideband.ProgressMessage, []byte("deployed; reachable at "+url+"\n"))
 		}

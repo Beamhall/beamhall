@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,27 +48,46 @@ import (
 	"github.com/Beamhall/beamhall/internal/web"
 )
 
+// routeLister is the slice of *store.Store gitDeployer needs to resolve a
+// beam's active URL after a deploy — narrowed from the concrete store so a
+// test can inject a failing lookup without a live store.
+type routeLister interface {
+	ListRoutesByBeam(ctx context.Context, beamID domain.ID) ([]domain.Route, error)
+}
+
+// resolveDeployedURL returns the beam's currently active route URL. A
+// ListRoutesByBeam failure must not be silently reported as a blank success:
+// the deploy itself already succeeded by the time this runs, so the caller
+// treating this as a hard failure would tell the pushing agent to "fix your
+// code and re-push" — advice that wouldn't touch a store error and would
+// waste a rebuild on an already-running beam. Instead this logs the error
+// and returns an explanatory placeholder.
+func resolveDeployedURL(ctx context.Context, st routeLister, beamID domain.ID, logger *slog.Logger) string {
+	routes, err := st.ListRoutesByBeam(ctx, beamID)
+	if err != nil {
+		logger.Error("git deploy: list routes for URL", "beam", beamID, "err", err)
+		return "(deployed, but the URL could not be determined — run list_beams or show_logs to find it)"
+	}
+	for i := len(routes) - 1; i >= 0; i-- {
+		if routes[i].Status == domain.RouteActive {
+			return "https://" + routes[i].Hostname
+		}
+	}
+	return ""
+}
+
 // gitDeployer adapts the orchestrator to the git server's deploy callback: it
 // builds+deploys the pushed commit as the token's actor (re-checked by the
 // PEP), streams build progress to the push client, and returns the beam's
 // active URL.
-func gitDeployer(o *orch.Orchestrator, st *store.Store, logger *slog.Logger) gitserver.Deployer {
+func gitDeployer(o *orch.Orchestrator, st routeLister, logger *slog.Logger) gitserver.Deployer {
 	return func(ctx context.Context, p gitserver.Principal, sha string, progress io.Writer) (string, error) {
 		actor := orch.Actor{ID: p.Actor}
 		beam, err := o.DeployBeamFromGit(build.WithProgress(ctx, progress), actor, p.Beamhall, p.Beam, sha)
 		if err != nil {
 			return "", err
 		}
-		routes, err := st.ListRoutesByBeam(ctx, beam.ID)
-		if err != nil {
-			return "", nil
-		}
-		for i := len(routes) - 1; i >= 0; i-- {
-			if routes[i].Status == domain.RouteActive {
-				return "https://" + routes[i].Hostname, nil
-			}
-		}
-		return "", nil
+		return resolveDeployedURL(ctx, st, beam.ID, logger), nil
 	}
 }
 
@@ -472,7 +492,11 @@ func run() error {
 	}
 
 	// --- runtime substrate: driver, gateway, scheduler --------------------
-	drv, err := driver.NewDockerDriver(filepath.Join(cfg.DataDir, "secrets"))
+	secretsDir := cfg.SecretsDir
+	if secretsDir == "" {
+		secretsDir = filepath.Join(cfg.DataDir, "secrets")
+	}
+	drv, err := driver.NewDockerDriver(secretsDir)
 	if err != nil {
 		logger.Error("init docker driver", "err", err)
 		return err
@@ -707,10 +731,11 @@ func run() error {
 		})
 	} else {
 		verifier, err := auth.NewVerifier(auth.Config{
-			Issuer:       cfg.OAuthIssuer,
-			Audience:     cfg.OAuthAudience,
-			JWKSURL:      cfg.OAuthJWKSURL,
-			DiscoveryURL: cfg.OAuthDiscoveryURL,
+			Issuer:              cfg.OAuthIssuer,
+			Audience:            cfg.OAuthAudience,
+			JWKSURL:             cfg.OAuthJWKSURL,
+			DiscoveryURL:        cfg.OAuthDiscoveryURL,
+			TrustFlatRolesClaim: cfg.OAuthTrustFlatRolesClaim,
 		})
 		if err != nil {
 			logger.Error("init token verifier", "err", err)
@@ -746,6 +771,7 @@ func run() error {
 			logger.Error("load admin session key", "err", kerr)
 		} else if adminSrv, aerr := web.New(ctx, st, orchestrator, web.Config{
 			BaseURL:      cfg.AdminBaseURL,
+			BaseDomain:   cfg.BaseDomain,
 			Issuer:       cfg.OAuthIssuer,
 			ClientID:     cfg.AdminClientID,
 			ClientSecret: cfg.AdminClientSecret,
@@ -764,7 +790,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           mux,
+		Handler:           normalizeSourceIP(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errCh := make(chan error, 1)
@@ -838,6 +864,49 @@ func splitHostPort(addr string) (string, string, error) {
 		return "", "", err
 	}
 	return u.Hostname(), u.Port(), nil
+}
+
+// normalizeSourceIP rewrites the X-Forwarded-For header to a single,
+// server-computed value before any handler sees the request — closing the
+// audit-provenance gap where the MCP layer (internal/mcp/actor.go) and the
+// Admin console (internal/web/server.go) both took a raw, fully
+// client-controlled X-Forwarded-For as the "source IP" recorded in the
+// tamper-evident audit log.
+// Both call sites are left reading X-Forwarded-For as before; this is the
+// single point that makes that value trustworthy.
+func normalizeSourceIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set("X-Forwarded-For", trustedSourceIP(r))
+		next.ServeHTTP(w, r)
+	})
+}
+
+// trustedSourceIP resolves the real client IP. beamhalld's HTTP listener is
+// reached over loopback from Caddy in every supported topology
+// (internal/gateway) — Caddy's reverse_proxy APPENDS its own observed peer to
+// any existing X-Forwarded-For rather than passing a client-supplied value
+// through unappended, so when the immediate TCP peer is loopback, the LAST
+// entry in that header is what Caddy itself saw. A direct (non-loopback) peer
+// means Caddy was bypassed: any X-Forwarded-For the client sent is entirely
+// self-reported, so it's discarded in favor of the real TCP peer.
+func trustedSourceIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return host
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		return host
+	}
+	parts := strings.Split(xff, ",")
+	if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
+		return last
+	}
+	return host
 }
 
 // allowedOrigins are the hostnames browser-originated MCP requests may come

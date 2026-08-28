@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,65 @@ func TestBackupNotConfigured(t *testing.T) {
 	}
 	if _, err := w.o.AdminListBackups(ctx, itActor(w)); err == nil {
 		t.Fatal("AdminListBackups must fail when unconfigured")
+	}
+}
+
+// TestRestoreRunbookIncludesOutOfBandKeyStepAndNoAutoStart proves the
+// fix: when the appliance loads its secret key out-of-band (backupKeyPath
+// differs from <dataDir>/secret.key, where beamhalld restore always drops
+// the recovered key), the approved runbook tells the operator to relocate
+// the key BEFORE starting, and never auto-chains stop/restore/start with &&
+// — an operator pasting the whole thing would otherwise start the daemon
+// before the key is in place.
+func TestRestoreRunbookIncludesOutOfBandKeyStepAndNoAutoStart(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dataDir, "beamhall.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	// Out-of-band key: NOT at <dataDir>/secret.key.
+	oobKeyPath := filepath.Join(t.TempDir(), "secret.key")
+	if err := os.WriteFile(oobKeyPath, []byte("AGE-SECRET-KEY-TEST"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backupDir := filepath.Join(t.TempDir(), "backups")
+
+	w.o.backupDataDir = dataDir
+	w.o.backupKeyPath = oobKeyPath
+	w.o.backupDir = backupDir
+	w.o.idpSensitive = true
+
+	when := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	info, err := w.o.AdminBackupNow(ctx, itActor(w), when)
+	if err != nil {
+		t.Fatalf("AdminBackupNow: %v", err)
+	}
+
+	req, err := w.o.RequestRestoreBackup(ctx, itActor(w), info.Name)
+	if err != nil {
+		t.Fatalf("RequestRestoreBackup: %v", err)
+	}
+	out, err := w.o.ApproveAdminAction(ctx, secondIT(w), req.ID)
+	if err != nil {
+		t.Fatalf("ApproveAdminAction: %v", err)
+	}
+
+	if strings.Contains(out.Result, "&& systemctl start") {
+		t.Fatalf("runbook auto-chains straight to systemctl start — an operator pasting it could start the daemon before relocating the key: %s", out.Result)
+	}
+	if !strings.Contains(out.Result, oobKeyPath) {
+		t.Fatalf("runbook omits the out-of-band key placement step: %s", out.Result)
+	}
+	installIdx := strings.Index(out.Result, "install -m0400")
+	startIdx := strings.Index(out.Result, "systemctl start beamhalld")
+	if installIdx < 0 {
+		t.Fatalf("runbook missing the key-install step: %s", out.Result)
+	}
+	if startIdx < 0 || installIdx > startIdx {
+		t.Fatalf("key-install step must appear before systemctl start: %s", out.Result)
 	}
 }
 

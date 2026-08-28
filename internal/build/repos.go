@@ -150,11 +150,25 @@ func (r *Repos) CheckoutTo(ctx context.Context, repoPath, sha, dstDir string) er
 		}
 		defer rd.Close()
 		if f.Mode == filemode.Symlink {
-			link, err := io.ReadAll(rd)
+			linkBytes, err := io.ReadAll(rd)
 			if err != nil {
 				return err
 			}
-			return os.Symlink(string(link), target)
+			link := string(linkBytes)
+			// The prefix check above only validated the symlink FILE's own
+			// location — not what it points AT. An absolute or ..-escaping
+			// target (e.g. "/etc/shadow", "../../../../etc/passwd") would be
+			// fed straight into pack build --path, which follows symlinks
+			// while scanning the build context.
+			if filepath.IsAbs(link) {
+				return fmt.Errorf("path %q is a symlink to an absolute path %q — not allowed in a build checkout", f.Name, link)
+			}
+			resolved := filepath.Join(filepath.Dir(target), filepath.FromSlash(link))
+			clean := filepath.Clean(dstDir)
+			if resolved != clean && !strings.HasPrefix(resolved, clean+string(os.PathSeparator)) {
+				return fmt.Errorf("path %q is a symlink whose target %q escapes the checkout directory", f.Name, link)
+			}
+			return os.Symlink(link, target)
 		}
 		perm := os.FileMode(0o644)
 		if f.Mode == filemode.Executable {

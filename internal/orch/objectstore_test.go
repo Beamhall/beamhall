@@ -19,6 +19,10 @@ type fakeObjectStoreProv struct {
 	deregistered []string
 	quota        map[string]int64
 	provider     *s3.ProviderConfig
+	// pullNext, when set, overrides PullEvents' echo-back-after default —
+	// lets a test simulate a broker restart (a next lower than after).
+	pullNext     *int64
+	pulledEvents []s3.SeqEvent
 }
 
 func (f *fakeObjectStoreProv) Provision(_ context.Context, req s3.ProvisionRequest) (s3.Credentials, error) {
@@ -48,6 +52,9 @@ func (f *fakeObjectStoreProv) SetQuota(_ context.Context, beamID, channel string
 	return nil
 }
 func (f *fakeObjectStoreProv) PullEvents(_ context.Context, after int64) ([]s3.SeqEvent, int64, error) {
+	if f.pullNext != nil {
+		return f.pulledEvents, *f.pullNext, nil
+	}
 	return nil, after, nil
 }
 func (f *fakeObjectStoreProv) Status(_ context.Context) (bool, int64, error) { return true, 0, nil }
@@ -174,6 +181,29 @@ func TestPromoteMirrorsLiveObjectStore(t *testing.T) {
 	prev, _ := w.st.ListResourcesByBeamAndChannel(ctx, beam.ID, domain.ChannelPreview)
 	if prev[0].Spec["bucket"] == liveOS.Spec["bucket"] {
 		t.Fatal("live bucket must differ from preview bucket")
+	}
+}
+
+// TestDrainObjectStoreAuditAdoptsBrokerResetCursor mirrors
+// TestDrainEmailAuditAdoptsBrokerResetCursor for the object-store broker — the
+// same broker-reset regression.
+func TestDrainObjectStoreAuditAdoptsBrokerResetCursor(t *testing.T) {
+	w := newWorld(t)
+	fp := &fakeObjectStoreProv{}
+	enableObjectStore(w, fp)
+	ctx := context.Background()
+
+	staleCursor := int64(10_000)
+	brokerCursor := int64(3)
+	fp.pullNext = &brokerCursor
+	fp.pulledEvents = []s3.SeqEvent{{Seq: 1, Event: s3.Event{BeamID: "b1", Op: "PutObject", Result: "ok"}}}
+
+	next, err := w.o.DrainObjectStoreAudit(ctx, staleCursor)
+	if err != nil {
+		t.Fatalf("DrainObjectStoreAudit: %v", err)
+	}
+	if next != brokerCursor {
+		t.Fatalf("cursor = %d, want the broker's reported %d (clamping back to the stale cursor silently drops every future event)", next, brokerCursor)
 	}
 }
 

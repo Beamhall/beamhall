@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -141,6 +143,89 @@ func TestDeleteRemovesMetadataAndBlob(t *testing.T) {
 	// Delete is idempotent.
 	if err := v.Delete(ctx, ref); err != nil {
 		t.Fatalf("Delete (second) = %v, want nil", err)
+	}
+}
+
+// hookStore wraps a real *store.Store and lets a test pause inside
+// PutSecretValue (the step Set performs right before its final PutSecret) to
+// force a specific interleaving with a concurrent second call on the same ref.
+type hookStore struct {
+	*store.Store
+	afterPutSecretValue func()
+}
+
+func (h *hookStore) PutSecretValue(ctx context.Context, ref string, ciphertext []byte) error {
+	err := h.Store.PutSecretValue(ctx, ref, ciphertext)
+	if h.afterPutSecretValue != nil {
+		h.afterPutSecretValue()
+	}
+	return err
+}
+
+// TestConcurrentSetDeleteDoesNotResurrect is a regression test:
+// a Set racing a
+// Delete on the SAME secret ref must not interleave their independent
+// read-then-write steps — specifically, a Delete call that returns nil
+// (success) must not have the secret reappear afterward with no further Set
+// call by the test.
+func TestConcurrentSetDeleteDoesNotResurrect(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	w := &domain.Beamhall{Slug: "eng", DisplayName: "Eng", Status: domain.BeamhallActive, CreatedBy: store.NewID()}
+	sc := &domain.SecurityContext{RuntimeClass: domain.RuntimeRunsc, Template: domain.TemplateWebApp}
+	if err := st.CreateBeamhall(ctx, w, sc); err != nil {
+		t.Fatal(err)
+	}
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hs := &hookStore{Store: st} // hook installed AFTER seeding, below
+	v := NewVault(id, hs)
+	ref := domain.SecretRef{BeamhallID: w.ID, BeamID: "beam-1", Key: "API_KEY"}
+	if _, err := v.Set(ctx, ref, []byte("original"), "actor-seed"); err != nil {
+		t.Fatalf("seed Set: %v", err)
+	}
+
+	reachedGate := make(chan struct{})
+	proceed := make(chan struct{})
+	var gateOnce sync.Once
+	hs.afterPutSecretValue = func() {
+		gateOnce.Do(func() { close(reachedGate) })
+		<-proceed
+	}
+
+	var wg sync.WaitGroup
+	var setErr, delErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, setErr = v.Set(ctx, ref, []byte("updated"), "actor-b")
+	}()
+	<-reachedGate // Set has staged the new ciphertext and is paused holding the ref lock
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		delErr = v.Delete(ctx, ref) // must block on the same ref lock until Set finishes
+	}()
+	time.Sleep(20 * time.Millisecond) // let the Delete goroutine reach and block on the lock
+	close(proceed)                    // let Set finish; Delete then runs after it releases the lock
+	wg.Wait()
+
+	if setErr != nil {
+		t.Fatalf("Set: %v", setErr)
+	}
+	if delErr != nil {
+		t.Fatalf("Delete: %v", delErr)
+	}
+	if _, err := st.GetSecret(ctx, ref.BeamhallID, ref.BeamID, ref.Key, ref.Channel); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Delete returned nil but the secret reappeared afterward (err = %v, want ErrNotFound) — resurrection bug", err)
 	}
 }
 

@@ -19,13 +19,23 @@ type Config struct {
 	// (*.<beamhall>.<base>) hostnames.
 	BaseDomain string
 	// DataDir holds the SQLite control-plane store, the sealed secret root,
-	// the managed git repos, and the driver's secret tmpfs staging.
+	// and the managed git repos — all persistent, on-disk state.
 	DataDir string
 	// SecretKeyFile, when set, is the path to the age root key supplied
 	// out-of-band (systemd LoadCredential / KMS). It is loaded read-only and
 	// never generated — production must set this. Empty falls back to
 	// generate-if-absent at <DataDir>/secret.key (dev/lab only).
 	SecretKeyFile string
+	// SecretsDir is the root the driver stages decrypted secret/binding files
+	// under before bind-mounting them into a container at /run/secrets — it
+	// MUST be a tmpfs (RAM-backed) mount so decrypted values never touch
+	// persistent disk (and so a disk/VM snapshot can't capture them). The
+	// systemd unit points this at a RuntimeDirectory (tmpfs by systemd
+	// guarantee); NewDockerDriver refuses to start on Linux if the resolved
+	// path isn't tmpfs-backed. Empty falls back to <DataDir>/secrets, which is
+	// only tmpfs where the whole data dir happens to be (dev/lab only — set
+	// this explicitly, e.g. to a /dev/shm path, for anything else).
+	SecretsDir string
 	// BackupDir is where admin_backup_now writes appliance backups (and
 	// admin_list_backups reads them). Empty falls back to <DataDir>/backups.
 	BackupDir string
@@ -60,6 +70,12 @@ type Config struct {
 	// OAuthDiscoveryURL overrides the OIDC discovery endpoint (default
 	// <issuer>/.well-known/openid-configuration). Only used when JWKS is empty.
 	OAuthDiscoveryURL string
+	// OAuthTrustFlatRolesClaim also reads a top-level `roles` array claim (in
+	// addition to Keycloak's nested `realm_access.roles`) for admin-role
+	// elevation. Off by default: only enable for an IdP you've confirmed
+	// mints `roles` from a source the token subject cannot influence — see
+	// auth.Config.TrustFlatRolesClaim.
+	OAuthTrustFlatRolesClaim bool
 
 	// Admin console (OIDC Authorization Code flow). Empty AdminClientID
 	// disables /admin. The console requires the admin:it scope.
@@ -164,6 +180,7 @@ func Load() (Config, error) {
 		DataDir:        envOr("BEAMHALL_DATA_DIR", "/var/lib/beamhall"),
 		LogLevel:       strings.ToLower(envOr("BEAMHALL_LOG_LEVEL", "info")),
 		SecretKeyFile:  os.Getenv("BEAMHALL_SECRET_KEY_FILE"),
+		SecretsDir:     os.Getenv("BEAMHALL_SECRETS_DIR"),
 		BackupDir:      os.Getenv("BEAMHALL_BACKUP_DIR"),
 		SelfUpgrade:    envOr("BEAMHALL_SELF_UPGRADE", "off") == "on",
 		ReleaseBaseURL: envOr("BEAMHALL_RELEASE_BASE_URL", "https://github.com/Beamhall/beamhall/releases/download"),
@@ -215,6 +232,7 @@ func Load() (Config, error) {
 	}
 	c.OAuthAudience = envOr("BEAMHALL_OAUTH_AUDIENCE", "https://"+c.BaseDomain+"/mcp")
 	c.OAuthAdminRole = envOr("BEAMHALL_OAUTH_ADMIN_ROLE", "beamhall-it") // = auth.DefaultAdminRole
+	c.OAuthTrustFlatRolesClaim = envOr("BEAMHALL_OAUTH_TRUST_FLAT_ROLES", "off") == "on"
 	for _, sc := range strings.Fields(envOr("BEAMHALL_ADMIN_SCOPES", "openid admin:it")) {
 		c.AdminScopes = append(c.AdminScopes, sc)
 	}

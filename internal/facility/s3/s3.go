@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3afero"
@@ -144,6 +145,13 @@ type Provisioner struct {
 	audit    func(Event)
 	defaults Limits
 	stateDir string // holds provider.json (root-only) + the local backend's data dir
+
+	// clockSkew bounds how far X-Amz-Date may drift from now before verify
+	// rejects the request as expired — the SigV4 front's own replay defense,
+	// not delegated to the wrapped gofakes3 engine.
+	// now is overridable for tests.
+	clockSkew time.Duration
+	now       func() time.Time
 }
 
 // Option configures a Provisioner.
@@ -152,6 +160,17 @@ type Option func(*Provisioner)
 // WithAuditSink wires the per-request audit callback (the orchestrator points it
 // at the hash-chained audit log).
 func WithAuditSink(fn func(Event)) Option { return func(p *Provisioner) { p.audit = fn } }
+
+// WithClockSkew overrides the default X-Amz-Date tolerance (15 minutes,
+// matching AWS's own SigV4 guidance) verify enforces before accepting a
+// request's seed signature.
+func WithClockSkew(d time.Duration) Option {
+	return func(p *Provisioner) {
+		if d > 0 {
+			p.clockSkew = d
+		}
+	}
+}
 
 // WithDefaultLimits sets the default per-beam quota applied when a provision
 // request leaves it unset.
@@ -178,9 +197,11 @@ func WithBackend(be gofakes3.Backend) Option {
 // default, switched to an external backend only when an admin sets a provider.
 func New(opts ...Option) *Provisioner {
 	p := &Provisioner{
-		byKey:    map[string]*registration{},
-		byBeam:   map[string]*registration{},
-		defaults: Limits{},
+		byKey:     map[string]*registration{},
+		byBeam:    map[string]*registration{},
+		defaults:  Limits{},
+		clockSkew: 15 * time.Minute,
+		now:       time.Now,
 	}
 	for _, o := range opts {
 		o(p)

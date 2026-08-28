@@ -221,6 +221,12 @@ type restoreBackupArgs struct {
 
 type requestUpgradeArgs struct {
 	Version string `json:"version" jsonschema:"the target release version to upgrade to, e.g. v0.1.11"`
+	// ExpectedSHA256 is the requester's OWN digest, obtained independently of
+	// this appliance (e.g. from the GitHub release page's checksums.txt) —
+	// staging refuses unless the downloaded asset's checksum matches this
+	// exactly, so a compromised release channel can't just serve a matching
+	// checksums.txt alongside a malicious binary.
+	ExpectedSHA256 string `json:"expected_sha256" jsonschema:"required: the SHA-256 checksum (64 hex chars) you independently read off the GitHub release page's checksums.txt for this OS/arch's release asset — NOT copied from anything this appliance tells you"`
 }
 
 // registerAdminTools registers the admin:it tool family. Called from
@@ -396,11 +402,11 @@ func (s *Server) registerAdminTools() {
 	}, s.adminListBackups)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_restore_backup",
-		Description: "IT only, SENSITIVE (four-eyes): restore the appliance from a named backup (overwrites the WHOLE control plane). It is never applied live — it files a request a DIFFERENT IT operator must approve; on approval the backup is verified and you get the exact stop→restore→start command to run on the host (restore is a stop-the-world operation). Requires the sensitive tier. Use admin_list_backups for the name.",
+		Description: "IT only, SENSITIVE (four-eyes): restore the appliance from a named backup (overwrites the WHOLE control plane). It is never applied live — it files a request a DIFFERENT IT operator must approve; on approval the backup is verified and you get a stop→restore→start runbook to run on the host as SEPARATE steps (restore is a stop-the-world operation — do not chain them with &&). If this appliance loads its secret key out-of-band, the runbook includes an install step to relocate the recovered key BEFORE starting — skipping it either fails the boot or starts against the wrong key, leaving every restored secret undecryptable. Requires the sensitive tier. Use admin_list_backups for the name.",
 	}, s.adminRestoreBackup)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_request_upgrade",
-		Description: "IT only, SENSITIVE (four-eyes): upgrade the appliance to a target release version (e.g. v0.1.11) — this replaces the policy-enforcing binary, so it is the most-guarded action. It files a request a DIFFERENT IT operator must approve; on approval the release is downloaded, its checksum verified, and the new binary STAGED (never applied live). You then get the exact atomic apply + rollback commands to run on the host. Requires self-upgrade to be enabled (BEAMHALL_SELF_UPGRADE=on) and the sensitive tier.",
+		Description: "IT only, SENSITIVE (four-eyes): upgrade the appliance to a target release version (e.g. v0.1.11) — this replaces the policy-enforcing binary, so it is the most-guarded action. Requires expected_sha256: fetch the release's checksums.txt from the GitHub release page YOURSELF (not via this tool) and pass the digest for this OS/arch's asset — the release host serving both the binary and a matching checksums.txt from the same channel is not real integrity if that channel is compromised, so staging refuses unless the downloaded asset also matches your independently-obtained digest. It files a request a DIFFERENT IT operator must approve; on approval the release is downloaded, checksum-verified against both checksums.txt and your digest, and the new binary STAGED (never applied live). You then get the exact atomic apply + rollback commands to run on the host. Requires self-upgrade to be enabled (BEAMHALL_SELF_UPGRADE=on) and the sensitive tier.",
 	}, s.adminRequestUpgrade)
 }
 
@@ -948,7 +954,7 @@ func (s *Server) adminRequestUpgrade(ctx context.Context, req *sdkmcp.CallToolRe
 	if err != nil {
 		return nil, nil, err
 	}
-	ar, err := s.bp.RequestUpgrade(ctx, actor, args.Version)
+	ar, err := s.bp.RequestUpgrade(ctx, actor, args.Version, args.ExpectedSHA256)
 	if err != nil {
 		return nil, nil, err
 	}

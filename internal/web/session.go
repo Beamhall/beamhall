@@ -27,6 +27,10 @@ type session struct {
 	Email     string `json:"email"`
 	Identity  string `json:"id"`  // resolved Beamhall Identity id
 	ExpiresAt int64  `json:"exp"` // unix seconds
+	// CSRFNonce is a random value minted fresh at login and mixed into the
+	// CSRF token (see Server.csrfToken) so the token is per-session rather
+	// than a value that's the same every time one subject logs in.
+	CSRFNonce string `json:"csrf"`
 }
 
 func (s session) expired(now time.Time) bool { return now.Unix() >= s.ExpiresAt }
