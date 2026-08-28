@@ -15,6 +15,18 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING: `admin_request_upgrade` now requires `expected_sha256`.** The
+  operator supplies the release binary's SHA-256 (from the GitHub Release's
+  `checksums.txt`, obtained out-of-band) with the request; an upgrade request
+  without it is refused. A same-channel checksum download is no longer trusted
+  on its own.
+- **BREAKING: `beamhalld` fails closed at startup** unless the decrypted-secret
+  staging dir (`BEAMHALL_SECRETS_DIR`) is tmpfs-backed **and** the Docker
+  daemon runs userns-remap. In-place upgraders: install the updated systemd
+  unit first — its `RuntimeDirectory=beamhall` provisions the tmpfs and sets
+  `BEAMHALL_SECRETS_DIR` — before restarting the daemon.
+
 ### Security
 - **Object storage: cross-beam isolation holes closed.** A beam could read or
   overwrite another beam's objects via `x-amz-copy-source`, and tamper across
