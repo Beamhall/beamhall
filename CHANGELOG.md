@@ -15,6 +15,8 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-28
+
 ### Changed
 - **BREAKING: `admin_request_upgrade` now requires `expected_sha256`.** The
   operator supplies the release binary's SHA-256 (from the GitHub Release's
@@ -194,7 +196,8 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Beamhall/beamhall/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Beamhall/beamhall/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Beamhall/beamhall/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Beamhall/beamhall/compare/v0.1.11...v0.2.0
