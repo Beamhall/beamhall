@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-git/go-billy/v5/osfs"
@@ -120,6 +121,13 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// slugRe bounds the hall/beam path segments to the shape slugs are created
+// with. Rejecting anything else here (extra separators, dot segments) means
+// the repo endpoint later built from these strings can only ever name a
+// well-formed <hall>/<beam>.git path — not just because slug resolution
+// happens to fail on garbage.
+var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
+
 // parsePath splits /git/<hall>/<beam>.git/<rest...>.
 func parsePath(p string) (hall, beam, rest string, ok bool) {
 	p = strings.TrimPrefix(p, "/git/")
@@ -129,7 +137,7 @@ func parsePath(p string) (hall, beam, rest string, ok bool) {
 	}
 	repo, rest := p[:i], p[i+len(".git/"):]
 	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) != 2 || !slugRe.MatchString(parts[0]) || !slugRe.MatchString(parts[1]) {
 		return "", "", "", false
 	}
 	return parts[0], parts[1], rest, true

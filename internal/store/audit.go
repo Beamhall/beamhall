@@ -18,11 +18,12 @@ type AuditRecord struct {
 	Event domain.AuditEvent
 }
 
-// AppendAuditEvent appends ev to the audit log and returns its sequence
-// number, filling ID and At if unset. The store persists the hash fields as
-// given; computing the chain (and serializing appends so prev_hash is correct)
-// is internal/audit's job — use its writer rather than calling this directly.
-func (s *Store) AppendAuditEvent(ctx context.Context, ev *domain.AuditEvent) (int64, error) {
+// appendAuditEvent appends ev to the audit log and returns its sequence
+// number, filling ID and At if unset. It persists the hash fields as given —
+// i.e. it BYPASSES the hash chain — so it is deliberately unexported: every
+// production append must go through internal/audit's writer over
+// AuditChainAppend. Package tests use this to exercise the raw row path.
+func (s *Store) appendAuditEvent(ctx context.Context, ev *domain.AuditEvent) (int64, error) {
 	s.fillAuditEvent(ev)
 	seq, err := s.q.AppendAuditEvent(ctx, appendAuditEventParams(ev))
 	return seq, mapErr(err)

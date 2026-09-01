@@ -420,6 +420,24 @@ func TestScopesEntraScpArray(t *testing.T) {
 	}
 }
 
+// Entra v2.0 access tokens emit scp as a space-delimited STRING, not an
+// array; a verifier that only parses the array form denies every stock Entra
+// token with insufficient_scope.
+func TestScopesEntraScpString(t *testing.T) {
+	idp := newTestIdP(t)
+	v := newVerifier(t, idp)
+	info, err := v.Verify(context.Background(), idp.mint("rsa-1", func(c jwt.MapClaims) {
+		delete(c, "scope")
+		c["scp"] = "logs:read admin:it"
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasScope(info.Scopes, ScopeLogsRead) || !HasScope(info.Scopes, ScopeAdminIT) {
+		t.Fatalf("scp string not parsed: %v", info.Scopes)
+	}
+}
+
 func TestCheckOrigin(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	h := CheckOrigin([]string{"beamhall.test"}, next)
@@ -434,6 +452,9 @@ func TestCheckOrigin(t *testing.T) {
 		{"https://evil.test", 403},          // rebinding attempt
 		{"https://beamhall.test.evil.test", 403},
 		{"::garbage::", 403},
+		// An opaque origin (sandboxed iframe) is a provenance statement, not
+		// absence of one — it must be checked and can never match the allowlist.
+		{"null", 403},
 	}
 	for _, tc := range cases {
 		r := httptest.NewRequest("POST", "/mcp", nil)

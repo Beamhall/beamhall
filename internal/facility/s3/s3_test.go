@@ -479,3 +479,29 @@ func TestNormalizeChunkedPlainPassthrough(t *testing.T) {
 		t.Fatalf("plain body altered")
 	}
 }
+
+// Presigned/query-auth requests carry the signature in URL parameters, not in
+// an Authorization header the verifier can bind to a registered beam — the
+// broker must reject them outright, never fall through to unauthenticated
+// handling.
+func TestPresignedQueryAuthRejected(t *testing.T) {
+	p := New(WithStateDir(t.TempDir()))
+	ts := httptest.NewServer(p.Handler())
+	defer ts.Close()
+
+	register(t, p, "beamA", "preview", "AKA", "secretA", "beam-a-preview", 0)
+
+	url := ts.URL + "/beam-a-preview/x.txt" +
+		"?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+		"&X-Amz-Credential=AKA%2F20260831%2Fus-east-1%2Fs3%2Faws4_request" +
+		"&X-Amz-Date=20260831T000000Z&X-Amz-Expires=3600" +
+		"&X-Amz-SignedHeaders=host&X-Amz-Signature=deadbeef"
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 {
+		t.Fatalf("query-signed (presigned-URL) request was accepted: %d", resp.StatusCode)
+	}
+}

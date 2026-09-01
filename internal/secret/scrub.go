@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/Beamhall/beamhall/internal/domain"
@@ -69,6 +70,58 @@ func (s *Scrubber) Scrub(b []byte) []byte {
 // ScrubString is the string convenience form of Scrub.
 func (s *Scrubber) ScrubString(str string) string {
 	return string(s.Scrub([]byte(str)))
+}
+
+// Writer wraps w so that everything written through it is scrubbed first.
+// Scrubbing is exact-substring, so it buffers to line boundaries — a value
+// split across two Writes inside one line still matches. A value split across
+// a line boundary (or the size-bound flush of a pathological unterminated
+// line) is the accepted miss. Call Flush when the stream ends to scrub and
+// forward any unterminated tail.
+func (s *Scrubber) Writer(w io.Writer) *ScrubWriter {
+	return &ScrubWriter{s: s, w: w}
+}
+
+// ScrubWriter is a line-buffered scrubbing io.Writer; see Scrubber.Writer.
+type ScrubWriter struct {
+	s   *Scrubber
+	w   io.Writer
+	buf []byte
+}
+
+// maxScrubHold bounds the partial-line buffer so an unterminated stream
+// cannot grow it without limit.
+const maxScrubHold = 8192
+
+func (sw *ScrubWriter) Write(p []byte) (int, error) {
+	sw.buf = append(sw.buf, p...)
+	for {
+		i := bytes.IndexByte(sw.buf, '\n')
+		if i < 0 {
+			break
+		}
+		if _, err := sw.w.Write(sw.s.Scrub(sw.buf[:i+1])); err != nil {
+			return len(p), err
+		}
+		sw.buf = sw.buf[i+1:]
+	}
+	if len(sw.buf) > maxScrubHold {
+		if _, err := sw.w.Write(sw.s.Scrub(sw.buf)); err != nil {
+			return len(p), err
+		}
+		sw.buf = nil
+	}
+	return len(p), nil
+}
+
+// Flush scrubs and forwards any buffered unterminated line.
+func (sw *ScrubWriter) Flush() error {
+	if len(sw.buf) == 0 {
+		return nil
+	}
+	_, err := sw.w.Write(sw.s.Scrub(sw.buf))
+	sw.buf = nil
+	return err
 }
 
 // ScrubberFor builds a scrubber covering every secret in scope for a beam: its

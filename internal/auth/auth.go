@@ -218,9 +218,14 @@ func rolesOf(claims jwt.MapClaims, trustFlat bool) []string {
 }
 
 // scopesOf reads granted scopes IdP-agnostically: the RFC 8693 `scope`
-// space-separated string (Keycloak, Okta) or the `scp` array (Entra).
+// space-separated string (Keycloak, Okta) or the `scp` claim — which Entra
+// v2.0 access tokens emit as a space-delimited STRING, and some IdPs emit as
+// an array.
 func scopesOf(claims jwt.MapClaims) []string {
 	if s, ok := claims["scope"].(string); ok {
+		return strings.Fields(s)
+	}
+	if s, ok := claims["scp"].(string); ok {
 		return strings.Fields(s)
 	}
 	if arr, ok := claims["scp"].([]any); ok {
@@ -238,16 +243,18 @@ func scopesOf(claims jwt.MapClaims) []string {
 // CheckOrigin is the DNS-rebinding defense (PLAN §6): browser-originated
 // requests must carry an Origin from the allowlist. Requests without an
 // Origin header (CLI MCP clients, curl) pass — the header is the browser's
-// statement of provenance, and its absence means no rebinding vector.
+// statement of provenance, and its absence means no rebinding vector. A
+// literal "null" Origin (sandboxed iframe, opaque origin) IS such a
+// statement, so it is checked like any other and never matches the allowlist.
 func CheckOrigin(allowedHosts []string, next http.Handler) http.Handler {
 	allowed := map[string]bool{}
 	for _, h := range allowedHosts {
 		allowed[strings.ToLower(h)] = true
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && origin != "null" {
+		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
-			if err != nil || !allowed[strings.ToLower(u.Hostname())] {
+			if err != nil || u.Hostname() == "" || !allowed[strings.ToLower(u.Hostname())] {
 				http.Error(w, "origin not allowed", http.StatusForbidden)
 				return
 			}

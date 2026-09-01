@@ -1285,3 +1285,53 @@ func TestSetSecretRejectsPathShapedKey(t *testing.T) {
 		t.Fatalf("valid key rejected: %v", err)
 	}
 }
+
+// progressLeakBuilder simulates pack echoing a hardcoded copy of a vaulted
+// value into the build output and failing with it in the error tail.
+type progressLeakBuilder struct{ leak string }
+
+func (b *progressLeakBuilder) BuildFromDir(ctx context.Context, hallSlug, beamSlug, srcDir string) (build.Result, error) {
+	if w := build.ProgressWriter(ctx); w != nil {
+		fmt.Fprintf(w, "config dump: PASSWORD=%s\n", b.leak)
+	}
+	return build.Result{}, fmt.Errorf("build failed: connection to db with password %s refused", b.leak)
+}
+
+func (b *progressLeakBuilder) BuildFromCommit(ctx context.Context, hallSlug, beamSlug, sha string) (build.Result, error) {
+	return b.BuildFromDir(ctx, hallSlug, beamSlug, "")
+}
+
+func TestBuildOutputAndErrorScrubbed(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+
+	const leaked = "sup3r-secret-dsn-value"
+	WithBuilder(&progressLeakBuilder{leak: leaked})(w.o)
+
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "leaky", "Leaky", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, "DB_PASS", []byte(leaked)); err != nil {
+		t.Fatal(err)
+	}
+
+	var progress bytes.Buffer
+	bctx := build.WithProgress(ctx, &progress)
+	_, err = w.o.DeployBeamFromSource(bctx, w.build, w.bh.ID, beam.ID, "/tmp/src")
+	if err == nil {
+		t.Fatal("build was rigged to fail")
+	}
+	if strings.Contains(err.Error(), leaked) {
+		t.Fatalf("vaulted value leaked through the build error: %v", err)
+	}
+	if !strings.Contains(err.Error(), secret.Mask) {
+		t.Fatalf("error should carry the redaction mask: %v", err)
+	}
+	if strings.Contains(progress.String(), leaked) {
+		t.Fatalf("vaulted value leaked through the progress stream: %q", progress.String())
+	}
+	if !strings.Contains(progress.String(), secret.Mask) {
+		t.Fatalf("progress should carry the redaction mask: %q", progress.String())
+	}
+}

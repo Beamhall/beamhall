@@ -378,3 +378,36 @@ func TestLoadKeyIsLoadOnly(t *testing.T) {
 		t.Fatal("LoadKey accepted a malformed key")
 	}
 }
+
+func TestScrubWriterRedactsAcrossChunkedWrites(t *testing.T) {
+	s := NewScrubber([][]byte{[]byte("hunter2-secret")})
+	var out bytes.Buffer
+	w := s.Writer(&out)
+
+	// A value split across two Writes inside one line must still be caught —
+	// pack streams output in arbitrary chunks, not neat lines.
+	if _, err := w.Write([]byte("DATABASE_PASSWORD=hunter2")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("-secret was printed\nnext line ok\n")); err != nil {
+		t.Fatal(err)
+	}
+	// An unterminated tail only reaches the destination on Flush, scrubbed.
+	if _, err := w.Write([]byte("tail hunter2-secret no newline")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	if strings.Contains(got, "hunter2-secret") {
+		t.Fatalf("secret leaked through the scrub writer: %q", got)
+	}
+	if c := strings.Count(got, Mask); c != 2 {
+		t.Fatalf("expected 2 redactions, got %d in %q", c, got)
+	}
+	if !strings.Contains(got, "next line ok") {
+		t.Fatalf("non-secret content mangled: %q", got)
+	}
+}

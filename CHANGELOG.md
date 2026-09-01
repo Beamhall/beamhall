@@ -16,6 +16,16 @@ their auto-generated notes.
 ## [Unreleased]
 
 ### Fixed
+- Microsoft Entra ID access tokens now authenticate correctly: the `scp` claim
+  is parsed in the space-delimited string form Entra emits (previously only
+  the array form was read, so every Entra token was denied with
+  `insufficient_scope`).
+- Build output is now scrubbed like runtime logs: the live build progress
+  stream (MCP notifications and the `git push` sideband) and the failure tail
+  embedded in build errors pass the beam's secret scrubber before leaving the
+  backplane.
+- `install.sh` now fails the install when `checksums.txt` cannot be fetched,
+  instead of silently skipping binary verification.
 - Pause/resume (including the auto-pause timer) now serialize against
   deploy/promote/rollback/destroy on the same beam, so a pause firing during a
   promote can no longer erase the live channel from the beam record, and one
@@ -33,6 +43,12 @@ their auto-generated notes.
   references at startup.
 
 ### Changed
+- A request with `Origin: null` (an opaque browser origin) is now refused by
+  the `/mcp` origin allowlist instead of bypassing the check.
+- `beamhalld` refuses to start when the operator-supplied secret key file
+  (`BEAMHALL_SECRET_KEY_FILE`) is group- or world-accessible; chmod it to 0600.
+- The git transport rejects malformed repository paths outright (hall/beam
+  URL segments must be well-formed slugs).
 - `set_secret` keys are validated (1–64 letters, digits, or underscores): the
   key is the container-side mount target `/run/secrets/<key>`, so path-shaped
   keys are refused instead of relocating the mount inside the workload.

@@ -666,7 +666,7 @@ func TestAuditAppendOnlyChainOrder(t *testing.T) {
 			PrevHash:   fmt.Sprintf("h%d", i-1),
 			Hash:       fmt.Sprintf("h%d", i),
 		}
-		seq, err := s.AppendAuditEvent(ctx, ev)
+		seq, err := s.appendAuditEvent(ctx, ev)
 		if err != nil {
 			t.Fatalf("AppendAuditEvent %d: %v", i, err)
 		}
@@ -823,7 +823,7 @@ func TestConcurrentAccess(t *testing.T) {
 				errCh <- fmt.Errorf("CreateBeam %d: %w", i, err)
 				return
 			}
-			if _, err := s.AppendAuditEvent(ctx, &domain.AuditEvent{
+			if _, err := s.appendAuditEvent(ctx, &domain.AuditEvent{
 				BeamhallID: w.ID, Action: "create_beam", Decision: domain.DecisionAllow,
 			}); err != nil {
 				errCh <- fmt.Errorf("AppendAuditEvent %d: %w", i, err)

@@ -362,9 +362,11 @@ fetch_release_binary() {
   base="https://github.com/${REPO_SLUG}/releases/download/${tag}"; ar="beamhall_${ver}_linux_${arch}.tar.gz"; tmp="$(mktemp -d)"
   _fetch_verify() {
     curl -fsSL "${base}/${ar}" -o "${tmp}/${ar}" || return 1
-    if curl -fsSL "${base}/checksums.txt" -o "${tmp}/checksums.txt" 2>/dev/null; then
-      ( cd "$tmp" && grep " ${ar}\$" checksums.txt | sha256sum -c - >/dev/null 2>&1 ) || return 2
-    fi
+    # Verification is mandatory: a missing/blocked checksums.txt must fail the
+    # install, not silently skip the check (an attacker who can tamper with the
+    # binary download can also make the checksum fetch fail).
+    curl -fsSL "${base}/checksums.txt" -o "${tmp}/checksums.txt" || return 2
+    ( cd "$tmp" && grep " ${ar}\$" checksums.txt | sha256sum -c - >/dev/null 2>&1 ) || return 2
     tar -xzf "${tmp}/${ar}" -C "$tmp" beamhalld || return 3
     chmod +x "${tmp}/beamhalld"
   }

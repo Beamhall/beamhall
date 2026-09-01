@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/Beamhall/beamhall/internal/build"
 	"github.com/Beamhall/beamhall/internal/diagnose"
 	"github.com/Beamhall/beamhall/internal/domain"
 	"github.com/Beamhall/beamhall/internal/driver"
@@ -156,7 +157,9 @@ func (o *Orchestrator) DeployBeamFromSource(ctx context.Context, actor Actor, be
 			return nil, "", err
 		}
 		defer release()
-		res, err := o.builder.BuildFromDir(ctx, bh.Slug, beam.Slug, srcDir)
+		res, err := o.scrubbedBuild(ctx, beamhallID, beamID, func(ctx context.Context) (build.Result, error) {
+			return o.builder.BuildFromDir(ctx, bh.Slug, beam.Slug, srcDir)
+		})
 		if err != nil {
 			return nil, "", err
 		}
@@ -192,7 +195,9 @@ func (o *Orchestrator) DeployBeamFromGit(ctx context.Context, actor Actor, beamh
 			return nil, "", err
 		}
 		defer release()
-		res, err := o.builder.BuildFromCommit(ctx, bh.Slug, beam.Slug, sha)
+		res, err := o.scrubbedBuild(ctx, beamhallID, beamID, func(ctx context.Context) (build.Result, error) {
+			return o.builder.BuildFromCommit(ctx, bh.Slug, beam.Slug, sha)
+		})
 		if err != nil {
 			return nil, "", err
 		}
@@ -208,6 +213,30 @@ func (o *Orchestrator) DeployBeamFromGit(ctx context.Context, actor Actor, beamh
 		}, res.PullRef, nil
 	})
 	return beam, o.outcome(ctx, actor, policy.ActionDeployBeam, beamhallID, beamID, err)
+}
+
+// scrubbedBuild runs a source build with the beam's secret scrubber over both
+// the live progress stream (MCP notifications, the git push sideband) and the
+// returned error (whose diagnosis tail also lands in the audit outcome
+// Reason): pack echoes the app's own files and config, so a value the builder
+// both vaulted and hardcoded must not transit any of those unredacted. Same
+// fail-closed posture as crash-log tails: no scrubber, no build output.
+func (o *Orchestrator) scrubbedBuild(ctx context.Context, beamhallID, beamID domain.ID,
+	run func(ctx context.Context) (build.Result, error)) (build.Result, error) {
+	scrub, err := o.vault.ScrubberFor(ctx, beamhallID, beamID)
+	if err != nil {
+		return build.Result{}, fmt.Errorf("build refused: cannot construct the log scrubber: %w", err)
+	}
+	if w := build.ProgressWriter(ctx); w != nil {
+		sw := scrub.Writer(w)
+		defer sw.Flush()
+		ctx = build.WithProgress(ctx, sw)
+	}
+	res, err := run(ctx)
+	if err != nil {
+		return res, errors.New(scrub.ScrubString(err.Error()))
+	}
+	return res, nil
 }
 
 func (o *Orchestrator) deploy(ctx context.Context, beamhallID, beamID domain.ID, step buildStep) (*domain.Beam, error) {
