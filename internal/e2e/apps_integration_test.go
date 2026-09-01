@@ -31,7 +31,8 @@ func TestUserTierEndToEnd(t *testing.T) {
 		"description": "Company policies and how-tos"}, false)
 	app := tarGz(t, map[string]string{
 		"package.json": `{ "name": "handbook", "version": "1.0.0", "main": "app.js", "scripts": { "start": "node app.js" } }`,
-		"app.js": `require("http").createServer((q, s) => s.end("handbook ok"))
+		// curlHost's beam-answered marker is a JSON body carrying "ok":true.
+		"app.js": `require("http").createServer((q, s) => s.end(JSON.stringify({ ok: true, app: "handbook" })))
   .listen(process.env.PORT || 8080);`,
 	})
 	callTool(ctx, t, builder, "deploy_beam",
@@ -76,7 +77,7 @@ func TestUserTierEndToEnd(t *testing.T) {
 	if !strings.Contains(txt, "Company policies") || !strings.Contains(txt, liveURL) {
 		t.Fatalf("describe_app = %q", txt)
 	}
-	if body := curlHost(t, liveURL, 200); !strings.Contains(body, "handbook ok") {
+	if body := curlHost(t, liveURL, 200); !strings.Contains(body, `"app":"handbook"`) {
 		t.Fatalf("live URL does not serve the app: %q", body)
 	}
 
