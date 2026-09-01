@@ -48,7 +48,7 @@ const jsonLd = {
       operatingSystem: "Linux",
       url: `${site}/`,
       downloadUrl: repo,
-      softwareVersion: "0.5.1",
+      softwareVersion: "0.6.0",
       license: "https://www.apache.org/licenses/LICENSE-2.0",
       isAccessibleForFree: true,
       description:
@@ -727,6 +727,8 @@ const jsonLd = {
                 <li>provisioned auth: <span class="c-dim">one call gives a beam company sign-in (OIDC), audience-isolated, verified on real hardware</span></li>
                 <li>email facility: <span class="c-dim">one call gives a beam outbound email via a shared in-hall broker (the first connector); per-beam sender allowlist, STARTTLS, per-message audit, verified on real hardware</span></li>
                 <li>object-storage facility: <span class="c-dim">one call gives a beam S3-compatible object storage via a shared in-hall broker (the second connector); per-request SigV4 isolation, separate preview/live buckets, per-beam quota, local + forward-to-external-S3 backends, per-op audit, verified on real hardware</span></li>
+                <li>company branding: <span class="c-dim">IT sets the header, footer, logo and palette every app built here wears; a hot-linkable palette stylesheet reaches running apps with no redeploy, per-team overrides, resolved values injected into each workload as <span class="c-cyan">/run/beamhall/brand.json</span>, verified on real hardware</span></li>
+                <li>the using tier: <span class="c-dim">IT publishes an app to an audience (everyone, IdP groups, or named people) and employees' own AI agents discover it with <span class="c-cyan">list_apps</span> / <span class="c-cyan">describe_app</span>; no workspace membership, nothing that can change an app, out-of-audience apps are indistinguishable from apps that don't exist, users auto-register on first contact, verified on real hardware</span></li>
               </ul>
 
               <h3>planned: expanding what a beam inherits</h3>
