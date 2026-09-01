@@ -23,12 +23,12 @@ tightened, plus two refusals an operator can hit at startup (see **Changed**).
 
 ### Changed
 - **`beamhalld` refuses to start when the operator-supplied secret key file
-  (`BEAMHALL_SECRET_KEY_FILE`) is group- or world-accessible; chmod it to
-  0600.** The supported install is unaffected — `install.sh` writes
-  `/etc/beamhall/secret.key` as 0400 and the systemd unit hands it to the
-  daemon through `LoadCredential` — but a hand-placed key file with looser
-  permissions now blocks the boot instead of silently sealing every secret to a
-  readable key.
+  (`BEAMHALL_SECRET_KEY_FILE`) is world-accessible; chmod it to 0600, or
+  0640/0440 with a trusted group.** The supported install is unaffected —
+  `install.sh` writes `/etc/beamhall/secret.key` as 0400, and systemd
+  `LoadCredential`'s root-owned 0440 copy loads fine (verified on the
+  appliance) — but a hand-placed world-readable key file now blocks the boot
+  instead of silently sealing every secret to a readable key.
 - A request with `Origin: null` (an opaque browser origin, e.g. a sandboxed
   iframe) is now refused by the `/mcp` origin allowlist instead of bypassing
   the check. CLI MCP clients, which send no `Origin` at all, are unaffected.

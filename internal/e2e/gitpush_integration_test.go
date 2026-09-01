@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -78,21 +79,18 @@ func extractDeployedURL(t *testing.T, pushOut string) string {
 	return strings.TrimSpace(rest[:end])
 }
 
-// extractPushURL pulls the `git push https://x-access-token:...@.../...git ...`
-// remote (with embedded token) out of the deploy_beam instructions.
+// pushURLRe pulls the token-bearing remote out of the ready-to-run command
+// (`git -c pack.window=0 push --no-thin <url> HEAD:main`) without pinning the
+// test to the command's exact flag spelling.
+var pushURLRe = regexp.MustCompile(`(https?://\S+)\s+HEAD:main`)
+
 func extractPushURL(t *testing.T, instr string) string {
 	t.Helper()
-	const prefix = "git push "
-	i := strings.Index(instr, prefix)
-	if i < 0 {
+	m := pushURLRe.FindStringSubmatch(instr)
+	if m == nil {
 		t.Fatalf("no push command in deploy_beam output:\n%s", instr)
 	}
-	rest := instr[i+len(prefix):]
-	if j := strings.Index(rest, " HEAD:main"); j >= 0 {
-		return strings.TrimSpace(rest[:j])
-	}
-	t.Fatalf("malformed push command:\n%s", instr)
-	return ""
+	return m[1]
 }
 
 func writeFiles(t *testing.T, dir string, files map[string]string) {

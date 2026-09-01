@@ -122,11 +122,14 @@ func LoadOrCreateKey(path string) (id *age.X25519Identity, generated bool, err e
 // out-of-band): a missing or malformed key is a hard error, so the appliance
 // refuses to start rather than silently sealing secrets to a throwaway key.
 func LoadKey(path string) (*age.X25519Identity, error) {
-	// The root key is the crown jewel; a group/world-readable key file defeats
+	// The root key is the crown jewel; a world-readable key file defeats
 	// encryption-at-rest for every secret sealed to it. Refuse rather than
-	// warn — the fix (chmod 600) is trivial, the exposure is not.
-	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("secret key %s is group/world-accessible (mode %04o); chmod it to 0600", path, fi.Mode().Perm())
+	// warn — the fix (chmod) is trivial, the exposure is not. Only the
+	// world bits are checked: systemd LoadCredential materializes credentials
+	// as root-owned 0440 inside the unit's private credentials directory, so
+	// refusing group access would brick the documented production key path.
+	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0o007 != 0 {
+		return nil, fmt.Errorf("secret key %s is world-accessible (mode %04o); chmod it to 0600 (or 0640/0440 with a trusted group)", path, fi.Mode().Perm())
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

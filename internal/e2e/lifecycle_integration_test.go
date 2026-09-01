@@ -49,32 +49,56 @@ func TestLifecycleRollbackDestroy(t *testing.T) {
 		t.Errorf("metrics text: %s", m)
 	}
 
-	// Version 2 supersedes v1.
-	r2, _ := callTool(ctx, t, cs, "deploy_beam",
-		map[string]any{"beamhall": "e2e", "beam": "life", "source_tarball": appFor(t, "v2")}, false)
-	urlV2 := structuredURL(t, r2)
-	if body := curlHost(t, urlV2, 200); !strings.Contains(body, `"marker":"v2"`) {
-		t.Fatalf("v2 not serving: %s", body)
+	// Promote v1 to production (IT — the builder-denial half is covered by the
+	// MCP suite): the live channel pins v1 behind the stable hostname.
+	itCS := a.connect("e2e-it", "beams:promote beams:write admin:it", nil)
+	pr1, _ := callTool(ctx, t, itCS, "promote_to_live",
+		map[string]any{"beamhall": "e2e", "beam": "life"}, false)
+	liveURL := structuredURL(t, pr1)
+	if body := curlHost(t, liveURL, 200); !strings.Contains(body, `"marker":"v1"`) {
+		t.Fatalf("live v1 not serving: %s", body)
 	}
 
-	// Roll back to the previous version (no rebuild) — v1's content returns on
-	// a fresh URL, and v2's URL stops answering.
+	// Version 2 supersedes v1 on the PREVIEW channel only — production stays
+	// on v1 until re-promoted (dual-channel: iterate after shipping).
+	r2, _ := callTool(ctx, t, cs, "deploy_beam",
+		map[string]any{"beamhall": "e2e", "beam": "life", "source_tarball": appFor(t, "v2")}, false)
+	urlV2 := structuredPreviewURL(t, r2)
+	if body := curlHost(t, urlV2, 200); !strings.Contains(body, `"marker":"v2"`) {
+		dumpBeamTopology(t)
+		t.Fatalf("v2 not serving: %s", body)
+	}
+	if body := curlHost(t, liveURL, 200); !strings.Contains(body, `"marker":"v1"`) {
+		t.Fatalf("live must still serve v1 before re-promote: %s", body)
+	}
+
+	// Re-promote pins production to the build the preview runs now (v2).
+	callTool(ctx, t, itCS, "promote_to_live",
+		map[string]any{"beamhall": "e2e", "beam": "life"}, false)
+	if body := curlHost(t, liveURL, 200); !strings.Contains(body, `"marker":"v2"`) {
+		t.Fatalf("live v2 not serving after re-promote: %s", body)
+	}
+
+	// Roll production back to the prior live release (no rebuild): the stable
+	// hostname serves v1 again; the preview channel is unaffected.
 	rb, _ := callTool(ctx, t, cs, "rollback", map[string]any{"beamhall": "e2e", "beam": "life"}, false)
 	rbURL := structuredURL(t, rb)
 	if body := curlHost(t, rbURL, 200); !strings.Contains(body, `"marker":"v1"`) {
 		t.Fatalf("rollback did not restore v1: %s", body)
 	}
-	curlHost(t, urlV2, 0) // the superseded v2 URL is retired
+	if body := curlHost(t, urlV2, 200); !strings.Contains(body, `"marker":"v2"`) {
+		t.Fatalf("preview must be unaffected by rollback: %s", body)
+	}
 
 	// Destroy requires beamhall_admin: the builder is refused (governance),
-	// then IT destroys.
+	// then IT destroys — both channels' workloads and URLs go away.
 	callTool(ctx, t, cs, "destroy_beam", map[string]any{"beamhall": "e2e", "beam": "life"}, true)
-	itCS := a.connect("e2e-it", "beams:write admin:it", nil)
 	if _, txt := callTool(ctx, t, itCS, "destroy_beam",
 		map[string]any{"beamhall": "e2e", "beam": "life"}, false); !strings.Contains(txt, "destroyed") {
 		t.Fatalf("IT destroy: %s", txt)
 	}
-	curlHost(t, rbURL, 0) // destroyed beam no longer answers
+	curlHost(t, rbURL, 0) // destroyed live channel no longer answers
+	curlHost(t, urlV2, 0) // destroyed preview channel no longer answers
 
 	// The slug is free again.
 	if _, txt := callTool(ctx, t, cs, "create_beam",

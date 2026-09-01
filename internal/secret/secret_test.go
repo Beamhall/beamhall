@@ -411,3 +411,35 @@ func TestScrubWriterRedactsAcrossChunkedWrites(t *testing.T) {
 		t.Fatalf("non-secret content mangled: %q", got)
 	}
 }
+
+func TestLoadKeyFileModePolicy(t *testing.T) {
+	dir := t.TempDir()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, mode os.FileMode) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(id.String()+"\n"), mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	// systemd LoadCredential materializes credentials as 0440 inside the
+	// unit's private credentials directory — the documented production key
+	// path must load.
+	if _, err := LoadKey(write("cred.key", 0o440)); err != nil {
+		t.Fatalf("0440 (the LoadCredential shape) must load: %v", err)
+	}
+	if _, err := LoadKey(write("tight.key", 0o600)); err != nil {
+		t.Fatalf("0600 must load: %v", err)
+	}
+	// World-accessible defeats encryption-at-rest — refuse, with guidance.
+	if _, err := LoadKey(write("loose.key", 0o644)); err == nil {
+		t.Fatal("a world-readable key must be refused")
+	}
+	if _, err := LoadKey(write("wopen.key", 0o604)); err == nil {
+		t.Fatal("a world-readable key must be refused regardless of group bits")
+	}
+}

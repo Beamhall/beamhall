@@ -176,7 +176,10 @@ http.createServer((req, res) => {
 		t.Fatalf("live URL = %q", liveURL)
 	}
 	curlHost(t, liveURL, http.StatusOK)
-	curlHost(t, resumedURL, 0) // promote retires the stale preview URL
+	// Dual-channel: promote brings up a SEPARATE live workload and leaves the
+	// preview channel serving (iterate after shipping) — the preview URL must
+	// keep answering.
+	curlHost(t, resumedURL, http.StatusOK)
 	t.Logf("live at %s", liveURL)
 
 	// --- shutdown, then verify the audit chain end to end ------------------
@@ -273,6 +276,21 @@ func structuredURL(t *testing.T, res *sdkmcp.CallToolResult) string {
 		t.Fatalf("structured content has no url: %v", m)
 	}
 	return u
+}
+
+// structuredPreviewURL reads the PREVIEW channel's URL. `url` is the beam's
+// primary URL — the LIVE host once a live channel exists — so a test asserting
+// what a redeploy did to the preview must read preview_url, not url.
+func structuredPreviewURL(t *testing.T, res *sdkmcp.CallToolResult) string {
+	t.Helper()
+	m, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("no structured content: %#v", res.StructuredContent)
+	}
+	if u, _ := m["preview_url"].(string); u != "" {
+		return u
+	}
+	return structuredURL(t, res)
 }
 
 // curlHost fetches the gateway with the route hostname as Host header.

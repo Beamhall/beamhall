@@ -179,12 +179,18 @@ func launchAppliance(t *testing.T, ctx context.Context) *appliance {
 		hallID: hallID, fortID: fortID, daemon: daemon}
 	t.Cleanup(func() {
 		a.stop()
-		// Lab hygiene: tear down what the suites create.
-		for _, db := range []string{"bh_e2e_tracker_main", "bh_e2e_probe_main"} {
-			exec.Command("docker", "exec", "bh-postgres", "psql", "-U", "postgres", "-c",
-				`DROP DATABASE IF EXISTS `+db+` WITH (FORCE)`).Run()
-			exec.Command("docker", "exec", "bh-postgres", "psql", "-U", "postgres", "-c",
-				`DROP ROLE IF EXISTS `+db+`_rw`).Run()
+		// Lab hygiene: tear down what the suites create. Backing identifiers
+		// carry a digest suffix, so sweep by prefix rather than exact names;
+		// the Postgres container is product-named on installed appliances and
+		// lab-named on older bootstrap VMs — try both.
+		for _, pg := range []string{"beamhall-postgres", "bh-postgres"} {
+			exec.Command("bash", "-c", `
+for db in $(docker exec `+pg+` psql -U postgres -tAc "SELECT datname FROM pg_database WHERE datname LIKE 'bh_e2e_%' OR datname LIKE 'bh_fort_%'" 2>/dev/null); do
+  docker exec `+pg+` psql -U postgres -c "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE)"
+done
+for r in $(docker exec `+pg+` psql -U postgres -tAc "SELECT rolname FROM pg_roles WHERE rolname LIKE 'bh_e2e_%' OR rolname LIKE 'bh_fort_%'" 2>/dev/null); do
+  docker exec `+pg+` psql -U postgres -c "DROP ROLE IF EXISTS \"$r\""
+done`).Run()
 		}
 		exec.Command("bash", "-c",
 			`docker rm -f $(docker ps -aq --filter label=beamhall.beam) 2>/dev/null`).Run()
@@ -247,4 +253,30 @@ func openAndVerifyAudit(t *testing.T, dataDir string) (*store.Store, []audit.Iss
 		t.Fatal(err)
 	}
 	return st, issues, events
+}
+
+// dumpBeamTopology logs the live container/route topology at a failure point:
+// which managed workloads exist (image + bridge IP), what the gateway routes
+// to, and what each backend actually serves — the lab-side ground truth when
+// a URL assertion sees the wrong content.
+func dumpBeamTopology(t *testing.T) {
+	t.Helper()
+	out, _ := exec.Command("bash", "-c",
+		`docker ps --filter label=beamhall.beam --format '{{.Names}} {{.Image}}' | while read n i; do ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' $n); echo "container $n image=$i ip=$ip"; for a in $ip; do echo "  backend $a:8080 -> $(curl -s -m 2 http://$a:8080/ | head -c 120)"; done; done`).CombinedOutput()
+	t.Logf("beam topology:\n%s", out)
+	cfg, _ := exec.Command("bash", "-c",
+		`curl -s localhost:2019/config/ | python3 -c 'import json,sys
+c=json.load(sys.stdin)
+for name,srv in c["apps"]["http"]["servers"].items():
+    print("server",name,"listen",srv.get("listen"))
+    for r in srv.get("routes",[]):
+        ups=[]
+        def walk(h):
+            for x in h:
+                if x.get("handler")=="reverse_proxy": ups.extend(u.get("dial") for u in x.get("upstreams",[]))
+                if "routes" in x:
+                    for rr in x["routes"]: walk(rr.get("handle",[]))
+        walk(r.get("handle",[]))
+        print(" ",r.get("@id"),[m.get("host") for m in r.get("match",[])],ups)'`).CombinedOutput()
+	t.Logf("gateway config:\n%s", cfg)
 }
