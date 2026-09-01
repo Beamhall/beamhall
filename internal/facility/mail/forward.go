@@ -65,10 +65,15 @@ func (f *SMTPForwarder) Forward(ctx context.Context, env Envelope) error {
 		if _, tlsOK := c.TLSConnectionState(); !tlsOK && !f.cfg.DisableStartTLS {
 			return fmt.Errorf("auth: refusing to send smarthost credentials without an active TLS session")
 		}
-		if ok, _ := c.Extension("AUTH"); ok {
-			if err := c.Auth(netsmtp.PlainAuth("", f.cfg.Username, f.cfg.Password, host)); err != nil {
-				return fmt.Errorf("auth: %w", err)
-			}
+		// A configured credential means the operator expects authenticated
+		// submission; a smarthost that stops advertising AUTH (misconfigured,
+		// or a capability-stripping MITM) must fail the send, not silently
+		// degrade to unauthenticated delivery.
+		if ok, _ := c.Extension("AUTH"); !ok {
+			return fmt.Errorf("auth: smarthost %q did not advertise AUTH but a credential is configured; refusing to deliver unauthenticated", f.cfg.Smarthost)
+		}
+		if err := c.Auth(netsmtp.PlainAuth("", f.cfg.Username, f.cfg.Password, host)); err != nil {
+			return fmt.Errorf("auth: %w", err)
 		}
 	}
 

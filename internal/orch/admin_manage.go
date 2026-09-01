@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -140,27 +141,18 @@ func (o *Orchestrator) RevokeMembership(ctx context.Context, actor Actor, identi
 }
 
 // SetMembershipRole changes an identity's role within a beamhall in place
-// (e.g. promote a viewer to builder). The store has no role-update query, so
-// this revokes the old membership and grants the new role; a no-op when the
-// role already matches. it_admin only.
+// (e.g. promote a viewer to builder); a no-op when the role already matches.
+// it_admin only.
 func (o *Orchestrator) SetMembershipRole(ctx context.Context, actor Actor, identityID, beamhallID domain.ID, role domain.MembershipRole) error {
 	if err := o.requireIT(actor); err != nil {
 		return o.itAudit(ctx, actor, "admin_set_membership_role", beamhallID, err)
 	}
 	op := func() error {
-		m, err := o.st.GetMembership(ctx, identityID, beamhallID)
-		if err != nil {
+		err := o.st.UpdateMembershipRole(ctx, identityID, beamhallID, role, actor.ID)
+		if errors.Is(err, store.ErrNotFound) {
 			return fmt.Errorf("that identity has no membership in this beamhall — grant one first")
 		}
-		if m.Role == role {
-			return nil
-		}
-		if err := o.st.DeleteMembership(ctx, m.ID); err != nil {
-			return err
-		}
-		return o.st.CreateMembership(ctx, &domain.Membership{
-			IdentityID: identityID, BeamhallID: beamhallID, Role: role, GrantedBy: actor.ID,
-		})
+		return err
 	}
 	return o.itAudit(ctx, actor, "admin_set_membership_role", beamhallID, op())
 }

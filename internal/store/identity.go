@@ -137,6 +137,16 @@ func (s *Store) DeleteMembership(ctx context.Context, id domain.ID) error {
 	return mapErr(s.q.DeleteMembership(ctx, string(id)))
 }
 
+// UpdateMembershipRole changes a membership's role in place — one UPDATE, so a
+// role change can never fail halfway into a revocation the way delete-then-
+// recreate could. ErrNotFound when no such membership exists.
+func (s *Store) UpdateMembershipRole(ctx context.Context, identityID, beamhallID domain.ID, role domain.MembershipRole, grantedBy domain.ID) error {
+	return affected(s.q.UpdateMembershipRole(ctx, db.UpdateMembershipRoleParams{
+		Role: string(role), GrantedBy: string(grantedBy),
+		IdentityID: string(identityID), BeamhallID: string(beamhallID),
+	}))
+}
+
 // DeleteIdentity removes a registered identity row. The caller must ensure no
 // memberships reference it (the orchestrator refuses otherwise); audit rows
 // reference the id as an opaque string and are unaffected.

@@ -97,3 +97,72 @@ func TestForwardAbortsWhenSmarthostDoesNotAdvertiseSTARTTLS(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// noAuthSmarthost answers EHLO with no capabilities at all — an upstream that
+// offers neither STARTTLS nor AUTH.
+func newNoAuthSmarthost(t *testing.T) *fakeSmarthost {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &fakeSmarthost{ln: ln, commands: make(chan string, 8)}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := s.ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		if _, err := conn.Write([]byte("220 fake.smarthost ESMTP\r\n")); err != nil {
+			return
+		}
+		if line, err := r.ReadString('\n'); err != nil || !strings.HasPrefix(strings.ToUpper(line), "EHLO") {
+			return
+		}
+		if _, err := conn.Write([]byte("250 fake.smarthost\r\n")); err != nil {
+			return
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			s.commands <- strings.TrimSpace(line)
+		}
+	}()
+	return s
+}
+
+// A configured credential means the operator expects authenticated submission;
+// an upstream that stops advertising AUTH must fail the send rather than let
+// the relay silently degrade to unauthenticated delivery.
+func TestForwardRefusesUnauthenticatedWhenCredentialConfigured(t *testing.T) {
+	sh := newNoAuthSmarthost(t)
+
+	f := NewSMTPForwarder(ProviderConfig{
+		Smarthost:       sh.addr(),
+		Username:        "provider-user",
+		Password:        "provider-secret",
+		DisableStartTLS: true, // trusted-internal-relay mode; isolates the AUTH check
+	})
+
+	err := f.Forward(context.Background(), Envelope{
+		From: "noreply@app.example.com",
+		To:   []string{"u@dest.example"},
+		Data: []byte(sampleMsg),
+	})
+	if err == nil {
+		t.Fatal("Forward delivered unauthenticated despite a configured credential")
+	}
+	if !strings.Contains(err.Error(), "AUTH") {
+		t.Fatalf("Forward failed for the wrong reason: %v", err)
+	}
+	select {
+	case cmd := <-sh.commands:
+		t.Fatalf("smarthost received %q; want the connection abandoned before MAIL FROM", cmd)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

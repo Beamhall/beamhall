@@ -79,6 +79,12 @@ func (o *Orchestrator) SetSecret(ctx context.Context, actor Actor, beamhallID, b
 		return err
 	}
 	err := validateSecretKey(key)
+	// A beam-scoped secret must target a live beam in the authorized hall —
+	// without this, a raw-ID caller could hang secrets on a foreign or
+	// archived beam's scope. Beamhall-wide secrets (no beam) skip it.
+	if err == nil && beamID != "" {
+		_, err = o.operableBeam(ctx, beamhallID, beamID)
+	}
 	if err == nil {
 		_, err = o.vault.Set(ctx, domain.SecretRef{BeamhallID: beamhallID, BeamID: beamID, Key: key}, value, actor.ID)
 	}

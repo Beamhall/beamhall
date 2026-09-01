@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -25,7 +26,18 @@ func (o *Orchestrator) PauseFunc() scheduler.PauseFunc {
 		if err != nil {
 			return err
 		}
-		return o.pause(ctx, beam.BeamhallID, domain.ID(beamID), domain.EvPauseTimer)
+		err = o.pause(ctx, beam.BeamhallID, domain.ID(beamID), domain.EvPauseTimer)
+		// An FSM refusal is permanent for THIS timer (the beam is failed,
+		// already paused, or mid-transition — any state change that makes it
+		// pausable again re-arms a fresh deadline). Returning the error would
+		// make the scheduler retry the same refusal every cycle forever;
+		// returning nil lets it clear the stale timer.
+		var te *domain.TransitionError
+		if errors.As(err, &te) {
+			o.log.Info("auto-pause timer cleared on FSM refusal", "beam", beamID, "reason", te.Reason)
+			return nil
+		}
+		return err
 	}
 }
 
@@ -201,6 +213,29 @@ func (o *Orchestrator) showLogs(ctx context.Context, beamhallID, beamID domain.I
 // we re-Upsert through the interface so fakes observe it too). The pause
 // scheduler reloads its own armed deadlines from the store on Start.
 func (o *Orchestrator) Boot(ctx context.Context) error {
+	// A daemon crash mid-build leaves the beam in `building` — a state with no
+	// legal deploy transition, so without this it is wedged until destroyed.
+	// Boot runs before any request is served, so every `building` beam here is
+	// an interrupted build, never an in-flight one: land it in failed with an
+	// actionable reason (the standard redeploy path recovers from failed).
+	if stuck, err := o.st.ListBeamsByState(ctx, domain.StateBuilding); err != nil {
+		o.log.Error("boot: listing interrupted builds", "err", err)
+	} else {
+		for _, beam := range stuck {
+			if beam.Status == domain.BeamArchived {
+				continue
+			}
+			if err := beam.Apply(domain.EvBuildFail); err != nil {
+				o.log.Error("boot: failing interrupted build", "beam", beam.ID, "err", err)
+				continue
+			}
+			if err := o.st.UpdateBeam(ctx, &beam); err != nil {
+				o.log.Error("boot: persisting interrupted build failure", "beam", beam.ID, "err", err)
+				continue
+			}
+			o.log.Warn("boot: build was interrupted by the restart; beam moved to failed — redeploy it", "beam", beam.ID, "slug", beam.Slug)
+		}
+	}
 	routes, err := o.st.ActiveRoutes(ctx)
 	if err != nil {
 		return err

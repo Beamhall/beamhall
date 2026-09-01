@@ -377,3 +377,30 @@ func TestSenderAllowed(t *testing.T) {
 		}
 	}
 }
+
+// A second From: header must reject the message even when the first is
+// allowed: the header check reads the first instance, but a recipient's MUA
+// may render the other.
+func TestRelayRejectsDuplicateFromHeaders(t *testing.T) {
+	fwd := &fakeForwarder{}
+	audit := &auditCapture{}
+	p := New(WithForwarder(fwd), WithAuditSink(audit.sink()))
+	creds, err := p.Provision(context.Background(), ProvisionRequest{BeamID: "B", AllowedSenders: []string{"app.example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := startRelay(t, p)
+	dual := "From: noreply@app.example.com\r\n" +
+		"From: ceo@victim-corp.com\r\n" +
+		"To: user@dest.example\r\n" +
+		"Subject: Hello there\r\n" +
+		"\r\n" +
+		"body line\r\n"
+	err = sendVia(addr, creds.Username, creds.Password, "noreply@app.example.com", "u@dest.example", dual)
+	if err == nil {
+		t.Fatal("expected duplicate-From rejection, got nil")
+	}
+	if fwd.count() != 0 {
+		t.Fatalf("forwarder should have received nothing, got %d", fwd.count())
+	}
+}

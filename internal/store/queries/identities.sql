@@ -30,5 +30,8 @@ SELECT * FROM memberships WHERE identity_id = ? ORDER BY granted_at;
 -- name: DeleteMembership :exec
 DELETE FROM memberships WHERE id = ?;
 
+-- name: UpdateMembershipRole :execrows
+UPDATE memberships SET role = ?, granted_by = ? WHERE identity_id = ? AND beamhall_id = ?;
+
 -- name: DeleteIdentity :exec
 DELETE FROM identities WHERE id = ?;

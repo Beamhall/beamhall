@@ -109,6 +109,21 @@ func (s *Store) ListBeamsByBeamhall(ctx context.Context, beamhallID domain.ID) (
 	return out, nil
 }
 
+// ListBeamsByState returns every beam (any beamhall, any status) whose FSM
+// state matches — the boot-reconcile source for beams a daemon crash left
+// mid-transition.
+func (s *Store) ListBeamsByState(ctx context.Context, state domain.BeamState) ([]domain.Beam, error) {
+	rows, err := s.q.ListBeamsByState(ctx, string(state))
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]domain.Beam, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, beamFromRow(r))
+	}
+	return out, nil
+}
+
 // CountBeamsByBeamhall counts a Beamhall's Beams (for ResourceQuota.MaxBeams).
 func (s *Store) CountBeamsByBeamhall(ctx context.Context, beamhallID domain.ID) (int, error) {
 	n, err := s.q.CountBeamsByBeamhall(ctx, string(beamhallID))

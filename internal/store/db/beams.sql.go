@@ -211,6 +211,55 @@ func (q *Queries) ListBeamsByBeamhall(ctx context.Context, beamhallID string) ([
 	return items, nil
 }
 
+const listBeamsByState = `-- name: ListBeamsByState :many
+SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state FROM beams WHERE state = ?
+`
+
+func (q *Queries) ListBeamsByState(ctx context.Context, state string) ([]Beam, error) {
+	rows, err := q.db.QueryContext(ctx, listBeamsByState, state)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Beam
+	for rows.Next() {
+		var i Beam
+		if err := rows.Scan(
+			&i.ID,
+			&i.BeamhallID,
+			&i.Slug,
+			&i.DisplayName,
+			&i.RuntimeHint,
+			&i.Mode,
+			&i.State,
+			&i.CurrentReleaseID,
+			&i.DesiredReleaseID,
+			&i.SecurityTemplate,
+			&i.PreviewPauseAfter,
+			&i.ResumedAt,
+			&i.GitRemoteUrl,
+			&i.RepoID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Status,
+			&i.PreviewHost,
+			&i.LiveReleaseID,
+			&i.LiveState,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const promoteBeam = `-- name: PromoteBeam :execrows
 UPDATE beams SET mode = 'live', updated_at = ? WHERE id = ?
 `

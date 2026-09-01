@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	netmail "net/mail"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -485,6 +486,13 @@ func beamUsername(beamID string) string { return "beam-" + beamID }
 func headerFromAllowed(data []byte, allowed []string) bool {
 	m, err := netmail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
+		return false
+	}
+	// AddressList reads only the FIRST From: header instance; a message
+	// carrying a second one would pass the check on the allowed first while a
+	// recipient's MUA may render the spoofed second. RFC 5322 permits exactly
+	// one From — reject duplicates outright.
+	if len(m.Header[textproto.CanonicalMIMEHeaderKey("From")]) > 1 {
 		return false
 	}
 	addrs, err := m.Header.AddressList("From")

@@ -113,10 +113,15 @@ Self-upgrade is the control plane modifying the binary that enforces policy, so
 it carries **four** independent gates: it is **fail-closed** (off unless
 `BEAMHALL_SELF_UPGRADE=on`, and then only the *staging* runs in-process), behind
 the **sensitive tier**, behind **four-eyes** approval, and the final irreversible
-**swap + restart is an operator step**, never autonomous. On approval the backplane
-downloads the pinned release, **verifies its sha256 against `checksums.txt`**, stages
-the new binary (and sanity-checks that it runs and self-reports the target version),
-then hands back the exact atomic apply + rollback commands:
+**swap + restart is an operator step**, never autonomous. The request must carry
+`expected_sha256` — the release binary's digest the requesting operator obtained
+**out-of-band** (from the GitHub Release page's `checksums.txt`) — so the
+download channel is never the sole authority on what gets staged. On approval
+the backplane downloads the pinned release and verifies its sha256 against
+**both** the release's `checksums.txt` **and** the operator-supplied digest;
+only after both match does it stage the binary and sanity-check that the staged
+binary runs and self-reports the target version (no unverified code ever
+executes), then hands back the exact atomic apply + rollback commands:
 
 ```
 admin_request_upgrade version=v0.1.11        # operator A files it

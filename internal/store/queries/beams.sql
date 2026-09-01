@@ -12,6 +12,9 @@ SELECT * FROM beams WHERE id = ?;
 -- name: GetBeamBySlug :one
 SELECT * FROM beams WHERE beamhall_id = ? AND slug = ? AND status = 'active';
 
+-- name: ListBeamsByState :many
+SELECT * FROM beams WHERE state = ?;
+
 -- name: ListBeamsByBeamhall :many
 SELECT * FROM beams WHERE beamhall_id = ? AND status = 'active' ORDER BY slug;
 

@@ -16,6 +16,25 @@ their auto-generated notes.
 ## [Unreleased]
 
 ### Fixed
+- A build interrupted by a daemon restart no longer wedges the beam in
+  `building` forever: boot moves it to `failed` with a redeploy hint (the
+  normal redeploy path recovers it).
+- `admin_set_membership_role` is now a single in-place update — a failure can
+  no longer land between revoke and re-grant and silently drop the membership.
+- The auto-pause timer clears instead of retrying every cycle forever when its
+  beam can no longer be paused (e.g. it is in `failed`).
+- `show_auth` and `set_secret` now verify the addressed beam belongs to the
+  authorized workspace, and `set_secret` refuses archived beams.
+- Mail relay: a message carrying more than one `From:` header is rejected
+  (only the first was checked against the sender allowlist while a recipient's
+  client may render the second); the upstream forwarder refuses to deliver
+  unauthenticated when a smarthost credential is configured but the smarthost
+  does not offer AUTH.
+
+### Changed
+- An IT admin action whose audit-chain append fails now reports that failure
+  (the action's effect stands, but success is never claimed unaudited) —
+  matching the PEP's audit-or-deny posture for agent actions.
 - Microsoft Entra ID access tokens now authenticate correctly: the `scp` claim
   is parsed in the space-delimited string form Entra emits (previously only
   the array form was read, so every Entra token was denied with

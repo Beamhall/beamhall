@@ -30,6 +30,12 @@ func (o *Orchestrator) itAudit(ctx context.Context, actor Actor, action string, 
 	}
 	if _, err := o.alog.Append(ctx, &ev); err != nil {
 		o.log.Error("audit IT action failed", "action", action, "err", err)
+		// The same posture as the PEP's audit-or-deny: an IT mutation whose
+		// chain append failed must not report clean success. The effect may
+		// already have happened — say so rather than hide it.
+		if opErr == nil {
+			return fmt.Errorf("%s succeeded but could NOT be recorded on the audit chain: %w — investigate the audit store before continuing", action, err)
+		}
 	}
 	return opErr
 }

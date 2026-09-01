@@ -342,3 +342,25 @@ func TestApproveRefusedAfterSensitiveTierDisabled(t *testing.T) {
 		t.Fatal("provider not called once the tier is back on")
 	}
 }
+
+// An IT mutation whose audit append fails must not report clean success —
+// the same audit-or-deny posture the PEP applies to agent actions.
+func TestITActionSurfacesAuditAppendFailure(t *testing.T) {
+	w := newWorld(t)
+	fp := &fakeProvider{}
+	w.o.idp = fp
+	// Kill the audit store out from under the orchestrator.
+	if err := w.st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := w.o.AdminCreateUser(context.Background(), itActor(w), identityadmin.NewUser{Username: "ghost"})
+	if err == nil {
+		t.Fatal("an unauditable IT action must not report success")
+	}
+	if fp.createdUser != "ghost" {
+		t.Fatalf("the action itself should have executed (it did: %q) — only the report changes", fp.createdUser)
+	}
+	if !strings.Contains(err.Error(), "audit") {
+		t.Fatalf("error should say auditing failed: %v", err)
+	}
+}

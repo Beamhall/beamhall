@@ -273,3 +273,27 @@ func (q *Queries) UpdateIdentity(ctx context.Context, arg UpdateIdentityParams) 
 	}
 	return result.RowsAffected()
 }
+
+const updateMembershipRole = `-- name: UpdateMembershipRole :execrows
+UPDATE memberships SET role = ?, granted_by = ? WHERE identity_id = ? AND beamhall_id = ?
+`
+
+type UpdateMembershipRoleParams struct {
+	Role       string
+	GrantedBy  string
+	IdentityID string
+	BeamhallID string
+}
+
+func (q *Queries) UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateMembershipRole,
+		arg.Role,
+		arg.GrantedBy,
+		arg.IdentityID,
+		arg.BeamhallID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

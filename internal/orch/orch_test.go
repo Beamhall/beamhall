@@ -1335,3 +1335,98 @@ func TestBuildOutputAndErrorScrubbed(t *testing.T) {
 		t.Fatalf("progress should carry the redaction mask: %q", progress.String())
 	}
 }
+
+func TestSetSecretRefusedOnArchivedBeam(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "gone", "Gone", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := Actor{ID: w.admin.ID, ITAdmin: true}
+	if err := w.o.DestroyBeam(ctx, it, w.bh.ID, beam.ID); err != nil {
+		t.Fatalf("DestroyBeam: %v", err)
+	}
+	// An archived beam's scope must not accept new secrets — nothing can ever
+	// inject or reclaim them again.
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, "LATE_KEY", []byte("v")); err == nil {
+		t.Fatal("set_secret on an archived beam must be refused")
+	}
+	// Beamhall-wide secrets are unaffected by the beam check.
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, "", "HALL_KEY", []byte("v")); err != nil {
+		t.Fatalf("hall-wide set_secret: %v", err)
+	}
+}
+
+func TestBootFailsInterruptedBuilds(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "stuck", "Stuck", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a daemon crash mid-build: the row persists in `building`, a
+	// state with no legal deploy transition.
+	beam.State = domain.StateBuilding
+	if err := w.st.UpdateBeam(ctx, beam); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.o.Boot(ctx); err != nil {
+		t.Fatalf("Boot: %v", err)
+	}
+	got, err := w.st.GetBeam(ctx, beam.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != domain.StateFailed {
+		t.Fatalf("interrupted build should land in failed, got %s", got.State)
+	}
+	// The standard recovery path must work: redeploy from failed.
+	if _, err := w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID, DeployRequest{
+		ImageRef: "reg/stuck:v1", ImageDigest: "sha256:aa"}); err != nil {
+		t.Fatalf("redeploy after boot recovery: %v", err)
+	}
+}
+
+func TestPauseTimerClearsOnPermanentRefusal(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "wedged", "Wedged", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beam.State = domain.StateFailed
+	if err := w.st.UpdateBeam(ctx, beam); err != nil {
+		t.Fatal(err)
+	}
+	// The scheduler clears a timer whose PauseFunc returns nil; a permanent
+	// FSM refusal must therefore surface as nil, not as a retryable error the
+	// scheduler re-arms every cycle forever.
+	if err := w.o.PauseFunc()(ctx, string(beam.ID)); err != nil {
+		t.Fatalf("PauseFunc on an unpausable beam should clear the timer (nil), got: %v", err)
+	}
+}
+
+func TestSetMembershipRoleUpdatesInPlace(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	it := Actor{ID: w.admin.ID, ITAdmin: true}
+	if err := w.o.SetMembershipRole(ctx, it, w.build.ID, w.bh.ID, domain.RoleViewer); err != nil {
+		t.Fatalf("SetMembershipRole: %v", err)
+	}
+	m, err := w.st.GetMembership(ctx, w.build.ID, w.bh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Role != domain.RoleViewer {
+		t.Fatalf("role not updated: %s", m.Role)
+	}
+	// No membership → actionable error, not a silent create.
+	ident := &domain.Identity{ExternalSubject: "stranger", IdPIssuer: "idp", Email: "s@x", Status: domain.IdentityActive}
+	if err := w.st.CreateIdentity(ctx, ident); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.o.SetMembershipRole(ctx, it, ident.ID, w.bh.ID, domain.RoleBuilder); err == nil {
+		t.Fatal("role change without a membership must be refused")
+	}
+}

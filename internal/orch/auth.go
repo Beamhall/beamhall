@@ -182,7 +182,10 @@ func (o *Orchestrator) ShowAuth(ctx context.Context, actor Actor, beamhallID, be
 }
 
 func (o *Orchestrator) showAuth(ctx context.Context, beamhallID, beamID domain.ID) (AuthInfo, error) {
-	beam, err := o.st.GetBeam(ctx, beamID)
+	// operableBeam, not a bare GetBeam: the PEP authorized against beamhallID,
+	// so a beamID from another hall must be refused here too — otherwise a
+	// raw-ID caller could read a foreign beam's OIDC client metadata.
+	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return AuthInfo{}, err
 	}

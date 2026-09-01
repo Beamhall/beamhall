@@ -154,7 +154,31 @@ Every "mitigation" below is enforced in code and exercised by a test; the
 | **App-token replay against the backplane** (provisioned auth, §5.10) | A beam's own OIDC client mints tokens with `aud` = its own client id only; Beamhall never attaches the resource-URI audience to app clients, and `CreateClient` post-asserts no effective mapper injects it (refusing otherwise) | — | — | `internal/identityadmin` post-assert unit test; **lab: an app-client token is 401'd by `/mcp`** while a correctly-scoped token gets 200 (`auth-isolation.sh`) |
 | **Email abuse / sender spoofing / provider-key theft** (email facility, §5.12) | The mail-provider credential lives only in the shared `bh-mail` broker, never in the beam; the beam holds only a bridge-scoped SMTP login (useless outside the hall). The broker enforces a per-beam **From allowlist** (a beam can't send as another team or the company) + a per-beam **rate limit** (mail-bomb / reputation defense) and **audits every message** (envelope only) to the hash chain. Beams reach only `bh-mail` (container-to-container); the broker's outbound to the smarthost rides the default bridge, so allowing the provider never widens beam egress | Audit events buffered in the broker between pulls are lost if the broker crashes first (bounded by the poll interval) | Persisted broker spool; per-channel sandbox for preview | `internal/facility/mail` engine + control-channel unit/race tests; **lab-verified 2026-06-25: beam→`bh-mail` delivers + audits, direct beam→provider egress-denied** |
 | **Cross-beam object access / storage-key theft / one beam filling the store** (object-storage facility, §5.13) | Any external S3 credential lives only in the shared `bh-objstore` broker, never in the beam; the beam holds only a per-beam, per-channel S3 key valid against the in-hall endpoint. The broker is one container on every bridge, so it can't tell beams apart by IP — it **verifies each request's AWS SigV4 signature** and rejects an out-of-bucket request (`AccessDenied`) or a forged/unknown key (`SignatureDoesNotMatch`); **preview and live are separate buckets** (preview can't touch production data); a per-beam **storage quota** caps the shared local store (`507` over-quota); every mutation/denial is **audited** (object/op, never contents) to the hash chain. FORWARD mode namespaces every beam under its own key **prefix** inside one admin bucket (out-of-prefix/traversal rejected). Plain HTTP on the private bridge — SigV4 gives request auth+integrity; object bytes stay on the in-host bridge | Object data is on the private bridge in cleartext (same boundary as `bh-postgres` / `bh-mail` plaintext-AUTH); local-mode data is single-volume + not in `admin_backup_now`; per-chunk signatures aren't re-verified (seed sig only) | HTTPS-on-bridge with injected `S3_CA`; local-data backups; recommend forward-to-real-S3 beyond pilot | `internal/facility/s3` SigV4 verifier + isolation unit tests (minio-go + synthetic chunked bodies); **lab-verified 2026-06-28: local round-trip, cross-beam 403, forged-key reject, destroy-purge, forward-to-external-S3 prefix isolation, audit chain intact** |
-| **Audit tampering** | Hash-chained, append-only audit log; boot-time `Verify`; JSON-Lines export to an off-box SIEM anchors the truncation blind spot | An attacker with DB write + the ability to recompute the whole chain forward could rewrite history; the off-box SIEM cursor detects divergence | WORM/remote-attested log sink | audit chain unit + lab Verify |
+| **Audit tampering** | Hash-chained, append-only audit log; boot-time `Verify`; retention pruning is **checkpoint-anchored** (the surviving chain stays tamper-evident and an unrecorded deletion still trips `Verify`) and, over MCP, four-eyes-gated; JSON-Lines export to an off-box SIEM anchors the truncation blind spot | An attacker with DB write + the ability to recompute the whole chain forward could rewrite history; the off-box SIEM cursor detects divergence. A host-shell `prune-audit` run concurrently with a live `Verify` can yield transient false gap reports (re-run clears) | WORM/remote-attested log sink | audit chain unit + lab Verify |
+
+### Control-plane integrity (selected mechanisms)
+
+The table above is about the two untrusted populations; these mechanisms guard
+the control plane against itself:
+
+- **Per-beam lifecycle serialization.** Deploy, promote, rollback, destroy,
+  archive, pause, and resume on the same beam are serialized, so races like
+  destroy-during-deploy resurrection, a pause erasing a just-promoted live
+  channel, or an archive tearing down a beam mid-promote cannot interleave.
+  Quota checks (beams, databases, live slots) are transactional count-and-act.
+- **Four-eyes decisions are serialized and re-gated.** A sensitive request is
+  approved by a *different* operator, decisions cannot double-execute or
+  interleave with a rejection, and approval re-checks the sensitive-tier
+  switch — a request filed while the tier was on is not approvable after the
+  operator turns it off.
+- **Digest-pinned self-upgrade.** Staging requires the sha256 from the
+  release's `checksums.txt` **and** an operator-supplied digest obtained
+  out-of-band to agree; the staged binary's version self-check runs only after
+  both match, and the swap + restart is always a manual operator step.
+- **Crash recovery is fail-visible.** A build interrupted by a daemon restart
+  lands the beam in `failed` (redeployable) at boot rather than wedging it;
+  an IT action whose audit append fails reports the failure instead of clean
+  success.
 
 ## 7. Network egress model
 
@@ -174,6 +198,18 @@ have no tool to change egress; only IT can, and the change is audited.
 - Injection is **file-only at `/run/secrets/<KEY>`** (tmpfs), never environment
   variables (env leaks via `/proc`, `docker inspect`, and crash dumps are
   durable).
+- Decrypted values are **staged only on RAM-backed tmpfs** before injection —
+  the daemon refuses to start if the staging path is not tmpfs, so plaintext
+  never lands on persistent disk (or in a VM/disk snapshot). Per-instance
+  staging is removed on teardown *and* on a failed container create, and
+  unreferenced staging directories are swept at startup, so a crash cannot
+  leave decrypted files behind for the appliance's uptime.
+- Secret keys are validated to a conservative charset before they become the
+  container-side mount target, so a key can never relocate a mount outside
+  `/run/secrets/`.
+- The scrubber also covers the **build path**: live build progress (MCP
+  notifications and the `git push` sideband) and build-failure output pass the
+  same redaction before leaving the backplane.
 - `create_database` returns the **secret key and injection plan**, never the
   connection string — the DSN is sealed into the vault and surfaces only as a
   file inside the workload.
