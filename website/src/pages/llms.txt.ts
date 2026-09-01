@@ -47,8 +47,14 @@ A "beamhall" is a workspace. The agent-facing control surface is MCP.
 ## Source and documentation
 
 - [Source repository](https://github.com/Beamhall/beamhall): the Go implementation, Apache-2.0.
+- [Documentation](https://github.com/Beamhall/beamhall/tree/main/docs): all published Beamhall docs.
 - [Threat model](https://github.com/Beamhall/beamhall/blob/main/docs/threat-model.md): the security document; every mitigation cites a test or a lab finding.
-- [Design plan](https://github.com/Beamhall/beamhall/blob/main/docs/PLAN.md): architecture, security model, scope and locked decisions.
+- [Getting started](https://github.com/Beamhall/beamhall/blob/main/docs/getting-started.md): an IT admin's first hour, from install to a deployed beam.
+- [Beamhall for IT](https://github.com/Beamhall/beamhall/blob/main/docs/beamhall-for-it.md): what Beamhall requires of the team that runs it.
+- [Administering over MCP](https://github.com/Beamhall/beamhall/blob/main/docs/admin-over-mcp.md): the \`admin_*\` tool family and its guardrails.
+- [Identity provider setup](https://github.com/Beamhall/beamhall/blob/main/docs/idp-setup.md): connecting Keycloak, Okta, Entra or any OIDC IdP.
+- [Air-gapped operation](https://github.com/Beamhall/beamhall/blob/main/docs/air-gapped.md): running with no internet egress.
+- [Agent-conformance suite](https://github.com/Beamhall/beamhall/blob/main/docs/agent-conformance.md): four authenticated personas proving isolation and four-eyes control.
 - [Changelog](https://github.com/Beamhall/beamhall/blob/main/CHANGELOG.md): what shipped in each release.
 
 ## Optional
