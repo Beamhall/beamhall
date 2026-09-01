@@ -33,13 +33,50 @@ func TestBuildScriptAtomicAndOrdered(t *testing.T) {
 
 	metadataIdx := strings.Index(s, "-d 169.254.0.0/16 -j DROP")
 	hostIdx := strings.Index(s, "-d 10.0.0.5/32 -j DROP")
+	sameBridgeIdx := strings.Index(s, "-A "+chain+" -i br-abc123 -o br-abc123 -j RETURN")
 	allowIdx := strings.Index(s, "-d 1.1.1.1/32 -j RETURN")
 	defaultDenyIdx := strings.Index(s, "-A "+chain+" -i br-abc123 -j DROP")
-	if metadataIdx < 0 || hostIdx < 0 || allowIdx < 0 || defaultDenyIdx < 0 {
+	if metadataIdx < 0 || hostIdx < 0 || sameBridgeIdx < 0 || allowIdx < 0 || defaultDenyIdx < 0 {
 		t.Fatalf("missing expected rule(s):\n%s", s)
 	}
-	if !(metadataIdx < allowIdx && hostIdx < allowIdx && allowIdx < defaultDenyIdx) {
-		t.Fatalf("rule ordering wrong (always-deny must precede allow must precede default-deny):\n%s", s)
+	if !(metadataIdx < sameBridgeIdx && hostIdx < sameBridgeIdx && sameBridgeIdx < allowIdx && allowIdx < defaultDenyIdx) {
+		t.Fatalf("rule ordering wrong (always-deny < same-bridge exemption < allow < default-deny):\n%s", s)
+	}
+}
+
+// TestSameBridgeTrafficIsExempt guards the br_netfilter failure mode: with the
+// bridge-nf-call-iptables sysctl on (Docker can load the module at any time),
+// same-bridge container traffic traverses DOCKER-USER and, without an explicit
+// -i br -o br RETURN ahead of the terminal DROP, every intra-hall connection —
+// beam↔beam and beam↔broker (Postgres, SMTP) — is silently severed.
+func TestSameBridgeTrafficIsExempt(t *testing.T) {
+	r := New()
+	script, err := r.buildScript([]Policy{
+		{Bridge: "br-abc123"},
+		{Bridge: "br-def456", Allow: []string{"1.1.1.1/32"}},
+	})
+	if err != nil {
+		t.Fatalf("buildScript: %v", err)
+	}
+	s := string(script)
+	for _, br := range []string{"br-abc123", "br-def456"} {
+		ret := "-A " + chain + " -i " + br + " -o " + br + " -j RETURN"
+		drop := "-A " + chain + " -i " + br + " -j DROP"
+		if !strings.Contains(s, ret) {
+			t.Fatalf("bridge %s has no same-bridge exemption:\n%s", br, s)
+		}
+		if strings.Index(s, ret) > strings.Index(s, drop) {
+			t.Fatalf("bridge %s: same-bridge RETURN must precede the terminal DROP:\n%s", br, s)
+		}
+	}
+	// The exemption must stay bridge-pinned on both sides: cross-bridge
+	// traffic (-i br-a -o br-b) must fall through to the terminal DROP.
+	if strings.Contains(s, "-i br-abc123 -o br-def456") {
+		t.Fatalf("cross-bridge exemption must not exist:\n%s", s)
+	}
+	// And it must not outrank the metadata always-deny.
+	if strings.Index(s, "-d 169.254.0.0/16 -j DROP") > strings.Index(s, "-o br-abc123 -j RETURN") {
+		t.Fatalf("always-deny must precede the same-bridge exemption:\n%s", s)
 	}
 }
 

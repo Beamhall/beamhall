@@ -75,7 +75,7 @@ func TestProvisionEmailSealsCredsAndInjects(t *testing.T) {
 		t.Fatal("email facility should be enabled")
 	}
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSetEmailSendersRequiresITAndPersists(t *testing.T) {
 	fe := &fakeEmailProv{}
 	enableEmail(w, fe)
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestEmailBrokerWiredButUnconfigured(t *testing.T) {
 	if w.o.EmailEnabled() {
 		t.Fatal("email should be disabled until IT configures a provider")
 	}
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}

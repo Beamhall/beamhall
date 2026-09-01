@@ -195,6 +195,53 @@ type BrandingLogo struct {
 	UpdatedAt time.Time
 }
 
+// Audience is who an app is published to: the union of everyone, named IdP
+// groups (matched against a claim in the user's token), and named identities.
+// Group names match exactly (case-sensitive) — case-folding would let two
+// distinct IdP groups collide into one audience.
+type Audience struct {
+	Everyone   bool     `json:"everyone,omitempty"`
+	Groups     []string `json:"groups,omitempty"`
+	Identities []ID     `json:"identities,omitempty"`
+}
+
+func (a Audience) IsEmpty() bool {
+	return !a.Everyone && len(a.Groups) == 0 && len(a.Identities) == 0
+}
+
+// Allows reports whether the identity (with the groups its token carries) is
+// inside the audience. An empty audience allows no one.
+func (a Audience) Allows(identityID ID, groups []string) bool {
+	if a.Everyone {
+		return true
+	}
+	for _, id := range a.Identities {
+		if id == identityID {
+			return true
+		}
+	}
+	for _, g := range a.Groups {
+		for _, have := range groups {
+			if g == have {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// BeamAudience is one app's publication record. Its existence is the
+// publication: an app with no row is unpublished. PublishedBy/PublishedAt
+// record the first publication; re-publishing only changes Audience.
+type BeamAudience struct {
+	BeamID      ID
+	BeamhallID  ID
+	Audience    Audience
+	PublishedBy ID
+	PublishedAt time.Time
+	UpdatedAt   time.Time
+}
+
 // ---------------------------------------------------------------------------
 // Beam, Build, Release, Route
 // ---------------------------------------------------------------------------
@@ -230,6 +277,7 @@ type Beam struct {
 	BeamhallID        ID
 	Slug              string
 	DisplayName       string
+	Description       string // what the app is FOR, written for the people who use it
 	RuntimeHint       string // auto|node|python|go|static
 	Mode              BeamMode
 	State             BeamState // the PREVIEW channel's lifecycle state

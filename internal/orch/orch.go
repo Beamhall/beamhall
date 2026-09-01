@@ -64,6 +64,7 @@ type Actor struct {
 	TokenJTI string
 	ITAdmin  bool
 	SourceIP string
+	Groups   []string // IdP group names from the token's groups claim (app audiences)
 }
 
 // Orchestrator wires the backplane services behind the PEP.
@@ -138,6 +139,10 @@ type Orchestrator struct {
 	// upgrader stages self-upgrades (WithUpgrader). Defaults to upgrade.Disabled
 	// (fail-closed): self-upgrade is unavailable unless explicitly enabled.
 	upgrader upgrade.Stager
+
+	// userTier configures the using tier (WithUserTier): auto-registration of
+	// user identities and whether group audiences can match.
+	userTier UserTierConfig
 }
 
 // startupPolls divides the startup grace into status checks.

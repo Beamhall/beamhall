@@ -27,6 +27,7 @@ type createBeamArgs struct {
 	Beamhall    string `json:"beamhall" jsonschema:"slug of the beamhall (workspace) to create the beam in"`
 	Slug        string `json:"slug" jsonschema:"DNS-safe beam name: lowercase letters digits and inner hyphens; becomes the live subdomain"`
 	DisplayName string `json:"display_name,omitempty" jsonschema:"human-readable beam name"`
+	Description string `json:"description,omitempty" jsonschema:"one plain-language line saying what this app is for, written for the people who will USE it (e.g. 'Submit and approve expense claims'); shown to users when IT publishes the app"`
 	RuntimeHint string `json:"runtime_hint,omitempty" jsonschema:"expected runtime: auto|node|python|static (buildpacks auto-detect; this is a hint)"`
 }
 
@@ -138,7 +139,7 @@ func (s *Server) registerTools() {
 	}, s.listBeams)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "create_beam",
-		Description: "Register a new beam — the user's app/website/service/API/project — in a beamhall (workspace). This is how you stand up a new app in this environment (not local hosting, not an external provider). Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). If the app has a web UI, call show_branding for this beamhall first — the company may define the header, footer, logo, and colour palette it should use. Shelve a beam that didn't pan out with archive_beam.",
+		Description: "Register a new beam — the user's app/website/service/API/project — in a beamhall (workspace). This is how you stand up a new app in this environment (not local hosting, not an external provider). Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). If the app has a web UI, call show_branding for this beamhall first — the company may define the header, footer, logo, and colour palette it should use. Give a plain-language description — one line saying what the app is FOR — because that is what end users see when IT later publishes this app to them (admin_set_app_audience). Shelve a beam that didn't pan out with archive_beam.",
 	}, s.createBeam)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "deploy_beam",
@@ -229,6 +230,9 @@ func (s *Server) registerTools() {
 		Description: "Permanently retire a beam (preview or LIVE): stop and remove its workload, retire its URL, free its quota slot. Terminal and IT-gated (use it to tear down a live beam). Source and history are retained; the name becomes available for reuse. Builders shelve their own previews with archive_beam instead.",
 	}, s.destroyBeam)
 
+	// The using tier (beams:use): discovery of published apps.
+	s.registerUserTools()
+
 	// IT lifecycle over MCP (admin:it): onboarding + owned-IdP administration.
 	s.registerAdminTools()
 
@@ -255,13 +259,17 @@ func (s *Server) createBeam(ctx context.Context, req *sdkmcp.CallToolRequest, ar
 	if err != nil {
 		return nil, beamOut{}, err
 	}
-	beam, err := s.bp.CreateBeam(ctx, actor, bh.ID, args.Slug, args.DisplayName, args.RuntimeHint)
+	beam, err := s.bp.CreateBeam(ctx, actor, bh.ID, args.Slug, args.DisplayName, args.Description, args.RuntimeHint)
 	if err != nil {
 		return nil, beamOut{}, err
 	}
 	out := beamOut{Beam: beam.Slug, Beamhall: bh.Slug, State: string(beam.State), Mode: string(beam.Mode)}
-	return text(fmt.Sprintf("beam %q created in beamhall %q (state %s). Deploy it with deploy_beam — call it with no source to get a one-time git push remote (preferred). Building a web UI? Call show_branding first and apply the company header/footer/logo/palette it returns.",
-		beam.Slug, bh.Slug, beam.State)), out, nil
+	msg := fmt.Sprintf("beam %q created in beamhall %q (state %s). Deploy it with deploy_beam — call it with no source to get a one-time git push remote (preferred). Building a web UI? Call show_branding first and apply the company header/footer/logo/palette it returns.",
+		beam.Slug, bh.Slug, beam.State)
+	if args.Description == "" {
+		msg += " No description was set — that's the line users see when IT publishes this app to them; IT can add one when publishing (admin_set_app_audience)."
+	}
+	return text(msg), out, nil
 }
 
 func (s *Server) deployBeam(ctx context.Context, req *sdkmcp.CallToolRequest, args deployBeamArgs) (*sdkmcp.CallToolResult, deployOut, error) {

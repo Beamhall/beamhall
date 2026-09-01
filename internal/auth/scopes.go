@@ -14,7 +14,11 @@ const (
 	ScopeResourcesWrite = "resources:write"
 	ScopeLogsRead       = "logs:read"
 	ScopeMetricsRead    = "metrics:read"
-	ScopeAdminIT        = "admin:it"
+	// ScopeBeamsUse is the using tier: discovery of apps published TO the
+	// caller (list_apps / describe_app). Any employee may hold it — it grants
+	// no build, deploy, or inspection capability; the audience is the gate.
+	ScopeBeamsUse = "beams:use"
+	ScopeAdminIT  = "admin:it"
 )
 
 // AllScopes is the scopes_supported list for the RFC 9728 metadata document —
@@ -23,11 +27,12 @@ const (
 // Admin console / an explicitly-scoped IT token), never something the agent
 // channel advertises or a self-registering (DCR) client should obtain. The IT
 // MCP tools still honor admin:it when a token legitimately carries it.
+// ScopeBeamsUse IS included: it is the least-privileged scope of all.
 func AllScopes() []string {
 	return []string{
 		ScopeBeamhallsRead, ScopeBeamsWrite, ScopeBeamsDeploy, ScopeBeamsOperate,
 		ScopeBeamsPromote, ScopeSecretsWrite, ScopeResourcesWrite,
-		ScopeLogsRead, ScopeMetricsRead,
+		ScopeLogsRead, ScopeMetricsRead, ScopeBeamsUse,
 	}
 }
 

@@ -53,6 +53,15 @@ type Config struct {
 	// DefaultAdminRole. Only enable this for an IdP you've confirmed mints
 	// `roles` from a source the token subject cannot control.
 	TrustFlatRolesClaim bool
+	// GroupsClaim names the token claim carrying the caller's IdP group names
+	// (app-audience matching). A dotted path descends one nesting level
+	// ("realm_access.groups"); the value may be a string array or one
+	// space-separated string. Empty disables group audiences entirely — no
+	// groups are read and a group-based audience matches no one. A forged
+	// group can only place a caller inside an audience IT already published
+	// to that group name (it grants no capability), but on a BYO IdP the
+	// claim must still come from a source the token subject cannot control.
+	GroupsClaim string
 }
 
 // Extra* are the keys of the claims the verifier copies into TokenInfo.Extra
@@ -63,6 +72,7 @@ const (
 	ExtraJTI     = "jti"
 	ExtraEmail   = "email"
 	ExtraRoles   = "roles"
+	ExtraGroups  = "groups"
 )
 
 // DefaultAdminRole is the realm role that elevates a caller to IT admin when the
@@ -78,6 +88,16 @@ func RolesOf(info *sdkauth.TokenInfo) []string {
 	}
 	r, _ := info.Extra[ExtraRoles].([]string)
 	return r
+}
+
+// GroupsOf returns the IdP group names the verifier copied into the token
+// info (nil when no groups claim is configured or present).
+func GroupsOf(info *sdkauth.TokenInfo) []string {
+	if info == nil || info.Extra == nil {
+		return nil
+	}
+	g, _ := info.Extra[ExtraGroups].([]string)
+	return g
 }
 
 // HasRole reports whether the token carries the given realm role (empty role => false).
@@ -187,7 +207,42 @@ func (v *Verifier) Verify(ctx context.Context, token string, _ *http.Request) (*
 	if roles := rolesOf(claims, v.cfg.TrustFlatRolesClaim); len(roles) > 0 {
 		info.Extra[ExtraRoles] = roles
 	}
+	if groups := groupsOf(claims, v.cfg.GroupsClaim); len(groups) > 0 {
+		info.Extra[ExtraGroups] = groups
+	}
 	return info, nil
+}
+
+// groupsOf reads the configured groups claim: a string array, or one
+// space-separated string (the shape some IdPs emit). path may descend one
+// nesting level ("realm_access.groups"). Empty path means group audiences are
+// disabled and nothing is read.
+func groupsOf(claims jwt.MapClaims, path string) []string {
+	if path == "" {
+		return nil
+	}
+	var val any = map[string]any(claims)
+	for _, part := range strings.SplitN(path, ".", 2) {
+		m, ok := val.(map[string]any)
+		if !ok {
+			return nil
+		}
+		val = m[part]
+	}
+	switch v := val.(type) {
+	case []any:
+		var out []string
+		for _, g := range v {
+			if s, ok := g.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		return strings.Fields(v)
+	default:
+		return nil
+	}
 }
 
 // rolesOf reads realm roles: Keycloak's nested `realm_access.roles` array,

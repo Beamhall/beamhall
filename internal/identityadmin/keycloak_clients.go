@@ -21,7 +21,10 @@ import (
 type kcClient struct {
 	ID                     string             `json:"id,omitempty"`
 	ClientID               string             `json:"clientId"`
+	Name                   string             `json:"name,omitempty"`
+	Description            string             `json:"description,omitempty"`
 	Protocol               string             `json:"protocol,omitempty"`
+	Enabled                bool               `json:"enabled"`
 	PublicClient           bool               `json:"publicClient"`
 	StandardFlowEnabled    bool               `json:"standardFlowEnabled"`
 	DirectAccessGrants     bool               `json:"directAccessGrantsEnabled"`
@@ -32,6 +35,8 @@ type kcClient struct {
 	WebOrigins             []string           `json:"webOrigins,omitempty"`
 	Attributes             map[string]string  `json:"attributes,omitempty"`
 	ProtocolMappers        []kcProtocolMapper `json:"protocolMappers,omitempty"`
+	DefaultClientScopes    []string           `json:"defaultClientScopes,omitempty"`
+	OptionalClientScopes   []string           `json:"optionalClientScopes,omitempty"`
 }
 
 type kcProtocolMapper struct {
@@ -69,6 +74,7 @@ func (k *Keycloak) CreateClient(ctx context.Context, spec ClientSpec) (Client, e
 	rep := kcClient{
 		ClientID:               spec.ClientID,
 		Protocol:               "openid-connect",
+		Enabled:                true,
 		PublicClient:           false,
 		StandardFlowEnabled:    true,
 		DirectAccessGrants:     false,

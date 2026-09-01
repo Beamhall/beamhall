@@ -76,6 +76,14 @@ type Config struct {
 	// mints `roles` from a source the token subject cannot influence — see
 	// auth.Config.TrustFlatRolesClaim.
 	OAuthTrustFlatRolesClaim bool
+	// OAuthGroupsClaim names the token claim carrying IdP group names for app
+	// audiences (BEAMHALL_OAUTH_GROUPS_CLAIM, default "groups"). Empty
+	// disables group audiences entirely.
+	OAuthGroupsClaim string
+	// UserAutoRegister lets a first valid user-tier (beams:use) token create
+	// its own identity row (BEAMHALL_USER_AUTO_REGISTER, default on) so IT
+	// never hand-registers every employee.
+	UserAutoRegister bool
 
 	// Admin console (OIDC Authorization Code flow). Empty AdminClientID
 	// disables /admin. The console requires the admin:it scope.
@@ -233,6 +241,8 @@ func Load() (Config, error) {
 	c.OAuthAudience = envOr("BEAMHALL_OAUTH_AUDIENCE", "https://"+c.BaseDomain+"/mcp")
 	c.OAuthAdminRole = envOr("BEAMHALL_OAUTH_ADMIN_ROLE", "beamhall-it") // = auth.DefaultAdminRole
 	c.OAuthTrustFlatRolesClaim = envOr("BEAMHALL_OAUTH_TRUST_FLAT_ROLES", "off") == "on"
+	c.OAuthGroupsClaim = envOr("BEAMHALL_OAUTH_GROUPS_CLAIM", "groups")
+	c.UserAutoRegister = envOr("BEAMHALL_USER_AUTO_REGISTER", "on") == "on"
 	for _, sc := range strings.Fields(envOr("BEAMHALL_ADMIN_SCOPES", "openid admin:it")) {
 		c.AdminScopes = append(c.AdminScopes, sc)
 	}

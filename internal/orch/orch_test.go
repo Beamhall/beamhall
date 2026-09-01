@@ -194,7 +194,8 @@ func newWorld(t *testing.T) *world {
 	sched := scheduler.New(st.PauseStore(), func(ctx context.Context, beamID string) error { return nil })
 
 	o := New(st, drv, gw, sched, vault, pep, alog, "bh.example",
-		WithDefaultPauseAfter(2*time.Hour), WithStartupGrace(5*time.Millisecond))
+		WithDefaultPauseAfter(2*time.Hour), WithStartupGrace(5*time.Millisecond),
+		WithUserTier(UserTierConfig{AutoRegister: true, GroupAudiences: true}))
 	return &world{o: o, st: st, drv: drv, gw: gw, sched: sched, bh: bh,
 		admin: mkActor(domain.RoleBeamhallAdmin), build: mkActor(domain.RoleBuilder)}
 }
@@ -202,7 +203,7 @@ func newWorld(t *testing.T) *world {
 func (w *world) deployed(t *testing.T, slug string) *domain.Beam {
 	t.Helper()
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, slug, slug, "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, slug, slug, "", "node")
 	if err != nil {
 		t.Fatalf("CreateBeam: %v", err)
 	}
@@ -228,7 +229,7 @@ func TestDeployHappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	// Two secrets in scope: one beam-scoped, one beamhall-wide.
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 	if err != nil {
 		t.Fatalf("CreateBeam: %v", err)
 	}
@@ -320,7 +321,7 @@ func TestSecretRefsDedupesSharedAndChannelSpecificKey(t *testing.T) {
 	prov := &fakeProvisioner{}
 	WithDatabaseProvisioner(prov)(w.o)
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 	if err != nil {
 		t.Fatalf("CreateBeam: %v", err)
 	}
@@ -357,7 +358,7 @@ func TestSecretRefsDedupesSharedAndChannelSpecificKey(t *testing.T) {
 func TestDeployStartFailure(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "flaky", "Flaky", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "flaky", "Flaky", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +390,7 @@ func TestDeployStartFailure(t *testing.T) {
 func TestSpawnWorkloadCleansUpOnStartFailure(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "flaky", "Flaky", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "flaky", "Flaky", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +493,7 @@ func TestArchivePreviewBuilderSelfServiceLiveGated(t *testing.T) {
 		t.Fatalf("status = %s, want archived", got.Status)
 	}
 	// Archived beam frees its slug: the name can be reused.
-	if _, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "rejected", "rejected", "node"); err != nil {
+	if _, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "rejected", "rejected", "", "node"); err != nil {
 		t.Fatalf("re-create archived slug: %v", err)
 	}
 
@@ -635,7 +636,7 @@ func TestRedeployFinalizeFailureLeavesBeamPointingAtNewRelease(t *testing.T) {
 func TestShowLogsScrubsSecrets(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "leaky", "Leaky", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "leaky", "Leaky", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -722,7 +723,7 @@ func TestDeployBeamFromSource(t *testing.T) {
 	}}
 	WithBuilder(fb)(w.o)
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "src1", "Src1", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "src1", "Src1", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -752,7 +753,7 @@ func TestDeployBeamFromSource(t *testing.T) {
 	}
 
 	// Builder failure lands the beam in failed.
-	beam2, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "src2", "Src2", "node")
+	beam2, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "src2", "Src2", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,7 +767,7 @@ func TestDeployBeamFromSource(t *testing.T) {
 
 	// Without a builder configured the path refuses cleanly.
 	WithBuilder(nil)(w.o)
-	beam3, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "src3", "Src3", "node")
+	beam3, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "src3", "Src3", "", "node")
 	if _, err := w.o.DeployBeamFromSource(ctx, w.build, w.bh.ID, beam3.ID, "/tmp/x"); err == nil ||
 		!strings.Contains(err.Error(), "no build pipeline") {
 		t.Fatalf("want no-pipeline error, got %v", err)
@@ -808,7 +809,7 @@ func TestCreateDatabaseSealsDSNAndInjectsOnDeploy(t *testing.T) {
 	prov := &fakeProvisioner{}
 	WithDatabaseProvisioner(prov)(w.o)
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -885,7 +886,7 @@ func TestConcurrentCreateBeamNeverExceedsQuota(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
 	for i := 0; i < 4; i++ { // MaxBeams=5: fill 4 slots, leaving exactly 1
-		if _, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, fmt.Sprintf("filler-%d", i), "", "node"); err != nil {
+		if _, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, fmt.Sprintf("filler-%d", i), "", "", "node"); err != nil {
 			t.Fatalf("filler CreateBeam %d: %v", i, err)
 		}
 	}
@@ -896,7 +897,7 @@ func TestConcurrentCreateBeamNeverExceedsQuota(t *testing.T) {
 	for i := range 2 {
 		go func(i int) {
 			defer wg.Done()
-			_, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, fmt.Sprintf("race-%d", i), "", "node")
+			_, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, fmt.Sprintf("race-%d", i), "", "", "node")
 			results[i] = err
 		}(i)
 	}
@@ -973,7 +974,7 @@ func TestCreateDatabaseIdempotent(t *testing.T) {
 	ctx := context.Background()
 	prov := &fakeProvisioner{}
 	WithDatabaseProvisioner(prov)(w.o)
-	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 
 	k1, err := w.o.CreateDatabase(ctx, w.build, w.bh.ID, beam.ID, "main")
 	if err != nil {
@@ -998,7 +999,7 @@ func TestDestroyReclaimsDatabase(t *testing.T) {
 	ctx := context.Background()
 	prov := &fakeProvisioner{}
 	WithDatabaseProvisioner(prov)(w.o)
-	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 	if _, err := w.o.CreateDatabase(ctx, w.build, w.bh.ID, beam.ID, "main"); err != nil {
 		t.Fatal(err)
 	}
@@ -1029,7 +1030,7 @@ func TestDestroyReclaimsDatabase(t *testing.T) {
 func TestDestroySweepsUserSecrets(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "node")
+	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker", "", "node")
 
 	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, "API_TOKEN", []byte("s3cr3t")); err != nil {
 		t.Fatalf("SetSecret: %v", err)
@@ -1194,7 +1195,7 @@ func TestDeployCrashOnStartupIsDiagnosed(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "crasher", "Crasher", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "crasher", "Crasher", "", "node")
 	if err != nil {
 		t.Fatalf("CreateBeam: %v", err)
 	}
@@ -1246,7 +1247,7 @@ func TestDeployFailsClosedWhenEgressSyncFails(t *testing.T) {
 
 	w.deployed(t, "ok-beam") // first sync succeeds
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "unprotected", "U", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "unprotected", "U", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1267,7 +1268,7 @@ func TestDeployFailsClosedWhenEgressSyncFails(t *testing.T) {
 func TestSetSecretRejectsPathShapedKey(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "keycheck", "Keycheck", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "keycheck", "Keycheck", "", "node")
 	if err != nil {
 		t.Fatalf("CreateBeam: %v", err)
 	}
@@ -1308,7 +1309,7 @@ func TestBuildOutputAndErrorScrubbed(t *testing.T) {
 	const leaked = "sup3r-secret-dsn-value"
 	WithBuilder(&progressLeakBuilder{leak: leaked})(w.o)
 
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "leaky", "Leaky", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "leaky", "Leaky", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1339,7 +1340,7 @@ func TestBuildOutputAndErrorScrubbed(t *testing.T) {
 func TestSetSecretRefusedOnArchivedBeam(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "gone", "Gone", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "gone", "Gone", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1361,7 +1362,7 @@ func TestSetSecretRefusedOnArchivedBeam(t *testing.T) {
 func TestBootFailsInterruptedBuilds(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "stuck", "Stuck", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "stuck", "Stuck", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1391,7 +1392,7 @@ func TestBootFailsInterruptedBuilds(t *testing.T) {
 func TestPauseTimerClearsOnPermanentRefusal(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "wedged", "Wedged", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "wedged", "Wedged", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}

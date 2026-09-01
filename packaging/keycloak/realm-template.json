@@ -33,6 +33,7 @@
     { "name": "resources:write", "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
     { "name": "logs:read",       "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
     { "name": "metrics:read",    "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
+    { "name": "beams:use",       "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } },
     { "name": "admin:it",        "protocol": "openid-connect", "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" } }
   ],
   "roles": {
@@ -63,7 +64,28 @@
       "redirectUris": ["http://localhost/*", "http://127.0.0.1/*", "http://localhost:*/*", "http://127.0.0.1:*/*"],
       "attributes": { "pkce.code.challenge.method": "S256" },
       "defaultClientScopes": ["beamhall-audience"],
-      "optionalClientScopes": ["beamhalls:read", "beams:write", "beams:deploy", "beams:operate", "beams:promote", "secrets:write", "resources:write", "logs:read", "metrics:read", "admin:it", "offline_access"]
+      "optionalClientScopes": ["beamhalls:read", "beams:write", "beams:deploy", "beams:operate", "beams:promote", "secrets:write", "resources:write", "logs:read", "metrics:read", "beams:use", "admin:it", "offline_access"]
+    },
+    {
+      "clientId": "beamhall-user-agent",
+      "name": "Beamhall user agent (everyone)",
+      "description": "Public PKCE client for employees' own agents: discover and use the apps published to them. Carries no build, deploy, or admin capability.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost/*", "http://127.0.0.1/*", "http://localhost:*/*", "http://127.0.0.1:*/*"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "defaultClientScopes": ["beamhall-audience"],
+      "optionalClientScopes": ["beams:use", "offline_access"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": { "claim.name": "groups", "full.path": "false", "multivalued": "true", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      ]
     },
     {
       "clientId": "beamhall-admin-agent",

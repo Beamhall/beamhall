@@ -55,6 +55,13 @@ type fakeBackplane struct {
 	auditIntact     bool // AdminVerifyAuditChain reports a clean chain when true
 
 	brandingConfigured bool // ShowBranding returns a configured view when true
+
+	// Using-tier knobs: apps ListApps/DescribeApp serve, and whether
+	// auto-registration is on (RegisterUserIdentity refuses when off).
+	apps            []orch.AppView
+	autoRegister    bool
+	groupAudiences  bool
+	registeredUsers []string // subjects RegisterUserIdentity created
 }
 
 func (f *fakeBackplane) record(call string, actor orch.Actor) {
@@ -64,8 +71,8 @@ func (f *fakeBackplane) record(call string, actor orch.Actor) {
 	f.lastActor = actor
 }
 
-func (f *fakeBackplane) CreateBeam(ctx context.Context, actor orch.Actor, beamhallID domain.ID, slug, displayName, runtimeHint string) (*domain.Beam, error) {
-	f.record("CreateBeam:"+string(beamhallID)+":"+slug, actor)
+func (f *fakeBackplane) CreateBeam(ctx context.Context, actor orch.Actor, beamhallID domain.ID, slug, displayName, description, runtimeHint string) (*domain.Beam, error) {
+	f.record("CreateBeam:"+string(beamhallID)+":"+slug+":desc="+description, actor)
 	if f.failWith != nil {
 		return nil, f.failWith
 	}
@@ -175,6 +182,51 @@ func (f *fakeBackplane) ShowBranding(ctx context.Context, actor orch.Actor, beam
 	}
 	return orch.BrandingInfo{}, nil
 }
+
+func (f *fakeBackplane) SetAppAudience(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, spec orch.AudienceSpec) error {
+	f.record(fmt.Sprintf("SetAppAudience:%s:everyone=%t:groups=%d:ids=%d:clear=%t",
+		beamID, spec.Audience.Everyone, len(spec.Audience.Groups), len(spec.Audience.Identities), spec.Clear), actor)
+	return f.failWith
+}
+
+func (f *fakeBackplane) ListApps(ctx context.Context, actor orch.Actor) ([]orch.AppView, error) {
+	f.record("ListApps", actor)
+	return f.apps, nil
+}
+
+func (f *fakeBackplane) DescribeApp(ctx context.Context, actor orch.Actor, app, workspace string) (orch.AppView, error) {
+	f.record("DescribeApp:"+app, actor)
+	var matches []orch.AppView
+	for _, v := range f.apps {
+		if v.App == app && (workspace == "" || v.Workspace == workspace) {
+			matches = append(matches, v)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return orch.AppView{}, orch.ErrAppNotPublished
+	case 1:
+		return matches[0], nil
+	default:
+		e := &orch.AmbiguousAppError{App: app}
+		for _, m := range matches {
+			e.Workspaces = append(e.Workspaces, m.Workspace)
+		}
+		return orch.AppView{}, e
+	}
+}
+
+func (f *fakeBackplane) RegisterUserIdentity(ctx context.Context, issuer, subject, email string) (domain.Identity, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, "RegisterUserIdentity:"+subject)
+	f.registeredUsers = append(f.registeredUsers, subject)
+	f.mu.Unlock()
+	return domain.Identity{ID: domain.ID("auto-" + subject), ExternalSubject: subject,
+		Status: domain.IdentityActive}, nil
+}
+
+func (f *fakeBackplane) UserAutoRegisterEnabled() bool { return f.autoRegister }
+func (f *fakeBackplane) GroupAudiencesEnabled() bool   { return f.groupAudiences }
 
 func (f *fakeBackplane) ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error) {
 	f.record(fmt.Sprintf("ShowLogs:%d", opts.TailN), actor)
@@ -790,14 +842,15 @@ func TestToolListMatchesContract(t *testing.T) {
 	for _, want := range []string{"list_beams", "create_beam", "deploy_beam", "get_repo",
 		"create_database", "set_secret", "show_logs", "pause_preview", "resume_preview",
 		"promote_to_live", "rollback", "show_metrics", "archive_beam", "destroy_beam",
-		"show_branding", "create_queue"} {
+		"show_branding", "list_apps", "describe_app", "create_queue"} {
 		if !got[want] {
 			t.Errorf("builder tool %q missing from the contract", want)
 		}
 	}
 	// The admin surface must NOT leak into a builder's tool list.
 	for _, hidden := range []string{"admin_create_beamhall", "admin_list_beamhalls",
-		"admin_query_audit", "admin_set_branding", "list_pending_promotions", "approve_promotion"} {
+		"admin_query_audit", "admin_set_branding", "admin_set_app_audience",
+		"list_pending_promotions", "approve_promotion"} {
 		if got[hidden] {
 			t.Errorf("admin tool %q leaked into the builder tool list", hidden)
 		}
@@ -873,7 +926,7 @@ func TestCreateBeamHappyPath(t *testing.T) {
 	if !strings.Contains(callText(t, res), `"tracker" created`) {
 		t.Errorf("text: %s", callText(t, res))
 	}
-	if h.bp.calls[0] != "CreateBeam:hall-1:tracker" {
+	if h.bp.calls[0] != "CreateBeam:hall-1:tracker:desc=" {
 		t.Errorf("backplane calls: %v", h.bp.calls)
 	}
 	if h.bp.lastActor.ID != "ident-1" || h.bp.lastActor.TokenJTI != "jti-42" || h.bp.lastActor.ITAdmin {

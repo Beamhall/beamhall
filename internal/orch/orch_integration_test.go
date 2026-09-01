@@ -103,7 +103,7 @@ func TestOrchestratorJunctionVaultToContainer(t *testing.T) {
 
 	// Write the secret through the write-only vault, then deploy.
 	const probeValue = "junction-s3cr3t-via-vault"
-	beam, err := o.CreateBeam(ctx, actor, bh.ID, "probe", "Probe", "node")
+	beam, err := o.CreateBeam(ctx, actor, bh.ID, "probe", "Probe", "", "node")
 	if err != nil {
 		t.Fatalf("CreateBeam: %v", err)
 	}

@@ -105,6 +105,7 @@ func mustCreateBeam(t *testing.T, s *Store, beamhallID domain.ID, slug string) *
 		BeamhallID:        beamhallID,
 		Slug:              slug,
 		DisplayName:       slug,
+		Description:       "what " + slug + " is for",
 		RuntimeHint:       "node",
 		Mode:              domain.ModePreview,
 		State:             domain.StateCreated,

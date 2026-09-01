@@ -125,6 +125,14 @@ func (r *Reconciler) buildScript(policies []Policy) ([]byte, error) {
 		}
 		// (Always-deny is the bridge-independent block above, ahead of this
 		// loop — it already covers this bridge, so no per-bridge repeat here.)
+		// Same-bridge traffic (container↔container and container↔broker inside
+		// one hall) is not egress. Whether it traverses FORWARD/DOCKER-USER at
+		// all depends on br_netfilter — a module Beamhall does not own and
+		// Docker may load at any time — and without this exemption the terminal
+		// DROP below would then sever every intra-hall connection, including
+		// the beams' own Postgres/SMTP broker links. The always-deny set above
+		// still precedes it.
+		fmt.Fprintf(&buf, "-A %s -i %s -o %s -j RETURN\n", chain, p.Bridge, p.Bridge)
 		// Allowlist: permitted destinations RETURN to DOCKER-USER (accepted).
 		for _, cidr := range p.Allow {
 			if !restoreSafe(cidr) {

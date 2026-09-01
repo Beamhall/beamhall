@@ -302,6 +302,43 @@ func runMailRelay(_ []string) error {
 	return nil
 }
 
+// startRealmBaseline additively brings an already-installed bundled realm up
+// to the client-scope/agent-client shape this build needs (the install-time
+// realm import runs only once, so an upgraded appliance learns new scopes and
+// clients here). Retries in the background because the co-located Keycloak may
+// still be importing its realm at boot; idempotent, so a restart is always a
+// safe remedy.
+func startRealmBaseline(ctx context.Context, idp *identityadmin.Keycloak, logger *slog.Logger) {
+	go func() {
+		const every = 30 * time.Second
+		deadline := time.Now().Add(15 * time.Minute)
+		for {
+			res, err := idp.EnsureRealmBaseline(ctx, identityadmin.BeamhallRealmBaseline())
+			if err == nil {
+				if res.Changed() {
+					logger.Info("realm baseline applied",
+						"created_scopes", res.CreatedScopes,
+						"created_clients", res.CreatedClients,
+						"attached_scopes", res.AttachedScopes)
+				} else {
+					logger.Info("realm baseline already current")
+				}
+				return
+			}
+			if time.Now().After(deadline) {
+				logger.Error("realm baseline never converged — the beamhall-user-agent client may be missing, so user-tier agents cannot obtain a token; check the IdP and restart beamhalld", "err", err)
+				return
+			}
+			logger.Warn("realm baseline attempt failed; retrying", "err", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(every):
+			}
+		}
+	}()
+}
+
 // startEmailReconcile runs a background loop that (re)pushes the provider config
 // and per-beam registrations to the bh-mail broker (idempotent, self-healing
 // across broker restarts) and drains its audit ring into the hash chain.
@@ -656,6 +693,7 @@ func run() error {
 			opts = append(opts, orch.WithIdentityAdmin(idp, cfg.IDPSensitiveAdmin))
 			logger.Info("owned-IdP administration enabled", "realm", cfg.IDPAdminRealm,
 				"sensitive_tier", cfg.IDPSensitiveAdmin)
+			startRealmBaseline(ctx, idp, logger)
 		}
 	} else {
 		logger.Info("BEAMHALL_IDP_ADMIN_CLIENT_ID unset — owned-IdP administration disabled (BYO-IdP); admin_* IdP tools return a BYO-IdP notice")
@@ -663,6 +701,12 @@ func run() error {
 	// provision_auth (PLAN §5.10) injects this issuer into beams and enforces that
 	// app clients never carry the Beamhall resource URI as their token audience.
 	opts = append(opts, orch.WithProvisionedAuth(cfg.OAuthIssuer, cfg.OAuthAudience))
+	opts = append(opts, orch.WithUserTier(orch.UserTierConfig{
+		AutoRegister:   cfg.UserAutoRegister,
+		GroupAudiences: cfg.OAuthGroupsClaim != "",
+	}))
+	logger.Info("user tier configured",
+		"auto_register", cfg.UserAutoRegister, "groups_claim", cfg.OAuthGroupsClaim)
 	orchestrator := orch.New(st, drv, gw, sched, vault, pep, auditLog, cfg.BaseDomain, opts...)
 	pauseFn = orchestrator.PauseFunc()
 
@@ -741,6 +785,7 @@ func run() error {
 			JWKSURL:             cfg.OAuthJWKSURL,
 			DiscoveryURL:        cfg.OAuthDiscoveryURL,
 			TrustFlatRolesClaim: cfg.OAuthTrustFlatRolesClaim,
+			GroupsClaim:         cfg.OAuthGroupsClaim,
 		})
 		if err != nil {
 			logger.Error("init token verifier", "err", err)

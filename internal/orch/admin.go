@@ -40,6 +40,29 @@ func (o *Orchestrator) itAudit(ctx context.Context, actor Actor, action string, 
 	return opErr
 }
 
+// itAuditBeam is itAudit for a per-beam IT action, recording the beam id too.
+func (o *Orchestrator) itAuditBeam(ctx context.Context, actor Actor, action string, beamhallID, beamID domain.ID, opErr error) error {
+	status, reason := "ok", ""
+	decision := domain.DecisionAllow
+	if !actor.ITAdmin {
+		decision, status, reason = domain.DecisionDeny, "denied", "requires it_admin"
+	} else if opErr != nil {
+		status, reason = "failed", opErr.Error()
+	}
+	ev := domain.AuditEvent{
+		ActorID: actor.ID, ActorTokenJTI: actor.TokenJTI, BeamhallID: beamhallID, BeamID: beamID,
+		Action: action, Decision: decision, Reason: reason, ResultStatus: status,
+		SourceIP: actor.SourceIP,
+	}
+	if _, err := o.alog.Append(ctx, &ev); err != nil {
+		o.log.Error("audit IT action failed", "action", action, "err", err)
+		if opErr == nil {
+			return fmt.Errorf("%s succeeded but could NOT be recorded on the audit chain: %w — investigate the audit store before continuing", action, err)
+		}
+	}
+	return opErr
+}
+
 func (o *Orchestrator) requireIT(actor Actor) error {
 	if !actor.ITAdmin {
 		return fmt.Errorf("operation requires it_admin")

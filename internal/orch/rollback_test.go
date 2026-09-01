@@ -268,7 +268,7 @@ func TestDestroyArchivesAndFreesQuotaAndSlug(t *testing.T) {
 	}
 
 	// The slug is reusable and quota is freed: re-create "tracker".
-	if _, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker 2", "node"); err != nil {
+	if _, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "tracker", "Tracker 2", "", "node"); err != nil {
 		t.Fatalf("recreate destroyed slug: %v", err)
 	}
 }

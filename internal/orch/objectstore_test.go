@@ -79,7 +79,7 @@ func TestProvisionObjectStoreSealsAndInjects(t *testing.T) {
 	if !w.o.ObjectStoreEnabled() {
 		t.Fatal("object store should be enabled by default once wired")
 	}
-	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "store", "Store", "node")
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "store", "Store", "", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestSetObjectStoreQuotaRequiresIT(t *testing.T) {
 	ctx := context.Background()
 	fp := &fakeObjectStoreProv{}
 	enableObjectStore(w, fp)
-	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "store", "Store", "node")
+	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "store", "Store", "", "node")
 	if _, err := w.o.ProvisionObjectStore(ctx, w.build, w.bh.ID, beam.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestObjectStoreBrokerWiredEnabledByDefault(t *testing.T) {
 func TestObjectStoreProvisionDisabledWithoutBroker(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
-	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "store", "Store", "node")
+	beam, _ := w.o.CreateBeam(ctx, w.build, w.bh.ID, "store", "Store", "", "node")
 	if _, err := w.o.ProvisionObjectStore(ctx, w.build, w.bh.ID, beam.ID); !errors.Is(err, s3.ErrNotEnabled) {
 		t.Fatalf("want s3.ErrNotEnabled with no broker, got %v", err)
 	}

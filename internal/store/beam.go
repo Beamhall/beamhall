@@ -55,6 +55,7 @@ func beamInsertParams(a *domain.Beam) db.InsertBeamParams {
 		BeamhallID:        string(a.BeamhallID),
 		Slug:              a.Slug,
 		DisplayName:       a.DisplayName,
+		Description:       a.Description,
 		RuntimeHint:       a.RuntimeHint,
 		Mode:              string(a.Mode),
 		State:             string(a.State),
@@ -178,6 +179,7 @@ func (s *Store) UpdateBeam(ctx context.Context, a *domain.Beam) error {
 	}
 	return affected(s.q.UpdateBeam(ctx, db.UpdateBeamParams{
 		DisplayName:       a.DisplayName,
+		Description:       a.Description,
 		RuntimeHint:       a.RuntimeHint,
 		Mode:              string(a.Mode),
 		State:             string(a.State),
@@ -203,6 +205,7 @@ func beamFromRow(r db.Beam) domain.Beam {
 		BeamhallID:        domain.ID(r.BeamhallID),
 		Slug:              r.Slug,
 		DisplayName:       r.DisplayName,
+		Description:       r.Description,
 		RuntimeHint:       r.RuntimeHint,
 		Mode:              domain.BeamMode(r.Mode),
 		State:             domain.BeamState(r.State),

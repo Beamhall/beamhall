@@ -1,10 +1,10 @@
 -- name: InsertBeam :exec
 INSERT INTO beams (
-    id, beamhall_id, slug, display_name, runtime_hint, mode, state,
+    id, beamhall_id, slug, display_name, description, runtime_hint, mode, state,
     current_release_id, desired_release_id, live_release_id, live_state,
     security_template, preview_pause_after, resumed_at, git_remote_url, repo_id,
     created_by, created_at, updated_at, status, preview_host
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetBeam :one
 SELECT * FROM beams WHERE id = ?;
@@ -32,7 +32,7 @@ UPDATE beams SET mode = 'live', updated_at = ? WHERE id = ?;
 
 -- name: UpdateBeam :execrows
 UPDATE beams SET
-    display_name = ?, runtime_hint = ?, mode = ?, state = ?,
+    display_name = ?, description = ?, runtime_hint = ?, mode = ?, state = ?,
     current_release_id = ?, desired_release_id = ?,
     live_release_id = ?, live_state = ?, security_template = ?,
     preview_pause_after = ?, resumed_at = ?, git_remote_url = ?, repo_id = ?,

@@ -32,7 +32,7 @@ func (q *Queries) CountLiveBeamsByBeamhall(ctx context.Context, beamhallID strin
 }
 
 const getBeam = `-- name: GetBeam :one
-SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state FROM beams WHERE id = ?
+SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state, description FROM beams WHERE id = ?
 `
 
 func (q *Queries) GetBeam(ctx context.Context, id string) (Beam, error) {
@@ -60,12 +60,13 @@ func (q *Queries) GetBeam(ctx context.Context, id string) (Beam, error) {
 		&i.PreviewHost,
 		&i.LiveReleaseID,
 		&i.LiveState,
+		&i.Description,
 	)
 	return i, err
 }
 
 const getBeamBySlug = `-- name: GetBeamBySlug :one
-SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state FROM beams WHERE beamhall_id = ? AND slug = ? AND status = 'active'
+SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state, description FROM beams WHERE beamhall_id = ? AND slug = ? AND status = 'active'
 `
 
 type GetBeamBySlugParams struct {
@@ -98,17 +99,18 @@ func (q *Queries) GetBeamBySlug(ctx context.Context, arg GetBeamBySlugParams) (B
 		&i.PreviewHost,
 		&i.LiveReleaseID,
 		&i.LiveState,
+		&i.Description,
 	)
 	return i, err
 }
 
 const insertBeam = `-- name: InsertBeam :exec
 INSERT INTO beams (
-    id, beamhall_id, slug, display_name, runtime_hint, mode, state,
+    id, beamhall_id, slug, display_name, description, runtime_hint, mode, state,
     current_release_id, desired_release_id, live_release_id, live_state,
     security_template, preview_pause_after, resumed_at, git_remote_url, repo_id,
     created_by, created_at, updated_at, status, preview_host
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertBeamParams struct {
@@ -116,6 +118,7 @@ type InsertBeamParams struct {
 	BeamhallID        string
 	Slug              string
 	DisplayName       string
+	Description       string
 	RuntimeHint       string
 	Mode              string
 	State             string
@@ -141,6 +144,7 @@ func (q *Queries) InsertBeam(ctx context.Context, arg InsertBeamParams) error {
 		arg.BeamhallID,
 		arg.Slug,
 		arg.DisplayName,
+		arg.Description,
 		arg.RuntimeHint,
 		arg.Mode,
 		arg.State,
@@ -163,7 +167,7 @@ func (q *Queries) InsertBeam(ctx context.Context, arg InsertBeamParams) error {
 }
 
 const listBeamsByBeamhall = `-- name: ListBeamsByBeamhall :many
-SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state FROM beams WHERE beamhall_id = ? AND status = 'active' ORDER BY slug
+SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state, description FROM beams WHERE beamhall_id = ? AND status = 'active' ORDER BY slug
 `
 
 func (q *Queries) ListBeamsByBeamhall(ctx context.Context, beamhallID string) ([]Beam, error) {
@@ -197,6 +201,7 @@ func (q *Queries) ListBeamsByBeamhall(ctx context.Context, beamhallID string) ([
 			&i.PreviewHost,
 			&i.LiveReleaseID,
 			&i.LiveState,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -212,7 +217,7 @@ func (q *Queries) ListBeamsByBeamhall(ctx context.Context, beamhallID string) ([
 }
 
 const listBeamsByState = `-- name: ListBeamsByState :many
-SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state FROM beams WHERE state = ?
+SELECT id, beamhall_id, slug, display_name, runtime_hint, mode, state, current_release_id, desired_release_id, security_template, preview_pause_after, resumed_at, git_remote_url, repo_id, created_by, created_at, updated_at, status, preview_host, live_release_id, live_state, description FROM beams WHERE state = ?
 `
 
 func (q *Queries) ListBeamsByState(ctx context.Context, state string) ([]Beam, error) {
@@ -246,6 +251,7 @@ func (q *Queries) ListBeamsByState(ctx context.Context, state string) ([]Beam, e
 			&i.PreviewHost,
 			&i.LiveReleaseID,
 			&i.LiveState,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -282,7 +288,7 @@ func (q *Queries) PromoteBeam(ctx context.Context, arg PromoteBeamParams) (int64
 
 const updateBeam = `-- name: UpdateBeam :execrows
 UPDATE beams SET
-    display_name = ?, runtime_hint = ?, mode = ?, state = ?,
+    display_name = ?, description = ?, runtime_hint = ?, mode = ?, state = ?,
     current_release_id = ?, desired_release_id = ?,
     live_release_id = ?, live_state = ?, security_template = ?,
     preview_pause_after = ?, resumed_at = ?, git_remote_url = ?, repo_id = ?,
@@ -292,6 +298,7 @@ WHERE id = ?
 
 type UpdateBeamParams struct {
 	DisplayName       string
+	Description       string
 	RuntimeHint       string
 	Mode              string
 	State             string
@@ -313,6 +320,7 @@ type UpdateBeamParams struct {
 func (q *Queries) UpdateBeam(ctx context.Context, arg UpdateBeamParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateBeam,
 		arg.DisplayName,
+		arg.Description,
 		arg.RuntimeHint,
 		arg.Mode,
 		arg.State,

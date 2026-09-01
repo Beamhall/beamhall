@@ -41,9 +41,21 @@ func (s *Server) resolveActor(ctx context.Context, req *sdkmcp.CallToolRequest, 
 	ident, err := s.dir.GetIdentityByIssuerSubject(ctx, issuer, subject)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return orch.Actor{}, fmt.Errorf("identity %q is not registered on this Beamhall appliance — ask IT to register it", subject)
+			// Auto-registration is scoped to the using tier on purpose: a
+			// builder or IT token that resolves to no identity still gets
+			// nothing.
+			if requiredScope == auth.ScopeBeamsUse && s.bp.UserAutoRegisterEnabled() {
+				email, _ := info.Extra[auth.ExtraEmail].(string)
+				ident, err = s.bp.RegisterUserIdentity(ctx, issuer, subject, email)
+				if err != nil {
+					return orch.Actor{}, fmt.Errorf("register identity: %w", err)
+				}
+			} else {
+				return orch.Actor{}, fmt.Errorf("identity %q is not registered on this Beamhall appliance — ask IT to register it", subject)
+			}
+		} else {
+			return orch.Actor{}, fmt.Errorf("resolve identity: %w", err)
 		}
-		return orch.Actor{}, fmt.Errorf("resolve identity: %w", err)
 	}
 	// Enforce the per-identity kill switch (admin_set_identity_status) at the
 	// boundary, not just in the PEP: admin_* tools authorize on actor.ITAdmin
@@ -61,6 +73,7 @@ func (s *Server) resolveActor(ctx context.Context, req *sdkmcp.CallToolRequest, 
 		TokenJTI: jti,
 		ITAdmin:  itAdmin,
 		SourceIP: req.Extra.Header.Get("X-Forwarded-For"),
+		Groups:   auth.GroupsOf(info),
 	}, nil
 }
 

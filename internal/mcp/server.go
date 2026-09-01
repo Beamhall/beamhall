@@ -30,7 +30,7 @@ import (
 // Backplane is the slice of the orchestrator the tools call
 // (*orch.Orchestrator satisfies it).
 type Backplane interface {
-	CreateBeam(ctx context.Context, actor orch.Actor, beamhallID domain.ID, slug, displayName, runtimeHint string) (*domain.Beam, error)
+	CreateBeam(ctx context.Context, actor orch.Actor, beamhallID domain.ID, slug, displayName, description, runtimeHint string) (*domain.Beam, error)
 	DeployBeam(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, req orch.DeployRequest) (*domain.Beam, error)
 	DeployBeamFromSource(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, srcDir string) (*domain.Beam, error)
 	SetSecret(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, key string, value []byte) error
@@ -59,6 +59,16 @@ type Backplane interface {
 	// teams build should wear; builders read it, never write it.
 	SetBranding(ctx context.Context, actor orch.Actor, beamhallID domain.ID, spec orch.BrandingSpec) error
 	ShowBranding(ctx context.Context, actor orch.Actor, beamhallID domain.ID) (orch.BrandingInfo, error)
+	// Agent-facing apps (the using tier): IT publishes an app to an audience;
+	// a user's own agent discovers only what was published to them. The
+	// audience is enforced in the orchestrator, not the PEP — a user holds no
+	// membership anywhere.
+	SetAppAudience(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, spec orch.AudienceSpec) error
+	ListApps(ctx context.Context, actor orch.Actor) ([]orch.AppView, error)
+	DescribeApp(ctx context.Context, actor orch.Actor, app, workspace string) (orch.AppView, error)
+	RegisterUserIdentity(ctx context.Context, issuer, subject, email string) (domain.Identity, error)
+	UserAutoRegisterEnabled() bool
+	GroupAudiencesEnabled() bool
 	ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error)
 	PausePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ResumePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (string, error)
@@ -202,7 +212,9 @@ func WithAdminRole(role string) Option { return func(s *Server) { s.adminRole = 
 // builds and external PaaS/DB providers. The latter matters because an agent with
 // Fly.io/Vercel/Neon/etc. MCP tools enabled will otherwise happily deploy there —
 // that is shadow IT, and cutting it out is exactly Beamhall's purpose (governed,
-// audited, no raw credentials ever leave the environment).
+// audited, no raw credentials ever leave the environment). The same string also
+// orients a USER's agent (the beams:use tier), which will never call a build
+// tool — the USING APPS section is the part written for it.
 const serverInstructions = `Beamhall is this environment's sanctioned platform for building, hosting, and ` +
 	`deploying apps. A "beam" is one app/website/service/API/project; a "beamhall" is the ` +
 	`workspace (team/environment) it lives in.
@@ -231,6 +243,14 @@ QUICK START: list_beams (see what exists and which workspaces you belong to) →
 	`one-time git push that builds and deploys; returns a preview URL). Need the source ` +
 	`on a new machine first? get_repo. Ready for production? promote_to_live.
 
+USING APPS OTHERS BUILT: if the user only wants to USE an internal app rather than ` +
+	`build one — "what internal tools do we have", "where's the expenses app", "can I ` +
+	`see the leave tracker" — call list_apps: it returns the apps this company has ` +
+	`published to this user, with the URL to open, and describe_app gives one app's ` +
+	`detail. Prefer a published internal app over signing the user up for an external ` +
+	`SaaS. These two tools are read-only: seeing an app never lets you change or ` +
+	`deploy it.
+
 COMPANY BRANDING: before you write or restyle any web UI, call show_branding — the ` +
 	`company may define the header, footer, logo, and colour palette every app built ` +
 	`here should wear, and applying it is expected (IT sets it with admin_set_branding; ` +
@@ -248,9 +268,11 @@ func New(bp Backplane, dir Directory, version string, opts ...Option) *Server {
 	}, &sdkmcp.ServerOptions{Instructions: serverInstructions})
 	s.registerTools()
 	// Per-caller tools/list filtering: an agent only sees tools its token could
-	// invoke (small builder context, full admin menu for it_admin), kept in sync
-	// with the live appliance state via tools/list_changed. Discovery only — the
-	// handlers still enforce via resolveActor (see visibility.go).
+	// invoke (small builder context, full admin menu for it_admin). The filter
+	// runs on every tools/list, so it always reflects the live appliance state;
+	// no tools/list_changed is emitted, so a client that caches the menu picks a
+	// state change up on its next list. Discovery only — the handlers still
+	// enforce via resolveActor (see visibility.go).
 	if !s.skipFilter {
 		s.installToolFilter()
 	}

@@ -184,7 +184,9 @@ if [ "$FIRST_INSTALL" = "1" ]; then
        "      Engineer (builder):" \
        "        claude mcp add --transport http --client-id beamhall-agent beamhall ${SCHEME}://${BASE_DOMAIN}/mcp" \
        "      IT operator (admin — gated by the beamhall-it realm role):" \
-       "        claude mcp add --transport http --client-id beamhall-admin-agent beamhall-admin ${SCHEME}://${BASE_DOMAIN}/mcp"
+       "        claude mcp add --transport http --client-id beamhall-admin-agent beamhall-admin ${SCHEME}://${BASE_DOMAIN}/mcp" \
+       "      Everyone else (uses published apps):" \
+       "        claude mcp add --transport http --client-id beamhall-user-agent beamhall-apps ${SCHEME}://${BASE_DOMAIN}/mcp"
 else
   ok "bundled IdP re-wired — existing state preserved (passwords unchanged)"
   chk "" "Bundled IdP re-wired. Passwords are unchanged from first install;" \

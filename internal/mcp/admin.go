@@ -132,6 +132,16 @@ type setBrandingArgs struct {
 	Clear           bool   `json:"clear,omitempty" jsonschema:"remove this scope's branding entirely (a team scope then falls back to the company-wide default); all other fields are ignored"`
 }
 
+type setAppAudienceArgs struct {
+	Beamhall    string   `json:"beamhall" jsonschema:"workspace (beamhall) slug that owns the app — from admin_list_beamhalls"`
+	Beam        string   `json:"beam" jsonschema:"app (beam) slug to publish — from admin_show_beamhall"`
+	Everyone    bool     `json:"everyone,omitempty" jsonschema:"publish to EVERY registered employee on this appliance (they still need a company login); usable alone or combined with groups/identities"`
+	Groups      []string `json:"groups,omitempty" jsonschema:"IdP group names whose members may use the app, e.g. [\"finance\",\"hr\"] — matched against the group claim in the user's token; admin_list_groups shows the bundled IdP's groups"`
+	Identities  []string `json:"identities,omitempty" jsonschema:"identity ids allowed to use the app — from admin_list_identities (NOT usernames or emails)"`
+	Description string   `json:"description,omitempty" jsonschema:"one plain-language line telling users what the app is for, shown by list_apps/describe_app; omit to keep the description the builder set with create_beam"`
+	Clear       bool     `json:"clear,omitempty" jsonschema:"UNPUBLISH — remove the app from every user's list (the inverse of publishing); all other fields are ignored"`
+}
+
 type federateDirectoryArgs struct {
 	Name          string `json:"name" jsonschema:"a label for the federation source, e.g. corp-ad"`
 	Vendor        string `json:"vendor,omitempty" jsonschema:"directory kind: ad (Active Directory) | other (generic LDAP)"`
@@ -300,6 +310,10 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_set_branding",
 		Description: "IT only: define the COMPANY BRANDING the apps built here should wear — header HTML, footer HTML, a logo image, and a colour palette. Omit beamhall to set the company-wide default every workspace inherits; pass a beamhall slug to override it for one team (a field left unset on the override falls back to the company default, field by field — including the logo). Builders read it with show_branding and apply it to the apps they build; they cannot change it (separation of duties, like admin_set_email_senders). Set-and-replace for the text and colours: pass the full set you want each time — a field you omit is cleared for that scope. The logo is the one exception because it is large: omit logo_png_base64 to keep the current logo, pass a new PNG to replace it, or pass clear_logo=true to remove it. Pass clear=true to drop that scope's branding entirely. Beamhall publishes the logo and a palette stylesheet at public URLs immediately (show_branding returns them), and injects the resolved values into each beam as /run/beamhall/brand.json on its NEXT deploy.",
 	}, s.adminSetBranding)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_app_audience",
+		Description: "IT only: PUBLISH an app to the people who should use it. This is the third tier of Beamhall — IT admins run the platform, builders build the apps, and everyone else simply USES what's been published to them through their own AI agent (they connect with the beamhall-user-agent client and see only list_apps/describe_app). Name the workspace + app, then say who: everyone (any registered employee), groups (IdP group names, e.g. finance), identities (specific ids from admin_list_identities), or any combination — the audience is the union of all three. Those people's agents then see the app in list_apps / describe_app and get its live URL; to everyone else the app does not appear to exist. PUBLISHING IS NOT DEPLOYING: the owning team must still run promote_to_live before the URL works — publishing an unpromoted app is allowed and shows to users as \"not live yet\". Audiences are stored in Beamhall, never in your IdP; group names are matched against the group claim in the user's token (admin_list_groups lists the bundled IdP's groups). Set-and-replace: pass the FULL audience every time — anything you omit is dropped. Pass clear=true to UNPUBLISH (the inverse): the app vanishes from every user's list immediately, while the app itself keeps running and anyone already holding its URL can still reach it — publication controls discovery, not the network. Apps are unpublished by default, so nothing is exposed until you run this. Optional description sets the one-line \"what this is for\" users see (it otherwise stays whatever the builder wrote with create_beam).",
+	}, s.adminSetAppAudience)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -380,7 +394,7 @@ func (s *Server) registerAdminTools() {
 	}, s.adminSetMembershipRole)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_deregister_identity",
-		Description: "IT only: remove a registered identity entirely (cleanup of an offboarded principal — the admin_register_identity inverse). Refuses while the identity still has any workspace membership — revoke those first (admin_revoke_membership). Identify by identity_id (from admin_list_identities) or issuer+subject. Audit history referencing the identity is preserved.",
+		Description: "IT only: remove a registered identity entirely (cleanup of an offboarded principal — the admin_register_identity inverse). Refuses while the identity still has any workspace membership — revoke those first (admin_revoke_membership). Identify by identity_id (from admin_list_identities) or issuer+subject. Audit history referencing the identity is preserved. Offboarding? Prefer admin_set_identity_status with status=disabled — that is the kill switch and it survives a still-valid token. Deregistering only deletes the row, and on an appliance with automatic user registration the person's next call simply registers them again.",
 	}, s.adminDeregisterIdentity)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_remove_user_from_group",
@@ -1376,6 +1390,72 @@ func (s *Server) adminSetBranding(ctx context.Context, req *sdkmcp.CallToolReque
 	msg := fmt.Sprintf("branding set for %s (logo %s). Builders see it with show_branding and apply it to the apps they build; the palette stylesheet and logo are live at their public URLs now (show_branding returns them), and each beam picks the values up as /run/beamhall/brand.json on its next deploy_beam.",
 		scopeName, logoState)
 	return text(msg), map[string]any{"scope": scopeName, "logo": logoState}, nil
+}
+
+func (s *Server) adminSetAppAudience(ctx context.Context, req *sdkmcp.CallToolRequest, args setAppAudienceArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	aud := domain.Audience{Everyone: args.Everyone, Groups: args.Groups}
+	for _, id := range args.Identities {
+		aud.Identities = append(aud.Identities, domain.ID(id))
+	}
+	if !args.Clear && aud.IsEmpty() {
+		return nil, nil, fmt.Errorf("an audience of nobody is the same as unpublished — pass everyone=true, groups, or identities; to unpublish, pass clear=true")
+	}
+	spec := orch.AudienceSpec{
+		Audience:       aud,
+		Description:    args.Description,
+		SetDescription: args.Description != "",
+		Clear:          args.Clear,
+	}
+	if err := s.bp.SetAppAudience(ctx, actor, bh.ID, beam.ID, spec); err != nil {
+		return nil, nil, err
+	}
+
+	if args.Clear {
+		msg := fmt.Sprintf("app %q in workspace %q is UNPUBLISHED — it no longer appears in any user's list_apps, and describe_app answers as if it does not exist. The app itself keeps running and its URL still works for anyone who already has it (publication controls discovery, not the network). Publish it again with admin_set_app_audience.",
+			beam.Slug, bh.Slug)
+		return text(msg), map[string]any{"app": beam.Slug, "workspace": bh.Slug, "published": false}, nil
+	}
+
+	var who []string
+	if aud.Everyone {
+		who = append(who, "everyone (any registered employee)")
+	}
+	if len(aud.Groups) > 0 {
+		who = append(who, "groups "+strings.Join(aud.Groups, ", "))
+	}
+	if n := len(aud.Identities); n == 1 {
+		who = append(who, "1 named identity")
+	} else if n > 1 {
+		who = append(who, fmt.Sprintf("%d named identities", n))
+	}
+	msg := fmt.Sprintf("app %q in workspace %q is published to: %s.", beam.Slug, bh.Slug, strings.Join(who, "; "))
+	if beam.LiveState == domain.StateLive {
+		_, live := s.channelURLs(ctx, beam.ID)
+		msg += fmt.Sprintf(" Their agents see it in list_apps now and get its live URL (%s); to everyone else it does not appear to exist.", live)
+	} else {
+		msg += " Their agents see it in list_apps now; to everyone else it does not appear to exist. It is NOT live yet — the team that owns it must run promote_to_live before the URL works; until then users see it listed as \"not live yet\"."
+	}
+	msg += " Change who by re-running with the full audience; unpublish with clear=true."
+	if len(aud.Groups) > 0 && !s.bp.GroupAudiencesEnabled() {
+		msg += " WARNING: this appliance has no group claim configured (BEAMHALL_OAUTH_GROUPS_CLAIM is empty), so the groups you set will never match anyone. Publish to identities or to everyone, or ask the operator to configure the claim."
+	}
+	return text(msg), map[string]any{
+		"app": beam.Slug, "workspace": bh.Slug, "published": true,
+		"everyone": aud.Everyone, "groups": aud.Groups, "identities": len(aud.Identities),
+	}, nil
 }
 
 func (s *Server) adminSetEmailSenders(ctx context.Context, req *sdkmcp.CallToolRequest, args setEmailSendersArgs) (*sdkmcp.CallToolResult, any, error) {

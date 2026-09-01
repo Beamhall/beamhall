@@ -72,6 +72,16 @@ type Beam struct {
 	PreviewHost       string
 	LiveReleaseID     string
 	LiveState         string
+	Description       string
+}
+
+type BeamAudience struct {
+	BeamID       string
+	BeamhallID   string
+	AudienceJson string
+	PublishedBy  string
+	PublishedAt  int64
+	UpdatedAt    int64
 }
 
 type Beamhall struct {

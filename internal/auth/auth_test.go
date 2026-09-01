@@ -206,6 +206,63 @@ func TestFlatRolesClaimTrustedWhenOptedIn(t *testing.T) {
 	}
 }
 
+// TestGroupsClaimExtraction covers the app-audience group source: the
+// configured claim in its two shapes and both nesting levels, and — the
+// security-relevant half — that with no claim configured NOTHING is read even
+// when the token happens to carry a groups claim.
+func TestGroupsClaimExtraction(t *testing.T) {
+	idp := newTestIdP(t)
+	verifierWithClaim := func(claim string) *Verifier {
+		t.Helper()
+		v, err := NewVerifier(Config{
+			Issuer: testIssuer, Audience: testAudience, JWKSURL: idp.srv.URL,
+			GroupsClaim: claim,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	cases := []struct {
+		name   string
+		claim  string
+		mutate func(jwt.MapClaims)
+		want   []string
+	}{
+		{"top-level array", "groups", func(c jwt.MapClaims) {
+			c["groups"] = []any{"finance", "hr"}
+		}, []string{"finance", "hr"}},
+		{"space-separated string", "groups", func(c jwt.MapClaims) {
+			c["groups"] = "finance hr"
+		}, []string{"finance", "hr"}},
+		{"nested path", "realm_access.groups", func(c jwt.MapClaims) {
+			c["realm_access"] = map[string]any{"groups": []any{"finance"}}
+		}, []string{"finance"}},
+		{"claim absent", "groups", nil, nil},
+		{"disabled: empty claim name reads nothing", "", func(c jwt.MapClaims) {
+			c["groups"] = []any{"finance"}
+		}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v := verifierWithClaim(c.claim)
+			info, err := v.Verify(context.Background(), idp.mint("rsa-1", c.mutate), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := GroupsOf(info)
+			if len(got) != len(c.want) {
+				t.Fatalf("GroupsOf = %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("GroupsOf = %v, want %v", got, c.want)
+				}
+			}
+		})
+	}
+}
+
 func TestVerifyRejections(t *testing.T) {
 	idp := newTestIdP(t)
 	v := newVerifier(t, idp)

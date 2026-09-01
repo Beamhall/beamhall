@@ -20,7 +20,7 @@ import (
 // CreateBeam registers a new Beam in a Beamhall (no workload yet). The slug
 // must be DNS-safe — it becomes the live subdomain.
 func (o *Orchestrator) CreateBeam(ctx context.Context, actor Actor, beamhallID domain.ID,
-	slug, displayName, runtimeHint string) (*domain.Beam, error) {
+	slug, displayName, description, runtimeHint string) (*domain.Beam, error) {
 	if err := o.authorize(ctx, actor, policy.ActionCreateBeam, beamhallID, ""); err != nil {
 		return nil, err
 	}
@@ -39,6 +39,7 @@ func (o *Orchestrator) CreateBeam(ctx context.Context, actor Actor, beamhallID d
 			BeamhallID:        beamhallID,
 			Slug:              slug,
 			DisplayName:       displayName,
+			Description:       description,
 			RuntimeHint:       runtimeHint,
 			Mode:              domain.ModePreview,
 			State:             domain.StateCreated,
