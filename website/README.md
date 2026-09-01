@@ -148,7 +148,13 @@ The project in the dashboard is a **Worker** named `beamhall` (`.../workers/
 services/view/beamhall`) serving the static Astro build from `./dist`. The
 `assets` block in `wrangler.jsonc` declares it; `wrangler deploy` uploads it.
 
-**Connect the Git repo.** In Workers & Pages → `beamhall` → Settings → Build:
+**The Git repo is connected, so a push to `main` publishes.** There is no
+separate "deploy" step to withhold: the dashboard build runs on push and the new
+version is live in about a minute (observed twice on 2026-09-01, ~40–50 s from
+push to deployment). Treat pushing a website change to `main` as the outward-facing
+act, and get confirmation before the push, not before `wrangler deploy`.
+
+In Workers & Pages → `beamhall` → Settings → Build:
 
 - **Root directory:** `website`
 - **Build command:** `npm run build`  ← produces `./dist`
