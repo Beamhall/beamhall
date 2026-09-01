@@ -4,7 +4,7 @@
 // into driver file mounts at deploy time, and ScrubberFor decrypts to redact
 // values from logs/metrics. There is deliberately no get-value API an agent can
 // reach — agents set secrets and reference them by key; they never read back a
-// value. See docs/PLAN.md §4 (secrets at rest) and §5.7.
+// value. See PLAN §4 (secrets at rest) and §5.7.
 package secret
 
 import (

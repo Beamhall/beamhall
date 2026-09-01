@@ -2,7 +2,7 @@
 // machine. It is pure: no I/O, no Docker, no MCP, no database. Everything here
 // is the vocabulary the backplane, MCP layer, and Admin UI share.
 //
-// Two invariants drive the model (see docs/PLAN.md §5.2):
+// Two invariants drive the model (see PLAN §5.2):
 //
 //   - SecurityContext is data, not code paths. It is set by IT when a Beamhall
 //     is created, snapshotted into every Release, and is immutable to the agent.
@@ -97,7 +97,7 @@ type Beamhall struct {
 // RuntimeClass selects the OCI runtime / isolation tier for a Beamhall's
 // workloads. runc is the hardened-Docker default; runsc is gVisor (the
 // regulated tier). Firecracker is a future driver behind RuntimeDriver and is
-// intentionally absent here (docs/PLAN.md §3).
+// intentionally absent here (PLAN §3).
 type RuntimeClass string
 
 const (

@@ -157,7 +157,7 @@ over MCP as a persona.
 
 - `scripts/agent-conformance/bh-mcp-proxy.py` — per-identity stdio↔HTTP MCP proxy.
 - `scripts/agent-conformance/{lib.sh,provision.sh,verify.sh,gates.sh,teardown.sh,bh-call.sh}` — harness.
-- `scripts/agent-conformance/auth-isolation.sh` — proves provisioned-auth (PLAN §5.10) audience
+- `scripts/agent-conformance/auth-isolation.sh` — proves provisioned-auth audience
   isolation end-to-end: a beam's own OIDC-client token is **401'd by `/mcp`** (with a positive
   control), plus the provision→show→archive-reclaim lifecycle and the group allowlist.
 - `scripts/agent-conformance/auth-redirect-sync.sh` — proves the provisioned-auth **lifecycle

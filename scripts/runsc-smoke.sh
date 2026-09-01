@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase-0 gate (docs/PLAN.md §3.4, §8): prove a REAL beam survives the full
+# Phase-0 gate (PLAN §3.4, §8): prove a REAL beam survives the full
 # hardened-Docker profile under BOTH runc and gVisor runsc. Run on the target
 # Linux VM after preflight passes.
 #

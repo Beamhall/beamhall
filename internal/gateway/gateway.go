@@ -4,7 +4,7 @@
 // Retires it on pause/destroy. The full desired route set is reconciled to Caddy
 // with an atomic POST /load on every change (the gateway owns Caddy's entire
 // config), and the in-memory set is the source of truth rebuilt on restart from
-// persisted Routes. See docs/PLAN.md §5.6.
+// persisted Routes. See PLAN §5.6.
 //
 //   - preview: <random>.preview.<base>  (a fresh random host on every resume)
 //   - live:    <beam>.<beamhall>.<base>  (stable)

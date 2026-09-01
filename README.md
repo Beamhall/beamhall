@@ -109,7 +109,6 @@ Integration tests (Docker, root, a hardened runtime) are gated behind
 
 | Doc | What it is |
 |---|---|
-| [`docs/PLAN.md`](docs/PLAN.md) | The design contract: architecture, security model, scope, decisions. |
 | [`docs/threat-model.md`](docs/threat-model.md) | The security/sign-off artifact: attack → mitigation → residual → test. |
 | [`website/`](website/) | The public site (Astro → Cloudflare Workers static assets). |
 | [Beamhall vs Dokploy vs Coolify](https://beamhall.com/alternatives/beamhall-vs-dokploy-vs-coolify/) | Where Beamhall sits next to a general-purpose self-hosted PaaS. |

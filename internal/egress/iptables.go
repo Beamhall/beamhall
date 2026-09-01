@@ -4,7 +4,7 @@
 // state on every Reconcile — so drift (and a host reboot) self-heals. This is
 // the enforcement half of the per-Beamhall egress policy; the metadata/host/
 // management always-deny set is applied regardless of any allowlist
-// (SSRF/metadata defense). See docs/PLAN.md §6 and hardest-problem #2.
+// (SSRF/metadata defense). See PLAN §6 and hardest-problem #2.
 //
 // iptables (not nftables) per the 2026 hardening findings. Rules match on the
 // inbound bridge interface (-i br...), i.e. packets leaving a container, so

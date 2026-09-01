@@ -4,7 +4,7 @@ The one-command "watch Beamhall work" story: an AI agent, holding only a scoped
 OAuth token and **never a raw credential**, builds and operates a real internal
 beam — a small request tracker backed by a managed Postgres database.
 
-It exercises the whole product (PLAN §7) against a *running appliance* through
+It exercises the whole product against a *running appliance* through
 the real MCP tool contract:
 
 ```

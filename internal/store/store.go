@@ -1,7 +1,7 @@
 // Package store is the SQLite-backed control-plane store: the durable record
 // of Beamhalls, beams, builds, releases, routes, resources, secrets metadata,
 // the audit log, and the scheduler's armed pause deadlines. It is the
-// appliance's own state — deployed beams still get real Postgres (docs/PLAN.md
+// appliance's own state — deployed beams still get real Postgres (PLAN
 // §4).
 //
 // Storage decisions (also documented in migrations/0001_init.sql):

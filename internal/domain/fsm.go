@@ -3,7 +3,7 @@ package domain
 import "fmt"
 
 // BeamState is the lifecycle state of a Beam. Mode (preview|live) is orthogonal
-// and gates which transitions are legal. See docs/PLAN.md §5.4.
+// and gates which transitions are legal. See PLAN §5.4.
 type BeamState string
 
 const (

@@ -4,7 +4,7 @@
 #
 #   sudo bash scripts/lab-bootstrap.sh
 #
-# Installs and configures the runtime baseline from docs/PLAN.md §3/§7:
+# Installs and configures the runtime baseline from PLAN §3/§7:
 #   - Docker engine + runc (>= 1.2.8) from the distro repo
 #   - userns-remap = default (auto-creates dockremap + subuid/subgid ranges)
 #   - gVisor runsc registered as a Docker runtime (the regulated tier)

@@ -9,7 +9,7 @@
 > Status legend: ✅ built & lab-verified · 🟡 planned / pilot-gated · 🔵 decision pending
 >
 > Deeper references: `docs/threat-model.md` (security sign-off artifact),
-> `docs/PLAN.md` (design contract), `demo/README.md` (the working demo).
+> `demo/README.md` (the working demo).
 
 ---
 
@@ -270,5 +270,4 @@ These are open and directly shape priorities — your answers turn into stories:
 - `docs/threat-model.md` — trust boundaries, hardening profile, the
   "agent cannot" proofs, CIS Docker mapping, residual-risk statement.
 - `demo/README.md` — the end-to-end demo you can run yourself.
-- `docs/PLAN.md` — the full design contract and phased plan.
 - `packaging/README.md` — binaries, systemd install, and VM image baking.

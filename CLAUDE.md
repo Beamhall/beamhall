@@ -13,8 +13,10 @@ maintainer's local state; work from the public docs.
 1. **`local-docs/STATUS.md`** — the source of truth for *progress*: what's done,
    what's next, lab access, and exact test commands. (The in-session task list
    does NOT persist between sessions; STATUS.md does.)
-2. **`docs/PLAN.md`** — the *design contract*: architecture, security model, MVP
-   scope, phased plan, locked decisions, and findings baked in.
+2. **`local-docs/PLAN.md`** — the *design contract*: architecture, security
+   model, scope, locked decisions, and findings baked in. Maintainer-local since
+   2026-08-31 (strategy docs are not published); code comments still cite it as
+   "PLAN §x.y".
 3. **`local-docs/lab-phase0-validation.md`** — hardware evidence + bugs the lab
    caught.
 4. **`docs/threat-model.md`** — customer-facing security doc; every mitigation
@@ -91,8 +93,8 @@ it. Whenever you change code/design or learn something, update:
   any decision. This is what the next agent reads first.
 - **`local-docs/lab-phase0-validation.md`** — append every new lab finding,
   **gotcha**, or bug (with the fix and why it was invisible to unit tests).
-- **`docs/PLAN.md`** — reflect any design/scope change, last-minute decision, or
-  resolved open question (PLAN §10).
+- **`local-docs/PLAN.md`** — reflect any design/scope change, last-minute
+  decision, or resolved open question (PLAN §10).
 
 Prefer a short pointer/bullet over prose — enough for the next agent to follow a
 coherent train of thought, not a re-explanation of how everything works.

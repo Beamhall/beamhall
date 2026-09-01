@@ -3,7 +3,7 @@
 // resume, not idle time). Deadlines are absolute and persisted, so they survive
 // a backplane restart: on boot the scheduler pauses whatever should have paused
 // during downtime (deadline already passed) and re-schedules the rest — without
-// pausing everything and without running previews forever. See docs/PLAN.md §5.6
+// pausing everything and without running previews forever. See PLAN §5.6
 // and hardest-problem #3.
 //
 // The scheduler is generic over absolute deadlines; the orchestrator computes

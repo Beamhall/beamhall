@@ -62,7 +62,6 @@ A PR that quietly widens the agent's blast radius will not be merged.
   reviews, issue numbers, or pending work in code comments.
 - Keep the documentation current. A change isn't complete until the relevant doc
   reflects it:
-  - `docs/PLAN.md` — design/scope changes.
   - `docs/threat-model.md` — any change touching the security posture, with the
     mitigation cited to a test.
   - The website under `website/` if a public-facing security claim changes.

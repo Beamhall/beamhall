@@ -1,4 +1,4 @@
--- 0001_init.sql — Beamhall control-plane schema (see docs/PLAN.md §5.2).
+-- 0001_init.sql — Beamhall control-plane schema (see PLAN §5.2).
 --
 -- Conventions (enforced by the store wrapper, internal/store):
 --   * TEXT id columns are ULIDs. Pointer columns use '' (never NULL) for

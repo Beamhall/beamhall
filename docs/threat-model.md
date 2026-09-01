@@ -3,8 +3,8 @@
 **Audience:** the IT/security team evaluating Beamhall for a regulated or
 security-conscious environment. This document states what Beamhall defends, how,
 and — explicitly — the residual risk it does not eliminate. The honesty here is
-deliberate: it is the artifact a security team signs off on (PLAN §8 Phase 0
-gate), and every mitigation below is exercised by an automated test (the
+deliberate: it is the artifact a security team signs off on, and every
+mitigation below is exercised by an automated test (the
 negative-security suite, `internal/e2e/TestAgentCannot`) or verified on the lab
 appliance (the maintainer's lab-validation record; available on request).
 

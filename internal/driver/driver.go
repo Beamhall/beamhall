@@ -2,7 +2,7 @@
 // orchestrator depends on to build, run, and observe workloads. Docker is the
 // only MVP implementation; Kubernetes (and, if a regulated partner's security
 // review demands it, Firecracker) can be added later WITHOUT changing the MCP
-// tool contract or the backplane services. See docs/PLAN.md §5.3.
+// tool contract or the backplane services. See PLAN §5.3.
 //
 // Deliberately, nothing here mentions MCP, OAuth, or the backplane. The contract
 // is decoupled so the seam stays stable. The Docker driver applies the hardening

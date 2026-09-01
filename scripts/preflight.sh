@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Beamhall appliance preflight — verifies the host meets the hardened-Docker
-# baseline (docs/PLAN.md §2, §3, §7 supported-systems matrix) BEFORE installing
+# baseline (PLAN §2, §3, §7 supported-systems matrix) BEFORE installing
 # beamhalld. Targets Ubuntu 24.04 LTS / Debian 12. Run as root on the target VM:
 #
 #   sudo bash scripts/preflight.sh            # baseline (runc tier)
