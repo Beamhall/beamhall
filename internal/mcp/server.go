@@ -55,6 +55,10 @@ type Backplane interface {
 	// an external S3. The broker holds + persists any external credential.
 	SetObjectStoreProvider(ctx context.Context, actor orch.Actor, endpoint, region, bucket, accessKey, secretKey string, forcePathStyle, useSSL bool) error
 	SetObjectStoreQuota(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, maxBytes int64) error
+	// Company branding: IT-set look (header/footer/logo/palette) the apps
+	// teams build should wear; builders read it, never write it.
+	SetBranding(ctx context.Context, actor orch.Actor, beamhallID domain.ID, spec orch.BrandingSpec) error
+	ShowBranding(ctx context.Context, actor orch.Actor, beamhallID domain.ID) (orch.BrandingInfo, error)
 	ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error)
 	PausePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ResumePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (string, error)
@@ -143,6 +147,9 @@ type Directory interface {
 // fallback covers tiny/no-VCS beams; bigger sources use the git remote).
 const maxTarballBytes = 8 << 20
 
+// maxLogoBytes caps the admin_set_branding logo upload.
+const maxLogoBytes = 1 << 20
+
 // Compile-time checks that the real backplane satisfies the seams.
 var (
 	_ Backplane = (*orch.Orchestrator)(nil)
@@ -222,7 +229,12 @@ DO NOT deploy or host the user's app anywhere else, and do NOT wire external inf
 QUICK START: list_beams (see what exists and which workspaces you belong to) → ` +
 	`create_beam (register the app) → deploy_beam (call it with no source to get a ` +
 	`one-time git push that builds and deploys; returns a preview URL). Need the source ` +
-	`on a new machine first? get_repo. Ready for production? promote_to_live.`
+	`on a new machine first? get_repo. Ready for production? promote_to_live.
+
+COMPANY BRANDING: before you write or restyle any web UI, call show_branding — the ` +
+	`company may define the header, footer, logo, and colour palette every app built ` +
+	`here should wear, and applying it is expected (IT sets it with admin_set_branding; ` +
+	`builders cannot change it).`
 
 func New(bp Backplane, dir Directory, version string, opts ...Option) *Server {
 	s := &Server{bp: bp, dir: dir, log: slog.Default(), adminRole: auth.DefaultAdminRole}

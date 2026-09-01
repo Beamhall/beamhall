@@ -56,6 +56,14 @@ keeping both untrusted populations inside their boundary.
   `admin:it`, …). *Which* beamhall a caller may act in is data-driven in the
   backplane (membership), never encoded in the token — so a token cannot grant
   cross-beamhall access even with every scope.
+- **IT-authored branding HTML runs in the workload's origin, never the control
+  origin.** `admin_set_branding` lets IT inject header/footer HTML into the
+  apps teams build; IT is already inside the trust base, so sanitizing that
+  HTML is a documented non-goal. The control plane's own `/brand/` routes
+  serve only `image/png` (magic-checked; SVG rejected — an SVG is an active
+  document) and `text/css` (palette values charset-validated at write time),
+  both with `nosniff`, so nothing IT uploads can script the origin that hosts
+  `/admin` and `/mcp`.
 
 ## 3. Host baseline (operator responsibility)
 

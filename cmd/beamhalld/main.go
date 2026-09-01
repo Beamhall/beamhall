@@ -27,6 +27,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/audit"
 	"github.com/Beamhall/beamhall/internal/auth"
 	"github.com/Beamhall/beamhall/internal/backup"
+	"github.com/Beamhall/beamhall/internal/brand"
 	"github.com/Beamhall/beamhall/internal/build"
 	"github.com/Beamhall/beamhall/internal/config"
 	"github.com/Beamhall/beamhall/internal/domain"
@@ -719,6 +720,10 @@ func run() error {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
+
+	// Public branding assets (logo + palette CSS) — served regardless of IdP
+	// state so branded app pages render even mid-setup.
+	mux.Handle("/brand/", brand.New(orchestrator, logger).Handler())
 
 	const metadataPath = "/.well-known/oauth-protected-resource"
 	if cfg.OAuthIssuer == "" {

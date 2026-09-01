@@ -15,6 +15,19 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Added
+- **Company branding.** IT defines the header, footer, logo, and colour palette
+  the apps built here should wear with the new `admin_set_branding` tool —
+  company-wide, or per workspace as a field-by-field override — and building
+  agents read the resolved view with the new `show_branding` tool and apply it
+  to the UIs they build. The appliance serves the logo and a hot-linkable
+  palette stylesheet (`--brand-*` CSS custom properties) at public URLs on the
+  base domain, so an IT palette change reaches running apps with no redeploy,
+  and injects the resolved values into every workload as
+  `/run/beamhall/brand.json` from its next deploy. Branding is always current,
+  not pinned to a release: a rollback brings back the old build wearing
+  today's branding. Logos are PNG only (max 1 MB) and ride the standard backup.
+
 ## [0.5.1] - 2026-08-31
 
 A hardening release: a second adversarial verification pass over the control

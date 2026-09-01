@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -114,6 +116,20 @@ type setObjectStoreQuotaArgs struct {
 	Beamhall string `json:"beamhall" jsonschema:"beamhall slug"`
 	Beam     string `json:"beam" jsonschema:"beam slug whose object-storage quota to set"`
 	MaxBytes int64  `json:"max_bytes" jsonschema:"per-beam storage cap in bytes across all channels (preview + production); 0 = unlimited"`
+}
+
+type setBrandingArgs struct {
+	Beamhall        string `json:"beamhall,omitempty" jsonschema:"beamhall (workspace) slug to brand; OMIT for the company-wide default every beamhall inherits"`
+	HeaderHTML      string `json:"header_html,omitempty" jsonschema:"HTML snippet apps render at the top of every page (e.g. a company bar); max 16 KB"`
+	FooterHTML      string `json:"footer_html,omitempty" jsonschema:"HTML snippet apps render at the bottom of every page (e.g. a legal notice); max 16 KB"`
+	PrimaryColor    string `json:"primary_color,omitempty" jsonschema:"main brand colour as CSS, e.g. #0B5FFF; apps read it as --brand-primary"`
+	SecondaryColor  string `json:"secondary_color,omitempty" jsonschema:"secondary brand colour; --brand-secondary"`
+	AccentColor     string `json:"accent_color,omitempty" jsonschema:"accent/highlight colour; --brand-accent"`
+	BackgroundColor string `json:"background_color,omitempty" jsonschema:"page background colour; --brand-background"`
+	TextColor       string `json:"text_color,omitempty" jsonschema:"body text colour; --brand-text"`
+	LogoPNGBase64   string `json:"logo_png_base64,omitempty" jsonschema:"company logo as a base64-encoded PNG (max 1 MB; PNG only, no SVG). OMIT to KEEP the current logo — the one field omission does not clear"`
+	ClearLogo       bool   `json:"clear_logo,omitempty" jsonschema:"remove this scope's logo, leaving its header/footer/colours in place"`
+	Clear           bool   `json:"clear,omitempty" jsonschema:"remove this scope's branding entirely (a team scope then falls back to the company-wide default); all other fields are ignored"`
 }
 
 type federateDirectoryArgs struct {
@@ -280,6 +296,10 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_set_object_store_quota",
 		Description: "IT only: cap how much a beam may store across its preview + production buckets (object storage from provision_object_store), so one beam can't fill the shared local store. Pass max_bytes (0 = unlimited). The beam must already have provision_object_store. Set-and-replace — re-run with a new cap to change it.",
 	}, s.adminSetObjectStoreQuota)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_branding",
+		Description: "IT only: define the COMPANY BRANDING the apps built here should wear — header HTML, footer HTML, a logo image, and a colour palette. Omit beamhall to set the company-wide default every workspace inherits; pass a beamhall slug to override it for one team (a field left unset on the override falls back to the company default, field by field — including the logo). Builders read it with show_branding and apply it to the apps they build; they cannot change it (separation of duties, like admin_set_email_senders). Set-and-replace for the text and colours: pass the full set you want each time — a field you omit is cleared for that scope. The logo is the one exception because it is large: omit logo_png_base64 to keep the current logo, pass a new PNG to replace it, or pass clear_logo=true to remove it. Pass clear=true to drop that scope's branding entirely. Beamhall publishes the logo and a palette stylesheet at public URLs immediately (show_branding returns them), and injects the resolved values into each beam as /run/beamhall/brand.json on its NEXT deploy.",
+	}, s.adminSetBranding)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -1291,6 +1311,71 @@ func (s *Server) adminSetObjectStoreQuota(ctx context.Context, req *sdkmcp.CallT
 	}
 	return text(fmt.Sprintf("beam %q object-storage quota set to %d bytes.", beam.Slug, args.MaxBytes)),
 		map[string]any{"max_bytes": args.MaxBytes}, nil
+}
+
+func (s *Server) adminSetBranding(ctx context.Context, req *sdkmcp.CallToolRequest, args setBrandingArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	scopeID := domain.FacilityScope
+	scopeName := "the company-wide default"
+	if args.Beamhall != "" {
+		bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+		if err != nil {
+			return nil, nil, err
+		}
+		scopeID, scopeName = bh.ID, fmt.Sprintf("beamhall %q", bh.Slug)
+	}
+	spec := orch.BrandingSpec{
+		Branding: domain.Branding{
+			HeaderHTML:      args.HeaderHTML,
+			FooterHTML:      args.FooterHTML,
+			PrimaryColor:    args.PrimaryColor,
+			SecondaryColor:  args.SecondaryColor,
+			AccentColor:     args.AccentColor,
+			BackgroundColor: args.BackgroundColor,
+			TextColor:       args.TextColor,
+		},
+		ClearLogo: args.ClearLogo,
+		Clear:     args.Clear,
+	}
+	if args.LogoPNGBase64 != "" {
+		// Reject on encoded length before decoding, then decode through a
+		// bounded reader — same defense as deploy_beam's source_tarball.
+		if base64.StdEncoding.DecodedLen(len(args.LogoPNGBase64)) > maxLogoBytes {
+			return nil, nil, fmt.Errorf("logo_png_base64 exceeds %d MB — use a smaller PNG", maxLogoBytes>>20)
+		}
+		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(args.LogoPNGBase64))
+		raw, err := io.ReadAll(io.LimitReader(dec, maxLogoBytes+1))
+		if err != nil {
+			return nil, nil, fmt.Errorf("logo_png_base64 is not valid base64: %w", err)
+		}
+		if len(raw) > maxLogoBytes {
+			return nil, nil, fmt.Errorf("logo_png_base64 exceeds %d MB — use a smaller PNG", maxLogoBytes>>20)
+		}
+		spec.LogoPNG = raw
+	}
+	if err := s.bp.SetBranding(ctx, actor, scopeID, spec); err != nil {
+		return nil, nil, err
+	}
+	if args.Clear {
+		msg := fmt.Sprintf("branding cleared for %s — beamhalls with no override of their own now have no branding.", scopeName)
+		if scopeID != domain.FacilityScope {
+			msg = fmt.Sprintf("branding cleared for %s — it now inherits the company-wide default.", scopeName)
+		}
+		return text(msg), map[string]any{"scope": scopeName, "cleared": true}, nil
+	}
+	logoState := "kept"
+	switch {
+	case spec.LogoPNG != nil:
+		logoState = "replaced"
+	case args.ClearLogo:
+		logoState = "removed"
+	}
+	msg := fmt.Sprintf("branding set for %s (logo %s). Builders see it with show_branding and apply it to the apps they build; the palette stylesheet and logo are live at their public URLs now (show_branding returns them), and each beam picks the values up as /run/beamhall/brand.json on its next deploy_beam.",
+		scopeName, logoState)
+	return text(msg), map[string]any{"scope": scopeName, "logo": logoState}, nil
 }
 
 func (s *Server) adminSetEmailSenders(ctx context.Context, req *sdkmcp.CallToolRequest, args setEmailSendersArgs) (*sdkmcp.CallToolResult, any, error) {

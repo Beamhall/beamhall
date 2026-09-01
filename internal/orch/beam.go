@@ -376,6 +376,7 @@ func (o *Orchestrator) spawnWorkload(ctx context.Context, beamhallID, beamID, re
 		Security:  profileOf(sc),
 		Resources: limitsOf(sc),
 		Secrets:   mounts,
+		Bindings:  o.brandingBinding(ctx, bh),
 		Port:      o.beamPort,
 	})
 	if err != nil {

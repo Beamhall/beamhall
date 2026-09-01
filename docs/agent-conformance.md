@@ -164,6 +164,15 @@ over MCP as a persona.
   hooks** live: redirects sync to the host on deploy, empty on pause, re-sync to the rotated host
   on resume; promote mirrors a **distinct** live client (own audience + own secret + carried group
   allowlist); destroy reclaims both channel clients. Deploys build-free by pinning an in-hall image.
+- `scripts/agent-conformance/email-delivery.sh` — email facility end-to-end: IT enables the
+  provider, builder provisions, IT curates senders, strict-STARTTLS send, spoof rejection,
+  broker isolation, destroy-reclaim.
+- `scripts/agent-conformance/object-store.sh` — object-store facility end-to-end against the
+  bh-objstore broker.
+- `scripts/agent-conformance/branding.sh` — company branding: IT sets the facility default +
+  a team override (`admin_set_branding`), builders read the merged view (`show_branding`),
+  cross-hall reads and builder writes are denied, the gateway serves `brand.css` + the logo,
+  and clearing the override falls back with no redeploy.
 - `scripts/agent-conformance/env.example` — secrets template (the real `.env` is gitignored).
 - `.mcp.json` — the four persona servers.
 - `.claude/agents/bh-{admin-alice,admin-bob,builder-carol,builder-dave}.md` — the personas.

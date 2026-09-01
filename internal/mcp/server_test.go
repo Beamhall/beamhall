@@ -53,6 +53,8 @@ type fakeBackplane struct {
 	objStoreEnabled bool
 	objStoreWired   bool
 	auditIntact     bool // AdminVerifyAuditChain reports a clean chain when true
+
+	brandingConfigured bool // ShowBranding returns a configured view when true
 }
 
 func (f *fakeBackplane) record(call string, actor orch.Actor) {
@@ -157,6 +159,21 @@ func (f *fakeBackplane) SetObjectStoreProvider(ctx context.Context, actor orch.A
 func (f *fakeBackplane) SetObjectStoreQuota(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, maxBytes int64) error {
 	f.record("SetObjectStoreQuota", actor)
 	return nil
+}
+
+func (f *fakeBackplane) SetBranding(ctx context.Context, actor orch.Actor, beamhallID domain.ID, spec orch.BrandingSpec) error {
+	f.record(fmt.Sprintf("SetBranding:%s:logo=%d", beamhallID, len(spec.LogoPNG)), actor)
+	return nil
+}
+
+func (f *fakeBackplane) ShowBranding(ctx context.Context, actor orch.Actor, beamhallID domain.ID) (orch.BrandingInfo, error) {
+	f.record("ShowBranding:"+string(beamhallID), actor)
+	if f.brandingConfigured {
+		return orch.BrandingInfo{Configured: true, Scope: "facility", PrimaryColor: "#0B5FFF",
+			CSSURL: "https://bh.example/brand/ops/brand.css",
+			LogoURL: "https://bh.example/brand/ops/logo-abcd1234.png"}, nil
+	}
+	return orch.BrandingInfo{}, nil
 }
 
 func (f *fakeBackplane) ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error) {
@@ -773,14 +790,14 @@ func TestToolListMatchesContract(t *testing.T) {
 	for _, want := range []string{"list_beams", "create_beam", "deploy_beam", "get_repo",
 		"create_database", "set_secret", "show_logs", "pause_preview", "resume_preview",
 		"promote_to_live", "rollback", "show_metrics", "archive_beam", "destroy_beam",
-		"create_queue"} {
+		"show_branding", "create_queue"} {
 		if !got[want] {
 			t.Errorf("builder tool %q missing from the contract", want)
 		}
 	}
 	// The admin surface must NOT leak into a builder's tool list.
 	for _, hidden := range []string{"admin_create_beamhall", "admin_list_beamhalls",
-		"admin_query_audit", "list_pending_promotions", "approve_promotion"} {
+		"admin_query_audit", "admin_set_branding", "list_pending_promotions", "approve_promotion"} {
 		if got[hidden] {
 			t.Errorf("admin tool %q leaked into the builder tool list", hidden)
 		}

@@ -84,8 +84,22 @@ For many users a week, drive these from the agent in a loop, or use the
 | `admin_set_membership_role` | routine | change a member's role in place (e.g. `viewer`→`builder`) |
 | `admin_set_identity_status` | routine | `disabled` = per-principal kill switch (the identity keeps its row + audit history but **every** authorization fails); `active` restores it |
 | `admin_set_egress` | routine | set a workspace's egress policy (`deny_all`/`allowlist`) |
+| `admin_set_branding` | routine | define the company branding (header/footer HTML, logo, colour palette) apps built here should wear — company-wide, or per workspace as a field-by-field override |
 | `admin_set_security_context` | **sensitive** | change a workspace's runtime isolation class (`runc`↔`runsc`) — alters the hardening posture, four-eyes |
 | `admin_list_releases` | routine (read) | a beam's production-release history (`v1,v2,…`) — the `to_version` targets for `rollback` |
+
+#### Company branding
+
+`admin_set_branding` with no `beamhall` sets the company-wide default; with a
+slug it overrides one workspace, field by field (an unset field — the logo
+included — falls back to the default). Text and colours are set-and-replace;
+the logo is kept unless replaced or removed with `clear_logo`, and `clear`
+drops a scope entirely. Builders read the resolved view with `show_branding`
+and cannot change it (separation of duties). The appliance publishes the logo
+and a hot-linkable palette stylesheet (`--brand-*` CSS custom properties) at
+public URLs on the base domain — a palette change reaches running apps with no
+redeploy — and injects the resolved values into each workload as
+`/run/beamhall/brand.json` on its next deploy.
 
 ### Audit (the regulated trail, now MCP-readable)
 

@@ -57,6 +57,11 @@ const (
 	// role-matrix entries.
 	ActionProvisionObjectStore Action = "provision_object_store"
 	ActionShowObjectStore      Action = "show_object_store"
+	// Company branding: IT-set facility config (admin_set_branding is an
+	// admin:it action via requireIT/itAudit, not a role-matrix entry). The
+	// builder read is matrix-gated so a member of one hall cannot read
+	// another's override.
+	ActionShowBranding Action = "show_branding"
 )
 
 // Forbidden actions: hard-denied for every role, including it_admin, on the
@@ -92,6 +97,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionShowAuth:        true,
 		ActionShowEmail:       true,
 		ActionShowObjectStore: true,
+		ActionShowBranding:    true,
 	},
 	domain.RoleBuilder: {
 		ActionReadBeamhall:   true,
@@ -118,6 +124,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionShowEmail:            true,
 		ActionProvisionObjectStore: true,
 		ActionShowObjectStore:      true,
+		ActionShowBranding:         true,
 	},
 	domain.RoleBeamhallAdmin: {
 		ActionReadBeamhall:         true,
@@ -140,6 +147,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionShowEmail:            true,
 		ActionProvisionObjectStore: true,
 		ActionShowObjectStore:      true,
+		ActionShowBranding:         true,
 	},
 }
 

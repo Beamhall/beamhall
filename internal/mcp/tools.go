@@ -123,6 +123,10 @@ type showLogsArgs struct {
 	TailLines int    `json:"tail_lines,omitempty" jsonschema:"number of trailing log lines (default 200)"`
 }
 
+type showBrandingArgs struct {
+	Beamhall string `json:"beamhall" jsonschema:"beamhall (workspace) slug whose company branding to read"`
+}
+
 func text(msg string) *sdkmcp.CallToolResult {
 	return &sdkmcp.CallToolResult{Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: msg}}}
 }
@@ -134,7 +138,7 @@ func (s *Server) registerTools() {
 	}, s.listBeams)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "create_beam",
-		Description: "Register a new beam — the user's app/website/service/API/project — in a beamhall (workspace). This is how you stand up a new app in this environment (not local hosting, not an external provider). Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). Shelve a beam that didn't pan out with archive_beam.",
+		Description: "Register a new beam — the user's app/website/service/API/project — in a beamhall (workspace). This is how you stand up a new app in this environment (not local hosting, not an external provider). Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). If the app has a web UI, call show_branding for this beamhall first — the company may define the header, footer, logo, and colour palette it should use. Shelve a beam that didn't pan out with archive_beam.",
 	}, s.createBeam)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "deploy_beam",
@@ -172,6 +176,10 @@ func (s *Server) registerTools() {
 		Name:        "show_object_store",
 		Description: "Read-only: show whether this beam has object storage provisioned, the in-hall S3 endpoint and region it uses, and its per-channel buckets (preview/production) with each channel's storage quota — without ever revealing the access key or secret. Use it to inspect the wiring or debug an upload.",
 	}, s.showObjectStore)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "show_branding",
+		Description: "Read-only: get the COMPANY BRANDING your app should wear — the header and footer HTML, the logo URL, and the colour palette IT has defined for this beamhall (a per-team override layered field-by-field over the company-wide default). Call this BEFORE you write or restyle any web UI and apply what it returns: link the returned css_url (or copy its CSS custom properties — --brand-primary, --brand-secondary, --brand-accent, --brand-background, --brand-text) instead of inventing colours; put header_html at the top of every page and footer_html at the bottom; render logo_url as an <img> in the header. The stylesheet is hot-linkable, so an IT palette change reaches a running app with no redeploy. Your workload also gets the same values as the file /run/beamhall/brand.json from its next deploy_beam. IT sets this with admin_set_branding — builders cannot change it (separation of duties, like the sign-in group allowlist). If nothing is configured it says so, and you are free to design as you see fit.",
+	}, s.showBranding)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "set_secret",
 		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back.",
@@ -252,7 +260,7 @@ func (s *Server) createBeam(ctx context.Context, req *sdkmcp.CallToolRequest, ar
 		return nil, beamOut{}, err
 	}
 	out := beamOut{Beam: beam.Slug, Beamhall: bh.Slug, State: string(beam.State), Mode: string(beam.Mode)}
-	return text(fmt.Sprintf("beam %q created in beamhall %q (state %s). Deploy it with deploy_beam — call it with no source to get a one-time git push remote (preferred).",
+	return text(fmt.Sprintf("beam %q created in beamhall %q (state %s). Deploy it with deploy_beam — call it with no source to get a one-time git push remote (preferred). Building a web UI? Call show_branding first and apply the company header/footer/logo/palette it returns.",
 		beam.Slug, bh.Slug, beam.State)), out, nil
 }
 
@@ -343,6 +351,7 @@ func (s *Server) deployBeam(ctx context.Context, req *sdkmcp.CallToolRequest, ar
 			"Build progress streams back as \"remote:\" lines and the preview URL prints on success. "+
 			"If the build fails, fix your code, commit, and run the SAME command again — the token stays valid until a deploy succeeds (or it expires shortly). "+
 			"For a later, separate deploy, call deploy_beam again for a fresh command. "+
+			"Before you write or change UI code, call show_branding and apply the company header/footer/logo/colour palette it returns. "+
 			"(Fallback, only if you can't use git: call deploy_beam with source_tarball for a direct upload.)",
 			beam.Slug, cmd)
 		out := deployOut{beamOut: beamOut{Beam: beam.Slug, Beamhall: bh.Slug,
@@ -631,6 +640,50 @@ func (s *Server) showEmail(ctx context.Context, req *sdkmcp.CallToolRequest, arg
 	msg := fmt.Sprintf("beam %q email: sends via %s:%d as user %s; allowed senders: %s; rate limit: %d/day.",
 		beam.Slug, info.Host, info.Port, info.Username, senders, info.RateLimitPerDay)
 	return text(msg), info, nil
+}
+
+func (s *Server) showBranding(ctx context.Context, req *sdkmcp.CallToolRequest, args showBrandingArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamhallsRead)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := s.bp.ShowBranding(ctx, actor, bh.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Configured {
+		return text(fmt.Sprintf("beamhall %q has no company branding configured — no header, footer, logo, or palette is required here, so design the UI as you see fit. IT can define one company-wide or for this beamhall with admin_set_branding.", bh.Slug)), info, nil
+	}
+	scope := "company-wide default"
+	if info.Scope == "beamhall" {
+		scope = "team override over the company default"
+	}
+	part := func(label, v string) string {
+		if v == "" {
+			return label + ": none"
+		}
+		return fmt.Sprintf("%s: set (%d chars)", label, len(v))
+	}
+	logo := "none"
+	if info.LogoURL != "" {
+		logo = info.LogoURL
+	}
+	msg := fmt.Sprintf("beamhall %q branding (%s): primary=%s secondary=%s accent=%s background=%s text=%s; logo %s; palette stylesheet %s; %s, %s. Link the stylesheet (or copy its --brand-* custom properties) rather than hardcoding colours, put the header HTML at the top of every page and the footer at the bottom, and show the logo in the header. IT owns these values (admin_set_branding); your workload also reads them from /run/beamhall/brand.json after the next deploy_beam.",
+		bh.Slug, scope, orEmpty(info.PrimaryColor), orEmpty(info.SecondaryColor), orEmpty(info.AccentColor),
+		orEmpty(info.BackgroundColor), orEmpty(info.TextColor), logo, info.CSSURL,
+		part("header", info.HeaderHTML), part("footer", info.FooterHTML))
+	return text(msg), info, nil
+}
+
+func orEmpty(v string) string {
+	if v == "" {
+		return "(unset)"
+	}
+	return v
 }
 
 func (s *Server) provisionObjectStore(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {

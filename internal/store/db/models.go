@@ -89,6 +89,20 @@ type Beamhall struct {
 	UpdatedAt         int64
 }
 
+type Branding struct {
+	BeamhallID   string
+	BrandingJson string
+	UpdatedAt    int64
+}
+
+type BrandingLogo struct {
+	BeamhallID string
+	Logo       []byte
+	LogoMime   string
+	LogoEtag   string
+	UpdatedAt  int64
+}
+
 type Build struct {
 	ID            string
 	BeamID        string

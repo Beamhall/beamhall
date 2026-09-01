@@ -165,6 +165,36 @@ type ResourceQuota struct {
 	MemCeiling      int64
 }
 
+// FacilityScope is the branding owner id for the facility-wide default that
+// every beamhall inherits.
+const FacilityScope = ID("")
+
+// Branding is the company look IT defines for the apps teams build. The
+// facility-wide default (FacilityScope) is overridden field-wise by a
+// per-beamhall row: an empty field falls back to the facility value.
+type Branding struct {
+	HeaderHTML      string `json:"header_html,omitempty"`
+	FooterHTML      string `json:"footer_html,omitempty"`
+	PrimaryColor    string `json:"primary_color,omitempty"`
+	SecondaryColor  string `json:"secondary_color,omitempty"`
+	AccentColor     string `json:"accent_color,omitempty"`
+	BackgroundColor string `json:"background_color,omitempty"`
+	TextColor       string `json:"text_color,omitempty"`
+}
+
+func (b Branding) IsZero() bool {
+	return b == Branding{}
+}
+
+// BrandingLogo is one scope's logo image. ETag is a content hash used as the
+// immutable cache key in the public logo URL.
+type BrandingLogo struct {
+	Bytes     []byte
+	MIME      string
+	ETag      string
+	UpdatedAt time.Time
+}
+
 // ---------------------------------------------------------------------------
 // Beam, Build, Release, Route
 // ---------------------------------------------------------------------------
