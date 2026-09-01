@@ -2,7 +2,7 @@
 
 Beamhall is MCP-first: builders and IT operators drive it entirely over MCP. This
 suite proves the two properties that matter for a regulated sign-off, **as a real
-agent would hit them**, by running four authenticated personas against the
+agent would hit them**, by running six authenticated personas against the
 `beamhall.internal` appliance:
 
 1. **Environment isolation** — a builder in one workspace cannot see or touch
@@ -34,7 +34,7 @@ allowlist just keeps each agent's channel and context clean.
                                           └────────────→ https://beamhall.internal/mcp
 ```
 
-## The four personas
+## The six personas
 
 | Persona (subagent) | IdP subject | Elevation | Workspace |
 |---|---|---|---|
@@ -42,21 +42,27 @@ allowlist just keeps each agent's channel and context clean.
 | `bh-admin-bob` | `admin-bob` | `beamhall-it` realm role | none; default four-eyes **approver** |
 | `bh-builder-carol` | `builder-carol` | capability scopes only | **team-blue** |
 | `bh-builder-dave` | `builder-dave` | capability scopes only | **team-green** |
+| `bh-user-erin` | `user-erin` | `beams:use` only (using tier) | none — audience only; the IN-audience persona |
+| `bh-user-frank` | `user-frank` | `beams:use` only (using tier) | none — audience only; the OUT-of-audience persona |
 
 Admins elevate via the realm **role**, not a scope — the public `beamhall-admin-agent`
-ROPC client cannot obtain the hidden `admin:it` scope. Builders use `beamhall-agent`.
-Both public clients ROPC with no client secret.
+ROPC client cannot obtain the hidden `admin:it` scope. Builders use `beamhall-agent`;
+users use `beamhall-user-agent`, whose tokens can carry nothing but `beams:use`.
+All three public clients ROPC with no client secret. The user personas are
+deliberately **not** pre-registered as Beamhall identities: their first call
+proves auto-registration (`BEAMHALL_USER_AUTO_REGISTER`).
 
 ## Setup
 
 ```sh
-# 1. Provision the four identities + two workspaces (idempotent; runs over SSH to
+# 1. Provision the six identities + two workspaces (idempotent; runs over SSH to
 #    the appliance, writes the gitignored scripts/agent-conformance/.env).
 scripts/agent-conformance/provision.sh
 
-# 2. Restart Claude Code (or reconnect MCP) so the four .mcp.json servers attach.
-#    They appear as bh-admin-alice / bh-admin-bob / bh-builder-carol / bh-builder-dave,
-#    and the persona subagents become callable via the Agent tool.
+# 2. Restart Claude Code (or reconnect MCP) so the six .mcp.json servers attach.
+#    They appear as bh-admin-alice / bh-admin-bob / bh-builder-carol /
+#    bh-builder-dave / bh-user-erin / bh-user-frank, and the persona subagents
+#    become callable via the Agent tool.
 
 # 3. Smoke-check the channels (admins must see admin_*, builders must not):
 scripts/agent-conformance/verify.sh
@@ -99,6 +105,7 @@ Sequence: **gates off** → a, a′, d, e1, e3 → `gates.sh on` → b1, b2, b3,
 | c | Promotion four-eyes | carol `promote_to_live` files a request, an admin `approve_promotion` | on | filed with request_id; a different operator promotes to live |
 | e2 | Suspended workspace denies all | alice `admin_update_beamhall status=suspended`, carol acts, alice re-activates | off | Carol denied while suspended; restored after |
 | f | Audit chain records everything | alice `admin_query_audit` + `admin_verify_audit_chain` | off | chain intact; denials + four-eyes pairs present |
+| g | Audience isolation (using tier) | alice publishes to erin (`admin_set_app_audience`); erin + frank read | off | erin's first call auto-registers her; erin sees the app; frank gets an empty list and the uniform `no app named …` refusal with no workspace/URL leak; erin denied on `create_beam` + `admin_set_app_audience` |
 
 ### Verified live (2026-06-23, appliance v0.1.11)
 
@@ -173,9 +180,15 @@ over MCP as a persona.
   a team override (`admin_set_branding`), builders read the merged view (`show_branding`),
   cross-hall reads and builder writes are denied, the gateway serves `brand.css` + the logo,
   and clearing the override falls back with no redeploy.
+- `scripts/agent-conformance/apps.sh` — the using tier end-to-end: builder registers an app
+  (with a user-facing description), erin's first `list_apps` auto-registers her, IT publishes
+  to her identity (`admin_set_app_audience`), erin sees it ("not live yet" — publishing ≠
+  deploying) while frank gets the uniform leak-free refusal, the tier boundary denies erin
+  any build/admin tool, unpublish removes it, and the group-audience path (bundled IdP)
+  proves erin-in/frank-out via the `groups` claim.
 - `scripts/agent-conformance/env.example` — secrets template (the real `.env` is gitignored).
-- `.mcp.json` — the four persona servers.
-- `.claude/agents/bh-{admin-alice,admin-bob,builder-carol,builder-dave}.md` — the personas.
+- `.mcp.json` — the six persona servers.
+- `.claude/agents/bh-{admin-alice,admin-bob,builder-carol,builder-dave,user-erin,user-frank}.md` — the personas.
 
 ## Stronger isolation (optional): Apple `container`
 

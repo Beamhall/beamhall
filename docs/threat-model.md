@@ -64,6 +64,18 @@ keeping both untrusted populations inside their boundary.
   document) and `text/css` (palette values charset-validated at write time),
   both with `nosniff`, so nothing IT uploads can script the origin that hosts
   `/admin` and `/mcp`.
+- **App audiences are a platform-enforced discovery boundary, not a network
+  control.** `list_apps`/`describe_app` return only apps IT explicitly
+  published to the caller (`admin_set_app_audience`), and an unpublished or
+  out-of-audience app is byte-for-byte indistinguishable from a nonexistent
+  one — the user tier cannot enumerate what runs on the appliance. A live
+  app's URL remains reachable to anyone who already holds it; network
+  reachability stays the gateway's and the app's own sign-in's job. A
+  using-tier token (`beams:use`) carries no capability scope and holds no
+  membership: it can reach no tool that changes, deploys, or inspects an app.
+  Group-based audiences trust the IdP-issued group claim
+  (`BEAMHALL_OAUTH_GROUPS_CLAIM`); the operator must source it from directory
+  membership the user cannot influence, or disable it (empty claim name).
 
 ## 3. Host baseline (operator responsibility)
 

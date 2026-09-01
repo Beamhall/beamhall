@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Smoke-verify each persona's MCP channel by driving the proxy directly:
 # initialize + tools/list, then assert the menu matches the identity
-# (admins must see admin_* tools; builders must see none). Catches a missed
-# beamhall-it role assignment or a broken token path before the full run.
+# (admins must see admin_* tools; builders none; users exactly the two
+# discovery tools). Catches a missed beamhall-it role assignment or a broken
+# token path before the full run.
 #
-#   scripts/agent-conformance/verify.sh            # all four personas
+#   scripts/agent-conformance/verify.sh            # all six personas
 #   scripts/agent-conformance/verify.sh admin-alice
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,7 +22,7 @@ list_tools() {  # <username> -> tool names on stdout (one per line)
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"verify","version":"0"}}}'
     printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-  } | BH_USER="$u" BH_CLIENT_ID="$client" BH_SCOPE="$CAP_SCOPE" \
+  } | BH_USER="$u" BH_CLIENT_ID="$client" BH_SCOPE="$(scope_for "$u")" \
         BH_ISSUER="$ISSUER" BH_MCP_URL="$MCP_URL" BH_CA="$CA" BH_ENV_FILE="$ENV_LOCAL" \
         python3 "$PROXY" 2>/dev/null \
     | jq -rs '.[] | select(.id==2) | (.result.tools // [])[] | .name'
@@ -38,6 +39,14 @@ for u in "${targets[@]}"; do
   if is_admin "$u"; then
     if [ "$admin" -gt 0 ]; then ok "$u: sees $admin admin_* tools (of $total) — IT elevation OK"
     else warn "$u: NO admin_* tools — beamhall-it role likely not applied"; rc=1; fi
+  elif is_user "$u"; then
+    apps=$(printf '%s\n' "$names" | grep -c '^\(list_apps\|describe_app\)$' || true)
+    builder=$(printf '%s\n' "$names" | grep -c '^\(create_beam\|deploy_beam\|set_secret\)$' || true)
+    if [ "$apps" -eq 2 ] && [ "$admin" -eq 0 ] && [ "$builder" -eq 0 ]; then
+      ok "$u: list_apps + describe_app only ($total tool(s)), 0 admin_*, 0 builder — using tier OK"
+    else
+      warn "$u: expected exactly the using tier (apps=$apps builder=$builder admin=$admin of $total)"; rc=1
+    fi
   else
     if [ "$admin" -eq 0 ]; then ok "$u: $total builder tools, 0 admin_* — correctly unprivileged"
     else warn "$u: sees $admin admin_* tools — should see none!"; rc=1; fi

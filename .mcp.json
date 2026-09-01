@@ -47,6 +47,30 @@
         "BH_MCP_URL": "https://beamhall.internal/mcp",
         "BH_CA": "scripts/agent-conformance/gateway-ca.crt"
       }
+    },
+    "bh-user-erin": {
+      "command": "python3",
+      "args": ["scripts/agent-conformance/bh-mcp-proxy.py"],
+      "env": {
+        "BH_USER": "user-erin",
+        "BH_CLIENT_ID": "beamhall-user-agent",
+        "BH_SCOPE": "beamhall-audience beams:use",
+        "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
+        "BH_MCP_URL": "https://beamhall.internal/mcp",
+        "BH_CA": "scripts/agent-conformance/gateway-ca.crt"
+      }
+    },
+    "bh-user-frank": {
+      "command": "python3",
+      "args": ["scripts/agent-conformance/bh-mcp-proxy.py"],
+      "env": {
+        "BH_USER": "user-frank",
+        "BH_CLIENT_ID": "beamhall-user-agent",
+        "BH_SCOPE": "beamhall-audience beams:use",
+        "BH_ISSUER": "https://idp.beamhall.internal/realms/beamhall",
+        "BH_MCP_URL": "https://beamhall.internal/mcp",
+        "BH_CA": "scripts/agent-conformance/gateway-ca.crt"
+      }
     }
   }
 }

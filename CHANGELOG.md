@@ -16,6 +16,26 @@ their auto-generated notes.
 ## [Unreleased]
 
 ### Added
+- **Apps for the people who use them.** IT can now publish an app to an
+  audience — everyone, named IdP groups, or named people — with the new
+  `admin_set_app_audience` tool, and those people's own AI agents discover it
+  with the two new tools `list_apps` and `describe_app`: what the app is for,
+  who owns it, and the URL to open. This is a third tier below IT admins and
+  builders: a using-tier token (the new `beams:use` scope, the new
+  `beamhall-user-agent` client on the bundled IdP) holds no workspace
+  membership and can reach nothing that changes, deploys, or inspects an app.
+  Apps are unpublished by default; an out-of-audience app is indistinguishable
+  from one that does not exist; unpublishing removes it from every user's list
+  immediately. Audiences live in Beamhall's own store, never in your IdP —
+  group names are matched against a claim in the user's token
+  (`BEAMHALL_OAUTH_GROUPS_CLAIM`, default `groups`; set it empty for
+  named-people-only audiences). Users register themselves on first contact
+  (`BEAMHALL_USER_AUTO_REGISTER`, default on) so IT never hand-registers every
+  employee. Beams gain a plain-language `description` (set by the builder at
+  `create_beam`, curated by IT when publishing) that users see in their list.
+  Existing appliances pick the new scope, client, and groups mapper up
+  automatically at startup — additively; nothing an operator configured is
+  changed or removed.
 - **Company branding.** IT defines the header, footer, logo, and colour palette
   the apps built here should wear with the new `admin_set_branding` tool —
   company-wide, or per workspace as a field-by-field override — and building
@@ -27,6 +47,14 @@ their auto-generated notes.
   `/run/beamhall/brand.json` from its next deploy. Branding is always current,
   not pinned to a release: a rollback brings back the old build wearing
   today's branding. Logos are PNG only (max 1 MB) and ride the standard backup.
+
+### Fixed
+- **Same-workspace container traffic no longer depends on a kernel module
+  staying unloaded.** The per-workspace egress DROP now explicitly exempts
+  same-bridge traffic: with `br_netfilter` loaded (which Docker may do at any
+  time), the old ruleset silently severed every intra-workspace connection —
+  including each app's own links to the managed Postgres and mail brokers.
+  External and cloud-metadata destinations remain denied exactly as before.
 
 ## [0.5.1] - 2026-08-31
 

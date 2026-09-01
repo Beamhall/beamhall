@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Provision the four conformance identities + two workspaces on the appliance.
+# Provision the six conformance identities + two workspaces on the appliance.
 #
 #   scripts/agent-conformance/provision.sh
 #
 # Idempotent. Creates IdP users admin-alice/admin-bob (with the beamhall-it realm
-# role) and builder-carol/builder-dave (no role), gives each a PERMANENT password
-# (so headless ROPC works), registers all four Beamhall identities, creates
-# team-blue (carol) and team-green (dave) — granting ONLY the owning builder —
-# then writes the gitignored secrets file the proxy reads. Re-running rotates the
-# passwords and rewrites the secrets file (kept consistent on purpose).
+# role), builder-carol/builder-dave (no role), and user-erin/user-frank (the
+# using tier: an IdP account only — deliberately NOT registered as Beamhall
+# identities and granted NO membership, so a conformance run proves user
+# auto-registration on their first beams:use call). Gives each a PERMANENT
+# password (so headless ROPC works), registers the admin/builder identities,
+# creates team-blue (carol) and team-green (dave) — granting ONLY the owning
+# builder — then writes the gitignored secrets file the proxy reads. Re-running
+# rotates the passwords and rewrites the secrets file (kept consistent on purpose).
 #
 # The heavy lifting runs on the appliance (Keycloak is loopback-only there);
 # generated passwords come back over the encrypted SSH channel and are written
@@ -22,14 +25,16 @@ source "$HERE/lib.sh"
 
 A1="${ADMINS[0]}"; A2="${ADMINS[1]}"
 BBLUE="${BUILDERS[0]}"; BGREEN="${BUILDERS[1]}"
+UERIN="${USERS[0]}"; UFRANK="${USERS[1]}"
 
 say "Provisioning conformance identities on $APPLIANCE …"
 say "  admins (beamhall-it): $A1, $A2"
 say "  builders: $BBLUE → $WORKSPACE_BLUE, $BGREEN → $WORKSPACE_GREEN"
+say "  users (beams:use, no membership): $UERIN, $UFRANK"
 
 REMOTE='
 set -euo pipefail
-A1="$1"; A2="$2"; BBLUE="$3"; BGREEN="$4"; WBLUE="$5"; WGREEN="$6"; EDOM="$7"
+A1="$1"; A2="$2"; BBLUE="$3"; BGREEN="$4"; UERIN="$5"; UFRANK="$6"; WBLUE="$7"; WGREEN="$8"; EDOM="$9"
 ENVFILE=/etc/beamhall/beamhall.env
 BEAMHALLD=/usr/local/bin/beamhalld
 KC=$(sed -n "s#^BEAMHALL_IDP_ADMIN_URL=##p" "$ENVFILE" | tail -1)
@@ -79,23 +84,27 @@ ensure_user "$A1" yes
 ensure_user "$A2" yes
 ensure_user "$BBLUE" no
 ensure_user "$BGREEN" no
+ensure_user "$UERIN" no
+ensure_user "$UFRANK" no
 
-# Register all four Beamhall identities (admins need a registered identity but no
-# membership — the role is the bypass).
+# Register the admin/builder Beamhall identities (admins need a registered
+# identity but no membership — the role is the bypass). The user personas are
+# deliberately NOT registered: their first beams:use call must auto-register
+# them (BEAMHALL_USER_AUTO_REGISTER), and the conformance run proves it.
 for u in "$A1" "$A2" "$BBLUE" "$BGREEN"; do
   "$BEAMHALLD" admin register-identity -issuer "$ISSUER" -subject "$u" -email "$u@$EDOM" >&2 2>&1 || true
 done
 # Two isolated workspaces, each granting ONLY its owning builder.
 "$BEAMHALLD" admin bootstrap -beamhall "$WBLUE"  -display "Team Blue"  -issuer "$ISSUER" -subject "$BBLUE"  -email "$BBLUE@$EDOM"  -role builder -runtime runc >&2 2>&1 || true
 "$BEAMHALLD" admin bootstrap -beamhall "$WGREEN" -display "Team Green" -issuer "$ISSUER" -subject "$BGREEN" -email "$BGREEN@$EDOM" -role builder -runtime runc >&2 2>&1 || true
-echo "  registered 4 identities; bootstrapped $WBLUE + $WGREEN" >&2
+echo "  registered 4 identities (users auto-register on first call); bootstrapped $WBLUE + $WGREEN" >&2
 '
 
 creds="$(printf '%s' "$REMOTE" | "${SSH[@]}" bash -s -- \
-  "$A1" "$A2" "$BBLUE" "$BGREEN" "$WORKSPACE_BLUE" "$WORKSPACE_GREEN" "$EMAIL_DOMAIN")"
+  "$A1" "$A2" "$BBLUE" "$BGREEN" "$UERIN" "$UFRANK" "$WORKSPACE_BLUE" "$WORKSPACE_GREEN" "$EMAIL_DOMAIN")"
 
 n=$(printf '%s\n' "$creds" | grep -c '^CRED ' || true)
-[ "$n" -eq 4 ] || die "expected 4 credentials back, got $n"
+[ "$n" -eq 6 ] || die "expected 6 credentials back, got $n"
 
 umask 077
 {
@@ -123,6 +132,6 @@ else
   fi
 fi
 
-say "Verifying token elevation (admins see admin_*, builders don't) …"
+say "Verifying token elevation (admins see admin_*, builders don't, users see only the app tools) …"
 "$HERE/verify.sh" || die "verification failed — see above"
-ok "provisioning complete. Restart Claude Code to connect the four MCP servers."
+ok "provisioning complete. Restart Claude Code to connect the six MCP servers."

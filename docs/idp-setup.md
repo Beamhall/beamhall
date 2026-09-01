@@ -21,7 +21,10 @@ Entra are documented from their token formats and the same four requirements.
 3. **Scopes.** The capability scopes Beamhall understands, delivered in the
    `scope` (space-separated string) or `scp` (array) claim:
    `beamhalls:read beams:write beams:deploy beams:operate beams:promote
-   secrets:write resources:write logs:read metrics:read admin:it`.
+   secrets:write resources:write logs:read metrics:read beams:use admin:it`.
+   `beams:use` is the **using tier** — for employees who only discover and use
+   published apps (`list_apps`/`describe_app`); it carries no build, deploy, or
+   admin capability and is safe to grant broadly.
 4. **A stable `sub`.** Each principal (engineer or agent) has a stable subject.
    IT registers it once: `beamhalld admin register-identity -issuer <iss>
    -subject <sub> -email <e>` (and `admin bootstrap` to grant a workspace role).
@@ -52,6 +55,37 @@ configured and refuses to start on a mismatch.
 The Admin console uses the same IdP (OIDC Authorization Code flow): set
 `BEAMHALL_ADMIN_CLIENT_ID`/`SECRET` to a confidential client whose redirect URI
 is `https://<base-domain>/admin/callback`, and grant `admin:it` to your IT users.
+
+## Group claim (for app audiences)
+
+When IT publishes an app to IdP **groups** (`admin_set_app_audience`), Beamhall
+matches the group names against a claim in the user's token:
+
+```sh
+# BEAMHALL_OAUTH_GROUPS_CLAIM defaults to "groups"; a dotted path descends one
+# level (e.g. realm_access.groups); the value may be a string array or one
+# space-separated string. Set it EMPTY to disable group audiences entirely.
+```
+
+Names match **exactly** (case-sensitive), and on the bundled IdP the claim
+carries the group name without a path prefix (`finance`, not `/finance`) —
+configure the same on a BYO IdP. **The claim must come from a source the token
+subject cannot influence** (directory group membership mapped by the IdP —
+never a self-service profile attribute): a forged group only places a user
+inside an audience IT already published to that group name, but that is still
+an exposure you configured the IdP to prevent. If you cannot guarantee the
+claim's provenance, leave group audiences disabled and publish to named
+identities or everyone.
+
+Two related knobs: `BEAMHALL_USER_AUTO_REGISTER` (default `on`) lets a first
+valid `beams:use` token create its own identity row, so IT never hand-registers
+every employee — offboarding is `admin_set_identity_status disabled` (the kill
+switch), not deregistration. On the **bundled IdP**, the `beams:use` client
+scope, the public `beamhall-user-agent` client (the third agent client, next to
+`beamhall-agent` and `beamhall-admin-agent`), and the groups mapper are created
+automatically: a fresh install seeds them from the realm template, and an
+existing appliance gains them at the first boot of a build that needs them
+(additive only — nothing an operator configured is changed or removed).
 
 ---
 

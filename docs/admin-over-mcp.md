@@ -85,6 +85,7 @@ For many users a week, drive these from the agent in a loop, or use the
 | `admin_set_identity_status` | routine | `disabled` = per-principal kill switch (the identity keeps its row + audit history but **every** authorization fails); `active` restores it |
 | `admin_set_egress` | routine | set a workspace's egress policy (`deny_all`/`allowlist`) |
 | `admin_set_branding` | routine | define the company branding (header/footer HTML, logo, colour palette) apps built here should wear — company-wide, or per workspace as a field-by-field override |
+| `admin_set_app_audience` | routine | publish an app to the people who should use it (everyone / IdP groups / named identities); `clear` unpublishes. Apps are unpublished by default |
 | `admin_set_security_context` | **sensitive** | change a workspace's runtime isolation class (`runc`↔`runsc`) — alters the hardening posture, four-eyes |
 | `admin_list_releases` | routine (read) | a beam's production-release history (`v1,v2,…`) — the `to_version` targets for `rollback` |
 
@@ -100,6 +101,33 @@ and a hot-linkable palette stylesheet (`--brand-*` CSS custom properties) at
 public URLs on the base domain — a palette change reaches running apps with no
 redeploy — and injects the resolved values into each workload as
 `/run/beamhall/brand.json` on its next deploy.
+
+#### Publishing an app to its users
+
+Beamhall has **three tiers**: IT admins run the platform
+(`beamhall-admin-agent`, the `beamhall-it` role), builders build the apps
+(`beamhall-agent`, the capability scopes), and everyone else simply **uses**
+what's published to them — their own agent connects with the
+`beamhall-user-agent` client, whose tokens carry only the `beams:use` scope and
+whose menu is just `list_apps` and `describe_app`. Users hold **no workspace
+membership**; the audience is the gate, and (with auto-registration on, the
+default) their identity row is created on their first call — IT never
+hand-registers every employee.
+
+`admin_set_app_audience` publishes one app: name the workspace + app, then say
+who — `everyone`, IdP `groups` (matched against the group claim in the user's
+token), `identities`, or any combination (the union). Set-and-replace: pass the
+full audience each time. `clear` unpublishes — the app vanishes from every
+user's list immediately. Publishing is **not** deploying (an unpromoted app
+shows as "not live yet" until the team runs `promote_to_live`), and publication
+controls **discovery, not the network**: a live app's URL keeps working for
+anyone who already holds it. Audiences live in Beamhall's own store, never in
+your IdP. To an out-of-audience user, a published app is indistinguishable from
+one that does not exist.
+
+Offboarding note: with auto-registration on, `admin_deregister_identity` is not
+an offboarding control (the next valid call re-registers the person) — use
+`admin_set_identity_status disabled`, the kill switch.
 
 ### Audit (the regulated trail, now MCP-readable)
 

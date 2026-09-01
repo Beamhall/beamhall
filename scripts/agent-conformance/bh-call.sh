@@ -25,7 +25,7 @@ call=$(jq -cn --arg n "$tool" --argjson a "$args" '{jsonrpc:"2.0",id:2,method:"t
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"bh-call","version":"0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' "$call"
-} | BH_USER="$u" BH_CLIENT_ID="$client" BH_SCOPE="$CAP_SCOPE" \
+} | BH_USER="$u" BH_CLIENT_ID="$client" BH_SCOPE="$(scope_for "$u")" \
       BH_ISSUER="$ISSUER" BH_MCP_URL="$MCP_URL" BH_CA="$CA" BH_ENV_FILE="$ENV_LOCAL" \
       python3 "$PROXY" 2>/dev/null \
   | jq -rs '.[] | select(.id==2) |

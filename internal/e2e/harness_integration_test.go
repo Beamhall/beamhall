@@ -29,14 +29,17 @@ import (
 )
 
 type appliance struct {
-	t        *testing.T
-	ctx      context.Context
-	dataDir  string
-	mint     func(sub, scopes string) string
-	hallID   domain.ID // "e2e": the builder's hall
-	fortID   domain.ID // "fort": a hall the builder has NO membership in
-	daemon   *exec.Cmd
-	stopOnce sync.Once
+	t       *testing.T
+	ctx     context.Context
+	dataDir string
+	mint    func(sub, scopes string) string
+	// mintGroups additionally stamps a `groups` claim (the user tier's group
+	// audience source); the plain mint stays as-is for every existing suite.
+	mintGroups func(sub, scopes string, groups []string) string
+	hallID     domain.ID // "e2e": the builder's hall
+	fortID     domain.ID // "fort": a hall the builder has NO membership in
+	daemon     *exec.Cmd
+	stopOnce   sync.Once
 }
 
 // stop shuts the daemon down (idempotent; also runs in cleanup). Call before
@@ -75,11 +78,15 @@ func launchAppliance(t *testing.T, ctx context.Context) *appliance {
 	}))
 	t.Cleanup(idp.Close)
 	issuer := idp.URL
-	mint := func(sub, scopes string) string {
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+	mintGroups := func(sub, scopes string, groups []string) string {
+		claims := jwt.MapClaims{
 			"iss": issuer, "aud": audience, "sub": sub, "jti": "e2e-" + sub,
 			"scope": scopes, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
-		})
+		}
+		if len(groups) > 0 {
+			claims["groups"] = groups
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 		tok.Header["kid"] = "e2e-1"
 		s, err := tok.SignedString(idpKey)
 		if err != nil {
@@ -87,6 +94,7 @@ func launchAppliance(t *testing.T, ctx context.Context) *appliance {
 		}
 		return s
 	}
+	mint := func(sub, scopes string) string { return mintGroups(sub, scopes, nil) }
 
 	// Seed the control plane (IT bootstrap; the Admin UI is Phase 3 item 3).
 	dataDir := t.TempDir()
@@ -175,7 +183,7 @@ func launchAppliance(t *testing.T, ctx context.Context) *appliance {
 		t.Fatalf("start beamhalld: %v", err)
 	}
 	hallID, fortID := hall.ID, fort.ID
-	a := &appliance{t: t, ctx: ctx, dataDir: dataDir, mint: mint,
+	a := &appliance{t: t, ctx: ctx, dataDir: dataDir, mint: mint, mintGroups: mintGroups,
 		hallID: hallID, fortID: fortID, daemon: daemon}
 	t.Cleanup(func() {
 		a.stop()
@@ -205,11 +213,16 @@ done`).Run()
 
 // connect opens an MCP session as sub with the given scopes.
 func (a *appliance) connect(sub, scopes string, opts *sdkmcp.ClientOptions) *sdkmcp.ClientSession {
+	return a.connectAs(sub, scopes, nil, opts)
+}
+
+// connectAs is connect with a groups claim on the token (group audiences).
+func (a *appliance) connectAs(sub, scopes string, groups []string, opts *sdkmcp.ClientOptions) *sdkmcp.ClientSession {
 	a.t.Helper()
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "e2e-agent-" + sub, Version: "1"}, opts)
 	cs, err := client.Connect(a.ctx, &sdkmcp.StreamableClientTransport{
 		Endpoint:   "http://" + httpAddr + "/mcp",
-		HTTPClient: &http.Client{Transport: bearer{a.mint(sub, scopes)}},
+		HTTPClient: &http.Client{Transport: bearer{a.mintGroups(sub, scopes, groups)}},
 	}, nil)
 	if err != nil {
 		a.t.Fatalf("MCP connect (%s): %v", sub, err)
