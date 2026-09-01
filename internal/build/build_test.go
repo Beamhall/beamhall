@@ -361,8 +361,8 @@ func fakePackForking(t *testing.T, pidFile string) string {
 // until the descendant's own (here, 30s) lifetime ends — pre-fix, nothing
 // bounds how long Wait() waits for the orphan's inherited stdout pipe to
 // close, so the "runaway build" defense doesn't actually bound the call at
-// all; (2) the descendant is gone by the time Build returns, not merely
-// left running. fakePackForking's backgrounded child is the process-level
+// all; (2) the descendant dies with it rather than being left running.
+// fakePackForking's backgrounded child is the process-level
 // stand-in for pack's orphaned buildpack lifecycle work.
 func TestBuildTimeoutKillsDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
@@ -402,7 +402,20 @@ func TestBuildTimeoutKillsDescendants(t *testing.T) {
 	}
 	t.Cleanup(func() { syscall.Kill(childPID, syscall.SIGKILL) })
 
-	if err := syscall.Kill(childPID, 0); err == nil {
-		t.Fatalf("descendant PID %d of the timed-out build is still alive right after Build returned — killing the tracked PID alone did not reach it", childPID)
+	// SIGKILL to the process group is delivered asynchronously, and the
+	// descendant is reparented (its own parent, the script, is gone) so it
+	// stays visible as a zombie until the reaper gets to it — both windows can
+	// outlast Build's return on a loaded runner. Poll well inside the child's
+	// own 30s sleep: a death observed here can only be the timeout's kill.
+	gone := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if err := syscall.Kill(childPID, 0); err != nil {
+			gone = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !gone {
+		t.Fatalf("descendant PID %d of the timed-out build outlived Build by 5s — killing the tracked PID alone did not reach it", childPID)
 	}
 }
