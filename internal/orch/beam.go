@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"time"
 
 	"github.com/Beamhall/beamhall/internal/diagnose"
@@ -76,8 +77,26 @@ func (o *Orchestrator) SetSecret(ctx context.Context, actor Actor, beamhallID, b
 	if err := o.authorize(ctx, actor, policy.ActionSetSecret, beamhallID, beamID); err != nil {
 		return err
 	}
-	_, err := o.vault.Set(ctx, domain.SecretRef{BeamhallID: beamhallID, BeamID: beamID, Key: key}, value, actor.ID)
+	err := validateSecretKey(key)
+	if err == nil {
+		_, err = o.vault.Set(ctx, domain.SecretRef{BeamhallID: beamhallID, BeamID: beamID, Key: key}, value, actor.ID)
+	}
 	return o.outcome(ctx, actor, policy.ActionSetSecret, beamhallID, beamID, err)
+}
+
+// secretKeyRe bounds caller-supplied secret keys. The key becomes both a host
+// staging filename and, unsanitized, the container-side bind target
+// /run/secrets/<key> — path separators or dot-segments in it would relocate a
+// read-only mount anywhere in the workload rootfs, and two keys that sanitize
+// to the same staged filename would silently serve one secret under the
+// other's name. A conservative charset closes both.
+var secretKeyRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+
+func validateSecretKey(key string) error {
+	if !secretKeyRe.MatchString(key) {
+		return fmt.Errorf("invalid secret key %q: use 1-64 letters, digits, or underscores (the key becomes the file name /run/secrets/<key>)", key)
+	}
+	return nil
 }
 
 // DeployRequest is a stage-2 deploy input: a pinned, pre-built image. The

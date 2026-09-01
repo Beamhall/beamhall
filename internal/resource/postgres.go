@@ -10,6 +10,7 @@ package resource
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -62,15 +63,9 @@ type PostgresProvisioner struct {
 // orchestrator's Resource row uniqueness is the real guard; this keeps SQL
 // simple and never silently reuses credentials.
 func (p *PostgresProvisioner) Provision(ctx context.Context, req Request) (Provisioned, error) {
-	for _, part := range []string{req.BeamhallSlug, req.BeamSlug, req.Name} {
-		if !nameRe.MatchString(part) {
-			return Provisioned{}, fmt.Errorf("invalid identifier part %q", part)
-		}
-	}
-	dbName := sqlIdent(fmt.Sprintf("bh_%s_%s_%s", req.BeamhallSlug, req.BeamSlug, req.Name))
-	role := dbName + "_rw"
-	if len(role) > 63 {
-		return Provisioned{}, fmt.Errorf("identifier %q exceeds Postgres's 63-byte limit; shorten the slugs/name", role)
+	dbName, role, err := deriveIdentifiers(req.BeamhallSlug, req.BeamSlug, req.Name)
+	if err != nil {
+		return Provisioned{}, err
 	}
 	password, err := randomPassword()
 	if err != nil {
@@ -128,6 +123,28 @@ func (p *PostgresProvisioner) Drop(ctx context.Context, pr Provisioned) error {
 	}
 	_, err = admin.ExecContext(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS %q`, pr.Role))
 	return err
+}
+
+// deriveIdentifiers maps a (beamhall, beam, name) tuple to the backing
+// database/role names. The readable form flattens hyphens to underscores and
+// joins with underscores — a lossy mapping under which distinct tuples can
+// collide (e.g. hall "team-blue" beam "api" vs hall "team" beam "blue-api"),
+// letting one tenant's create squat another's backing name on the shared
+// server. A short digest of the raw, delimiter-separated tuple is appended so
+// only byte-identical tuples ever share a name.
+func deriveIdentifiers(beamhallSlug, beamSlug, name string) (dbName, role string, err error) {
+	for _, part := range []string{beamhallSlug, beamSlug, name} {
+		if !nameRe.MatchString(part) {
+			return "", "", fmt.Errorf("invalid identifier part %q", part)
+		}
+	}
+	sum := sha256.Sum256([]byte(beamhallSlug + "\x00" + beamSlug + "\x00" + name))
+	dbName = sqlIdent(fmt.Sprintf("bh_%s_%s_%s_%s", beamhallSlug, beamSlug, name, hex.EncodeToString(sum[:4])))
+	role = dbName + "_rw"
+	if len(role) > 63 {
+		return "", "", fmt.Errorf("identifier %q exceeds Postgres's 63-byte limit; shorten the slugs/name", role)
+	}
+	return dbName, role, nil
 }
 
 // sqlIdent maps slug hyphens to underscores (hyphens would need quoting in

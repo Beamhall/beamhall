@@ -28,7 +28,7 @@ import (
 // images. Buildpack builds must run in a separate, non-userns-remapped context
 // and publish the pinned image to the internal registry; the runtime daemon
 // only pulls and runs it. This is a lab-verified constraint — see
-// docs/PLAN.md §4/§8.
+// PLAN §4/§8.
 var ErrBuildUnsupported = errors.New("docker driver does not build images; builds run in a separate non-remapped context")
 
 const (
@@ -92,7 +92,14 @@ func NewDockerDriver(secretsRoot string) (*DockerDriver, error) {
 		return nil, fmt.Errorf("docker daemon is not configured with userns-remap (SecurityOptions=%v) — "+
 			"Beamhall's workload isolation depends on this daemon-wide setting; see scripts/lab-bootstrap.sh", info.SecurityOptions)
 	}
-	return &DockerDriver{cli: cli, secretsRoot: secretsRoot}, nil
+	d := &DockerDriver{cli: cli, secretsRoot: secretsRoot}
+	// A crash between secret staging and container create/cleanup leaves
+	// decrypted files no label-driven Destroy can ever find; boot is the safe
+	// moment to reconcile the staging root against what actually exists.
+	sweepCtx, sweepCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	d.sweepStaleStaging(sweepCtx)
+	sweepCancel()
+	return d, nil
 }
 
 // usernsRemapConfigured reports whether the daemon's advertised security
@@ -199,6 +206,7 @@ func (d *DockerDriver) Deploy(ctx context.Context, spec DeploySpec) (Handle, err
 	inst := instanceID(spec.BeamID)
 	mounts, err := d.stageSecrets(spec, inst)
 	if err != nil {
+		d.unstage(inst)
 		return Handle{}, err
 	}
 
@@ -237,9 +245,46 @@ func (d *DockerDriver) Deploy(ctx context.Context, spec DeploySpec) (Handle, err
 
 	resp, err := d.cli.ContainerCreate(ctx, cfg, host, netCfg, nil, "bh_"+inst)
 	if err != nil {
+		// No container exists to hang the staging label on, so Destroy's
+		// label-driven cleanup can never reach these decrypted files — remove
+		// them here or they linger on the tmpfs for the appliance's uptime.
+		d.unstage(inst)
 		return Handle{}, fmt.Errorf("container create: %w", err)
 	}
 	return Handle{DriverName: d.Name(), Ref: resp.ID}, nil
+}
+
+// unstage removes an instance's staged secret files — the failure-path
+// counterpart of Destroy's label-driven cleanup, for instances that never got
+// a container to carry the staging label.
+func (d *DockerDriver) unstage(inst string) {
+	_ = os.RemoveAll(filepath.Join(d.secretsRoot, sanitize(inst)))
+}
+
+// sweepStaleStaging removes staging directories no container (any state)
+// references — decrypted secrets orphaned by a crash between staging and
+// cleanup. Best-effort, and skipped entirely on a listing error: never risk
+// unstaging a live workload's secrets on partial information.
+func (d *DockerDriver) sweepStaleStaging(ctx context.Context) {
+	containers, err := d.cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return
+	}
+	referenced := make(map[string]bool, len(containers))
+	for _, c := range containers {
+		if s := sanitize(c.Labels[labelStaging]); s != "" {
+			referenced[s] = true
+		}
+	}
+	entries, err := os.ReadDir(d.secretsRoot)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() && !referenced[e.Name()] {
+			_ = os.RemoveAll(filepath.Join(d.secretsRoot, e.Name()))
+		}
+	}
 }
 
 // peerHosts returns --add-host entries (name:ip) for the containers already

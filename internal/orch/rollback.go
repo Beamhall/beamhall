@@ -98,7 +98,7 @@ func (o *Orchestrator) DestroyBeam(ctx context.Context, actor Actor, beamhallID,
 	if err := o.authorize(ctx, actor, policy.ActionDestroyBeam, beamhallID, beamID); err != nil {
 		return err
 	}
-	err := o.destroy(ctx, beamhallID, beamID)
+	err := o.destroy(ctx, beamhallID, beamID, false)
 	return o.outcome(ctx, actor, policy.ActionDestroyBeam, beamhallID, beamID, err)
 }
 
@@ -110,29 +110,17 @@ func (o *Orchestrator) ArchiveBeam(ctx context.Context, actor Actor, beamhallID,
 	if err := o.authorize(ctx, actor, policy.ActionArchiveBeam, beamhallID, beamID); err != nil {
 		return err
 	}
-	err := o.archivePreview(ctx, beamhallID, beamID)
+	err := o.destroy(ctx, beamhallID, beamID, true)
 	return o.outcome(ctx, actor, policy.ActionArchiveBeam, beamhallID, beamID, err)
 }
 
-func (o *Orchestrator) archivePreview(ctx context.Context, beamhallID, beamID domain.ID) error {
-	beam, err := o.st.GetBeam(ctx, beamID)
-	if err != nil {
-		return err
-	}
-	if beam.BeamhallID != beamhallID {
-		return fmt.Errorf("beam %s is not in beamhall %s", beamID, beamhallID)
-	}
-	if beam.Mode == domain.ModeLive {
-		return fmt.Errorf("beam %q is live; archiving a live beam is IT-gated — ask IT to destroy_beam it", beam.Slug)
-	}
-	return o.destroy(ctx, beamhallID, beamID)
-}
-
-func (o *Orchestrator) destroy(ctx context.Context, beamhallID, beamID domain.ID) error {
+// destroy tears the beam down. previewOnly is the builder archive path's
+// guard: a live beam's teardown stays IT-gated (DestroyBeam). It is evaluated
+// on the read taken UNDER the beam lock — a pre-lock check would pass for a
+// beam whose in-flight promote (holding the lock) flips it live before the
+// archive proceeds, letting a builder tear down production.
+func (o *Orchestrator) destroy(ctx context.Context, beamhallID, beamID domain.ID, previewOnly bool) error {
 	// Serialize against any other deploy/promote/rollback/destroy on this beam.
-	// archivePreview funnels into this function rather than locking
-	// itself, so ArchiveBeam and DestroyBeam share one acquisition here — no
-	// double-lock.
 	unlock := o.beamLocks.lock(beamID)
 	defer unlock()
 
@@ -142,6 +130,9 @@ func (o *Orchestrator) destroy(ctx context.Context, beamhallID, beamID domain.ID
 	}
 	if beam.BeamhallID != beamhallID {
 		return fmt.Errorf("beam %s is not in beamhall %s", beamID, beamhallID)
+	}
+	if previewOnly && beam.Mode == domain.ModeLive {
+		return fmt.Errorf("beam %q is live; archiving a live beam is IT-gated — ask IT to destroy_beam it", beam.Slug)
 	}
 	if beam.Status == domain.BeamArchived {
 		return fmt.Errorf("beam %s is already destroyed", beamID)

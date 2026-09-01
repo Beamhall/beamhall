@@ -47,6 +47,13 @@ func (o *Orchestrator) PausePreview(ctx context.Context, actor Actor, beamhallID
 // beamhall than the PEP authorized against is refused here too, not just by
 // callers that happen to resolve beams by slug-within-hall.
 func (o *Orchestrator) pause(ctx context.Context, beamhallID, beamID domain.ID, ev domain.Event) error {
+	// Serialize against deploy/promote/rollback/destroy on this beam: pause
+	// ends in a full-row UpdateBeam, so a pause racing e.g. a promote would
+	// persist a pre-promote snapshot (erasing the live channel), and one racing
+	// a destroy would resurrect the archived row.
+	unlock := o.beamLocks.lock(beamID)
+	defer unlock()
+
 	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return err
@@ -91,6 +98,11 @@ func (o *Orchestrator) ResumePreview(ctx context.Context, actor Actor, beamhallI
 }
 
 func (o *Orchestrator) resume(ctx context.Context, beamhallID, beamID domain.ID) (string, error) {
+	// Same serialization as pause: resume's stale full-row UpdateBeam must not
+	// interleave with another lifecycle op's read-modify-write on this beam.
+	unlock := o.beamLocks.lock(beamID)
+	defer unlock()
+
 	beam, err := o.operableBeam(ctx, beamhallID, beamID)
 	if err != nil {
 		return "", err

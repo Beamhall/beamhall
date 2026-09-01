@@ -1263,3 +1263,25 @@ func TestDeployFailsClosedWhenEgressSyncFails(t *testing.T) {
 		t.Fatalf("workload started despite missing egress policy: %v", w.drv.started)
 	}
 }
+
+func TestSetSecretRejectsPathShapedKey(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "keycheck", "Keycheck", "node")
+	if err != nil {
+		t.Fatalf("CreateBeam: %v", err)
+	}
+
+	// The key becomes the container-side bind target /run/secrets/<key>
+	// verbatim; a path-shaped key would relocate the read-only mount anywhere
+	// in the workload rootfs, and keys that sanitize to the same staged file
+	// would silently alias each other.
+	for _, key := range []string{"../../app/server.js", "a/b", "a b", "", "x:y", string(make([]byte, 65))} {
+		if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, key, []byte("v")); err == nil {
+			t.Fatalf("key %q must be rejected", key)
+		}
+	}
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, "GOOD_KEY_9", []byte("v")); err != nil {
+		t.Fatalf("valid key rejected: %v", err)
+	}
+}

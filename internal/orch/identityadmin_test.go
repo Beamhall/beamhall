@@ -308,3 +308,37 @@ func TestDeregisterIdentityGuardsMemberships(t *testing.T) {
 		t.Fatal("identity row should be gone after deregister")
 	}
 }
+
+func TestApproveRefusedAfterSensitiveTierDisabled(t *testing.T) {
+	w := newWorld(t)
+	fp := &fakeProvider{}
+	w.o.idp = fp
+	w.o.idpSensitive = true
+	ctx := context.Background()
+
+	req, err := w.o.RequestFederateDirectory(ctx, itActor(w),
+		identityadmin.DirectoryFederation{Name: "corp-ad", ConnectionURL: "ldaps://d:636", UsersDN: "DC=x"})
+	if err != nil {
+		t.Fatalf("RequestFederateDirectory: %v", err)
+	}
+
+	// The operator turns the sensitive tier off (e.g. across a restart) while
+	// the request is still pending: approval must fail closed, not execute a
+	// stored intent the appliance no longer permits.
+	w.o.idpSensitive = false
+	if _, err := w.o.ApproveAdminAction(ctx, secondIT(w), req.ID); err == nil {
+		t.Fatal("approval must be refused while the sensitive tier is disabled")
+	}
+	if fp.federated != "" {
+		t.Fatal("provider must NOT be invoked with the tier off")
+	}
+
+	// Re-enabling the tier makes the still-pending request approvable again.
+	w.o.idpSensitive = true
+	if _, err := w.o.ApproveAdminAction(ctx, secondIT(w), req.ID); err != nil {
+		t.Fatalf("ApproveAdminAction after re-enable: %v", err)
+	}
+	if fp.federated != "corp-ad" {
+		t.Fatal("provider not called once the tier is back on")
+	}
+}

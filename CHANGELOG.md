@@ -15,6 +15,32 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Fixed
+- Pause/resume (including the auto-pause timer) now serialize against
+  deploy/promote/rollback/destroy on the same beam, so a pause firing during a
+  promote can no longer erase the live channel from the beam record, and one
+  racing a destroy can no longer resurrect an archived beam.
+- Approving a sensitive admin action is now serialized and fully decided under
+  one guard: two concurrent approvals can no longer execute the action twice,
+  an approve can no longer interleave with a reject, and approval re-checks the
+  sensitive-tier switch (a request filed while the tier was on is not
+  approvable after the operator turns it off).
+- `archive_beam`'s preview-only guard is re-checked under the beam's lifecycle
+  lock, closing a race where an archive racing an in-flight promote could tear
+  down a beam that had just gone live (bypassing the IT-gated destroy path).
+- A failed container create no longer leaves the beam's decrypted secret files
+  staged on the tmpfs; the daemon also sweeps staging directories no container
+  references at startup.
+
+### Changed
+- `set_secret` keys are validated (1–64 letters, digits, or underscores): the
+  key is the container-side mount target `/run/secrets/<key>`, so path-shaped
+  keys are refused instead of relocating the mount inside the workload.
+- Managed-database identifiers now carry a short digest suffix
+  (`bh_<hall>_<beam>_<name>_<8hex>`), so distinct workspaces/beams whose
+  hyphenated names flatten to the same identifier can no longer collide on the
+  shared Postgres. Existing databases keep their recorded names.
+
 ## [0.5.0] - 2026-08-28
 
 ### Changed

@@ -281,12 +281,26 @@ func (o *Orchestrator) ApproveAdminAction(ctx context.Context, actor Actor, id d
 }
 
 func (o *Orchestrator) approveAdminAction(ctx context.Context, actor Actor, id domain.ID) (domain.AdminActionRequest, string, error) {
+	// Held across read → checks → execute → decide: without it, two concurrent
+	// approvers both see the request pending and double-execute the action, and
+	// an approve can interleave with a reject (the action executes while the
+	// record says rejected). The decide-once UPDATE alone protects the record,
+	// not the execution.
+	o.adminActionMu.Lock()
+	defer o.adminActionMu.Unlock()
+
 	req, err := o.st.GetAdminActionRequest(ctx, id)
 	if err != nil {
 		return domain.AdminActionRequest{}, "", err
 	}
 	if req.Status != domain.AdminActionPending {
 		return req, "", fmt.Errorf("request %s is already %s", id, req.Status)
+	}
+	// Re-checked at approval, not only at request time: a request filed while
+	// the sensitive tier was on must not stay approvable after the operator
+	// turns the tier off (e.g. across a restart).
+	if err := o.requireSensitiveTier(); err != nil {
+		return req, "", err
 	}
 	// Four-eyes: the approver cannot be the requester.
 	if req.RequestedBy == actor.ID {
@@ -317,6 +331,11 @@ func (o *Orchestrator) RejectAdminAction(ctx context.Context, actor Actor, id do
 		return o.itAudit(ctx, actor, "admin_reject_action", "", err)
 	}
 	op := func() error {
+		// Same serialization as approveAdminAction: a reject must not interleave
+		// with an in-flight approval's execute-then-decide sequence.
+		o.adminActionMu.Lock()
+		defer o.adminActionMu.Unlock()
+
 		req, err := o.st.GetAdminActionRequest(ctx, id)
 		if err != nil {
 			return err

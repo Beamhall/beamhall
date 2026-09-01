@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -81,6 +82,12 @@ type Orchestrator struct {
 	repoRetire   func(beamhallSlug, beamSlug, id string) error
 	log          *slog.Logger
 	beamLocks    *beamLocks
+	// adminActionMu serializes sensitive-action decisions (approve/reject):
+	// approval executes the stored intent BEFORE marking the request decided
+	// (so a failed execution stays retryable), which without serialization
+	// would let two concurrent approvers both pass the pending check and
+	// double-execute, or an approve interleave with a reject.
+	adminActionMu sync.Mutex
 
 	baseDomain        string
 	defaultPauseAfter time.Duration
