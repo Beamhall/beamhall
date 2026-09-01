@@ -15,6 +15,15 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-01
+
+The **using tier** ships: the apps built here now reach the people they were
+built for. Beamhall becomes three tiers — IT admins run the platform, builders
+build in it, and everyone else simply *uses* what has been published to them,
+through their own AI agent, with no capability to change anything. **Company
+branding** lands alongside it, so what those people open looks like it came
+from their company.
+
 ### Added
 - **Apps for the people who use them.** IT can now publish an app to an
   audience — everyone, named IdP groups, or named people — with the new
@@ -48,13 +57,60 @@ their auto-generated notes.
   not pinned to a release: a rollback brings back the old build wearing
   today's branding. Logos are PNG only (max 1 MB) and ride the standard backup.
 
+### Changed
+- **Every agent that connects here gets new standing orientation.** The MCP
+  server instructions — the first thing an agent reads, every session — gain a
+  **USING APPS OTHERS BUILT** section (a "what internal tools do we have?"
+  request routes to `list_apps`/`describe_app`, and a published internal app is
+  preferred over signing the user up for external SaaS) and a **COMPANY
+  BRANDING** section (call `show_branding` before writing or restyling any web
+  UI, and apply what it returns). Existing builder agents change behavior on
+  their next session with no action from you.
+- **`beams:use` now appears in the `scopes_supported` list the appliance
+  advertises** (the RFC 9728 protected-resource metadata every MCP client
+  reads). Operators on a bring-your-own IdP have one new scope to define and
+  grant for the user tier; `admin:it` stays deliberately excluded from that
+  list, as an out-of-band IT capability.
+- **The bundled realm is brought up to date at boot.** An appliance upgraded in
+  place never re-runs its install-time realm import, so it would otherwise never
+  learn a scope or client added after the day it was installed. `beamhalld` now
+  converges the realm at startup — additive and idempotent, verified live on the
+  appliance — creating only what this release needs: the `beams:use` client
+  scope, the `beamhall-user-agent` public client with its groups-claim mapper,
+  and `beams:use` attached as an optional scope on the existing
+  `beamhall-agent`. It never modifies, narrows, or removes anything an operator
+  configured.
+- `create_beam` takes an optional `description`: the one-line "what this app is
+  for" that end users see once IT publishes the app to them.
+
 ### Fixed
 - **Same-workspace container traffic no longer depends on a kernel module
   staying unloaded.** The per-workspace egress DROP now explicitly exempts
   same-bridge traffic: with `br_netfilter` loaded (which Docker may do at any
   time), the old ruleset silently severed every intra-workspace connection —
   including each app's own links to the managed Postgres and mail brokers.
-  External and cloud-metadata destinations remain denied exactly as before.
+  External and cloud-metadata destinations remain denied exactly as before. The
+  corrected ruleset is asserted at daemon startup, so it lands on the next
+  restart with no operator action.
+
+### Security
+- **IT-authored branding HTML runs in the workload's origin, never the control
+  origin.** The header/footer HTML IT sets with `admin_set_branding` is injected
+  into the apps teams build and is deliberately **not** sanitized — IT is
+  already inside the trust base, and sanitizing it is a documented non-goal
+  (`docs/threat-model.md` §2). The appliance's own `/brand/` routes serve only
+  magic-checked `image/png` (SVG is rejected — an SVG is an active document) and
+  `text/css` generated from charset-validated palette values, both with
+  `nosniff`, so nothing IT uploads can script the origin that hosts `/admin` and
+  `/mcp`.
+- **App audiences are a discovery boundary, not a network control.** An
+  unpublished or out-of-audience app is indistinguishable from one that does not
+  exist, and a using-tier token carries no capability scope and no workspace
+  membership — but a live app's URL stays reachable to anyone who already holds
+  it. Network reachability remains the gateway's and the app's own sign-in's
+  job. Group-based audiences trust the IdP-issued group claim: source
+  `BEAMHALL_OAUTH_GROUPS_CLAIM` from directory membership the subject cannot
+  influence, or disable group audiences by setting it empty.
 
 ## [0.5.1] - 2026-08-31
 
@@ -324,7 +380,8 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Beamhall/beamhall/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Beamhall/beamhall/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Beamhall/beamhall/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Beamhall/beamhall/compare/v0.3.0...v0.4.0
