@@ -551,9 +551,14 @@ const jsonLd = {
                   The agent never receives a credential. It can ask Beamhall to
                   create a database or store a secret, but it only gets back a
                   reference, never the password or connection string. Secrets are
-                  injected straight into the running app and stripped out of any logs
-                  the agent sees. Nothing sensitive passes through the model or its
-                  chat history.
+                  injected straight into the running app and stripped out of
+                  everything the agent can see: logs, metrics, and the live build
+                  output it watches while deploying. Nothing sensitive passes through
+                  the model or its chat history. On the way in, a decrypted value
+                  exists only in <span class="c-strong">memory</span> — Beamhall
+                  refuses to start if that staging area isn't RAM-backed, and sweeps
+                  it at boot — so plaintext never reaches a disk, a VM snapshot, or a
+                  backup image, even if the appliance crashes mid-deploy.
                 </div>
               </div>
 
@@ -658,7 +663,34 @@ const jsonLd = {
                   is written to a tamper-evident, append-only record, tied to the
                   person behind it. You get a complete, verifiable trail for incident
                   response and compliance, and any attempt to rewrite history is
-                  detectable.
+                  detectable. Enforcing a retention policy doesn't open a hole in
+                  that: pruning old entries is
+                  <span class="c-strong">anchored</span>, so what survives still
+                  verifies as an unbroken chain and a deletion nobody recorded still
+                  trips verification. Pruning asked for through the agent's tools
+                  needs a second administrator to approve it.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">Beamhall itself enforces all of this. What if it's raced, or updated out from under us?</div>
+                <div class="worry-a">
+                  The control plane is held to the same standard as the apps it runs.
+                  Actions on one app (deploy, promote, roll back, pause, destroy) are
+                  <span class="c-strong">serialized</span>, so overlapping requests
+                  can't be raced into a state nobody approved, and quota ceilings
+                  can't be slipped past by timing two requests together. A four-eyes
+                  approval can't be self-approved and can't be executed twice, and a
+                  request filed while the requirement was on can't be approved after
+                  it's switched off: it fails closed rather than sliding through.
+                  Updating
+                  Beamhall itself requires the published release checksum and a digest
+                  you supply <span class="c-strong">out of band</span> to agree before
+                  the new binary is even staged, and installing it is always a
+                  deliberate human step, never something the agent or an auto-updater
+                  does. And when something does break — a build cut short by a
+                  restart, an action whose audit entry can't be written — it surfaces
+                  as a visible failure rather than a quiet success.
                 </div>
               </div>
 
