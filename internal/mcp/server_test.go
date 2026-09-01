@@ -170,7 +170,7 @@ func (f *fakeBackplane) ShowBranding(ctx context.Context, actor orch.Actor, beam
 	f.record("ShowBranding:"+string(beamhallID), actor)
 	if f.brandingConfigured {
 		return orch.BrandingInfo{Configured: true, Scope: "facility", PrimaryColor: "#0B5FFF",
-			CSSURL: "https://bh.example/brand/ops/brand.css",
+			CSSURL:  "https://bh.example/brand/ops/brand.css",
 			LogoURL: "https://bh.example/brand/ops/logo-abcd1234.png"}, nil
 	}
 	return orch.BrandingInfo{}, nil
