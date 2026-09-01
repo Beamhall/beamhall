@@ -59,12 +59,14 @@ echo "$g" | grep -q "#AABBCC" && die "team-blue's override leaked into team-gree
 ok "team-green inherits the facility default"
 
 # --- 5. isolation + separation of duties --------------------------------------
+# bh-call.sh exits 0 even on a tool-level refusal — assert on the refusal text.
 say "5. denials: cross-hall read, builder write"
-call builder-carol show_branding "{\"beamhall\":\"$WORKSPACE_GREEN\"}" >/dev/null 2>&1 \
-  && die "carol read team-green's branding (isolation broken)"
+iso="$(call builder-carol show_branding "{\"beamhall\":\"$WORKSPACE_GREEN\"}" 2>/dev/null)"
+echo "$iso" | grep -qi "TOOL ERROR\|denied" || die "carol read team-green's branding (isolation broken): $iso"
+echo "$iso" | grep -q "#112233" && die "team-green's values leaked to carol: $iso"
 ok "carol → team-green branding: denied"
-call builder-carol admin_set_branding '{"primary_color":"#000000"}' >/dev/null 2>&1 \
-  && die "carol set branding (separation of duties broken)"
+sod="$(call builder-carol admin_set_branding '{"primary_color":"#000000"}' 2>/dev/null)"
+echo "$sod" | grep -qi "TOOL ERROR\|insufficient_scope\|denied" || die "carol set branding (separation of duties broken): $sod"
 ok "carol → admin_set_branding: denied"
 
 # --- 6. the gateway serves the public assets ----------------------------------
@@ -72,7 +74,9 @@ say "6. public assets over the gateway"
 css="$(curl -fsS --cacert "$CA" "$CSS_URL")" || die "brand.css not served: $CSS_URL"
 echo "$css" | grep -q -- "--brand-primary:#AABBCC;" || die "brand.css wrong palette: $css"
 curl -fsS --cacert "$CA" "$LOGO_URL" -o "$TMP/served.png" || die "logo not served: $LOGO_URL"
-head -c 4 "$TMP/served.png" | grep -q "PNG" || die "served logo is not a PNG"
+# LC_ALL=C: the PNG signature byte 0x89 makes BSD grep treat the input as
+# invalid text and miss the match under a UTF-8 locale.
+head -c 4 "$TMP/served.png" | LC_ALL=C grep -q "PNG" || die "served logo is not a PNG"
 ok "brand.css + logo live at their public URLs"
 
 # --- 7. clearing the override falls back --------------------------------------
