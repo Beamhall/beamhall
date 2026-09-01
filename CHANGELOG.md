@@ -15,7 +15,51 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-31
+
+A hardening release: a second adversarial verification pass over the control
+plane, closed end to end. No new tools and no seam changes — existing behavior
+tightened, plus two refusals an operator can hit at startup (see **Changed**).
+
+### Changed
+- **`beamhalld` refuses to start when the operator-supplied secret key file
+  (`BEAMHALL_SECRET_KEY_FILE`) is group- or world-accessible; chmod it to
+  0600.** The supported install is unaffected — `install.sh` writes
+  `/etc/beamhall/secret.key` as 0400 and the systemd unit hands it to the
+  daemon through `LoadCredential` — but a hand-placed key file with looser
+  permissions now blocks the boot instead of silently sealing every secret to a
+  readable key.
+- A request with `Origin: null` (an opaque browser origin, e.g. a sandboxed
+  iframe) is now refused by the `/mcp` origin allowlist instead of bypassing
+  the check. CLI MCP clients, which send no `Origin` at all, are unaffected.
+- `install.sh` now fails the install when `checksums.txt` cannot be fetched,
+  instead of silently skipping binary verification.
+- `set_secret` keys are validated (1–64 letters, digits, or underscores): the
+  key is the container-side mount target `/run/secrets/<key>`, so path-shaped
+  keys are refused instead of relocating the mount inside the workload.
+- The git transport rejects malformed repository paths outright (hall/beam
+  URL segments must be well-formed slugs).
+- Managed-database identifiers now carry a short digest suffix
+  (`bh_<hall>_<beam>_<name>_<8hex>`), so distinct workspaces/beams whose
+  hyphenated names flatten to the same identifier can no longer collide on the
+  shared Postgres. Existing databases keep their recorded names.
+- `docs/threat-model.md` now cites this wave's mitigations (tmpfs secret
+  staging, build-path scrubbing, audit-prune checkpointing, control-plane
+  serialization), and `docs/admin-over-mcp.md` documents the dual-digest
+  verification `admin_request_upgrade` performs.
+
+### Removed
+- `docs/PLAN.md` — the design contract (architecture, phasing, strategy) is no
+  longer published in the repo; it is maintainer-local. Public docs and code
+  comments still cite it as "PLAN §x.y"; operators evaluating the security
+  model should read `docs/threat-model.md` and `docs/beamhall-for-it.md`. The
+  file remains in git history at `v0.5.0` and earlier.
+
 ### Fixed
+- Microsoft Entra ID access tokens now authenticate correctly: the `scp` claim
+  is parsed in the space-delimited string form Entra emits (previously only
+  the array form was read, so every Entra token was denied with
+  `insufficient_scope`).
 - A build interrupted by a daemon restart no longer wedges the beam in
   `building` forever: boot moves it to `failed` with a redeploy hint (the
   normal redeploy path recovers it).
@@ -23,58 +67,40 @@ their auto-generated notes.
   no longer land between revoke and re-grant and silently drop the membership.
 - The auto-pause timer clears instead of retrying every cycle forever when its
   beam can no longer be paused (e.g. it is in `failed`).
-- `show_auth` and `set_secret` now verify the addressed beam belongs to the
-  authorized workspace, and `set_secret` refuses archived beams.
 - Mail relay: a message carrying more than one `From:` header is rejected
   (only the first was checked against the sender allowlist while a recipient's
   client may render the second); the upstream forwarder refuses to deliver
   unauthenticated when a smarthost credential is configured but the smarthost
   does not offer AUTH.
 
-### Changed
-- An IT admin action whose audit-chain append fails now reports that failure
-  (the action's effect stands, but success is never claimed unaudited) —
-  matching the PEP's audit-or-deny posture for agent actions.
-- Microsoft Entra ID access tokens now authenticate correctly: the `scp` claim
-  is parsed in the space-delimited string form Entra emits (previously only
-  the array form was read, so every Entra token was denied with
-  `insufficient_scope`).
-- Build output is now scrubbed like runtime logs: the live build progress
+### Security
+- **Lifecycle races closed.** Pause/resume (including the auto-pause timer) now
+  serialize against deploy/promote/rollback/destroy on the same beam, so a
+  pause firing during a promote can no longer erase the live channel from the
+  beam record, and one racing a destroy can no longer resurrect an archived
+  beam. `archive_beam`'s preview-only guard is re-checked under the beam's
+  lifecycle lock, closing a race where an archive racing an in-flight promote
+  could tear down a beam that had just gone live (bypassing the IT-gated
+  destroy path).
+- **Four-eyes approval is decided under one guard.** Approving a sensitive
+  admin action is serialized and fully decided under the lock: two concurrent
+  approvals can no longer execute the action twice, an approve can no longer
+  interleave with a reject, and approval re-checks the sensitive-tier switch (a
+  request filed while the tier was on is not approvable after the operator
+  turns it off).
+- **Decrypted secrets no longer survive a failed bring-up.** A failed container
+  create unstages the beam's secret files from the tmpfs; the daemon also
+  sweeps staging directories no container references at startup.
+- **Workspace containment on the auth/secret paths.** `show_auth` and
+  `set_secret` verify the addressed beam belongs to the authorized workspace,
+  and `set_secret` refuses archived beams.
+- **Build output is scrubbed like runtime logs.** The live build progress
   stream (MCP notifications and the `git push` sideband) and the failure tail
   embedded in build errors pass the beam's secret scrubber before leaving the
   backplane.
-- `install.sh` now fails the install when `checksums.txt` cannot be fetched,
-  instead of silently skipping binary verification.
-- Pause/resume (including the auto-pause timer) now serialize against
-  deploy/promote/rollback/destroy on the same beam, so a pause firing during a
-  promote can no longer erase the live channel from the beam record, and one
-  racing a destroy can no longer resurrect an archived beam.
-- Approving a sensitive admin action is now serialized and fully decided under
-  one guard: two concurrent approvals can no longer execute the action twice,
-  an approve can no longer interleave with a reject, and approval re-checks the
-  sensitive-tier switch (a request filed while the tier was on is not
-  approvable after the operator turns it off).
-- `archive_beam`'s preview-only guard is re-checked under the beam's lifecycle
-  lock, closing a race where an archive racing an in-flight promote could tear
-  down a beam that had just gone live (bypassing the IT-gated destroy path).
-- A failed container create no longer leaves the beam's decrypted secret files
-  staged on the tmpfs; the daemon also sweeps staging directories no container
-  references at startup.
-
-### Changed
-- A request with `Origin: null` (an opaque browser origin) is now refused by
-  the `/mcp` origin allowlist instead of bypassing the check.
-- `beamhalld` refuses to start when the operator-supplied secret key file
-  (`BEAMHALL_SECRET_KEY_FILE`) is group- or world-accessible; chmod it to 0600.
-- The git transport rejects malformed repository paths outright (hall/beam
-  URL segments must be well-formed slugs).
-- `set_secret` keys are validated (1–64 letters, digits, or underscores): the
-  key is the container-side mount target `/run/secrets/<key>`, so path-shaped
-  keys are refused instead of relocating the mount inside the workload.
-- Managed-database identifiers now carry a short digest suffix
-  (`bh_<hall>_<beam>_<name>_<8hex>`), so distinct workspaces/beams whose
-  hyphenated names flatten to the same identifier can no longer collide on the
-  shared Postgres. Existing databases keep their recorded names.
+- **An IT admin action whose audit-chain append fails now reports that
+  failure** (the action's effect stands, but success is never claimed
+  unaudited) — matching the PEP's audit-or-deny posture for agent actions.
 
 ## [0.5.0] - 2026-08-28
 
@@ -257,7 +283,8 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Beamhall/beamhall/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Beamhall/beamhall/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Beamhall/beamhall/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Beamhall/beamhall/compare/v0.2.0...v0.3.0
