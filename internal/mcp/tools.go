@@ -84,6 +84,11 @@ type updateBeamArgs struct {
 	DisplayName string `json:"display_name,omitempty" jsonschema:"the app's human-readable name; empty = unchanged"`
 }
 
+type showBeamPeersArgs struct {
+	Beamhall string `json:"beamhall" jsonschema:"beamhall slug"`
+	Beam     string `json:"beam" jsonschema:"beam (app) slug whose granted reach to show"`
+}
+
 type getRepoArgs struct {
 	Beamhall string `json:"beamhall" jsonschema:"beamhall slug"`
 	Beam     string `json:"beam" jsonschema:"beam slug"`
@@ -202,8 +207,12 @@ func (s *Server) registerTools() {
 		Description: "Read-only: get the COMPANY BRANDING your app should wear — the header and footer HTML, the logo URL, and the colour palette IT has defined for this beamhall (a per-team override layered field-by-field over the company-wide default). Call this BEFORE you write or restyle any web UI and apply what it returns: link the returned css_url (or copy its CSS custom properties — --brand-primary, --brand-secondary, --brand-accent, --brand-background, --brand-text) instead of inventing colours; put header_html at the top of every page and footer_html at the bottom; render logo_url as an <img> in the header. The stylesheet is hot-linkable, so an IT palette change reaches a running app with no redeploy. Your workload also gets the same values as the file /run/beamhall/brand.json from its next deploy_beam. IT sets this with admin_set_branding — builders cannot change it (separation of duties, like the sign-in group allowlist). If nothing is configured it says so, and you are free to design as you see fit.",
 	}, s.showBranding)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "show_beam_peers",
+		Description: "Read-only: see which OTHER APPS and external destinations IT has granted this app permission to reach. Apps cannot talk to each other over the network — sibling and cross-workspace calls are blocked at the bridge; the ONLY path is the Beamhall relay, and it works solely for granted, live targets. If your app needs to call another app (or an outside API), this shows what it may reach today; ask IT to widen it with admin_set_beam_peers — builders cannot. HOW YOUR APP CALLS A PEER: after its next deploy_beam following the first grant, the workload finds /run/beamhall/c2c.json ({endpoint, key_file}); it sends the key file's contents in the Beamhall-C2C-Key header to GET <endpoint>/c2c/v1/peers (its reachable apps), GET <endpoint>/c2c/v1/peer/<workspace>/<app>/tools (that app's tool menu), and POST <endpoint>/c2c/v1/peer/<workspace>/<app>/tools/<name> with JSON arguments (invoke). Targets must be LIVE and serve agent tools (the same contract try_beam_tool exercises); every relayed call is recorded on the audit chain. This tool also reports whether the credential has reached each channel yet — \"needs deploy_beam\" means the running workload predates the grant.",
+	}, s.showBeamPeers)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "set_secret",
-		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back.",
+		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back. Keys with the BEAMHALL_ prefix are reserved for platform-injected credentials.",
 	}, s.setSecret)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "show_logs",
@@ -921,6 +930,61 @@ func (s *Server) updateBeam(ctx context.Context, req *sdkmcp.CallToolRequest, ar
 	return text(fmt.Sprintf("beam %q updated — display name %q, description %q. This is what users see when IT publishes the app (admin_set_app_audience); the app itself was not redeployed.",
 			updated.Slug, updated.DisplayName, updated.Description)),
 		beamOut{Beam: updated.Slug, Beamhall: bh.Slug, State: string(updated.State), Mode: string(updated.Mode)}, nil
+}
+
+func (s *Server) showBeamPeers(ctx context.Context, req *sdkmcp.CallToolRequest, args showBeamPeersArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamhallsRead)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	v, err := s.bp.ShowBeamPeers(ctx, actor, bh.ID, beam.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	structured := map[string]any{
+		"app": beam.Slug, "workspace": bh.Slug,
+		"peers": v.Targets, "external": v.External,
+		"key_minted": v.KeyMinted, "preview_has_key": v.PreviewHas, "live_has_key": v.LiveHas,
+	}
+	if len(v.Targets) == 0 && len(v.External) == 0 {
+		return text(fmt.Sprintf("app %q has been granted NOTHING to reach — no peer apps, no external destinations. That is the default: apps cannot call each other or the outside world until IT grants it with admin_set_beam_peers (builders cannot widen this).", beam.Slug)), structured, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "app %q may reach:\n", beam.Slug)
+	for _, t := range v.Targets {
+		state := "live"
+		if !t.Live {
+			state = "NOT live — calls will refuse until its team runs promote_to_live"
+		}
+		tools := "serves agent tools"
+		if !t.AgentTools {
+			tools = "agent tools not detected on its live channel"
+		}
+		fmt.Fprintf(&b, "  - app %s/%s via the relay (%s; %s)\n", t.Workspace, t.App, state, tools)
+	}
+	for _, e := range v.External {
+		fmt.Fprintf(&b, "  - external destination %s (direct egress, this app's workloads only)\n", e)
+	}
+	switch {
+	case !v.KeyMinted:
+		b.WriteString("No relay credential exists yet — re-run admin_set_beam_peers (IT) to mint it.")
+	case !v.PreviewHas:
+		b.WriteString("The relay credential has NOT reached the preview workload yet — run deploy_beam once; the workload then finds /run/beamhall/c2c.json and /run/secrets/BEAMHALL_C2C_KEY.")
+	default:
+		b.WriteString("The preview workload holds the relay credential (/run/beamhall/c2c.json + /run/secrets/BEAMHALL_C2C_KEY).")
+		if v.HasLiveChan && !v.LiveHas {
+			b.WriteString(" The LIVE workload predates it — promote_to_live will carry it over.")
+		}
+	}
+	return text(b.String()), structured, nil
 }
 
 func (s *Server) pausePreview(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {

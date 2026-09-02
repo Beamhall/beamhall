@@ -70,6 +70,11 @@ type fakeBackplane struct {
 	appMenu     *apptools.Manifest
 	appResult   []byte
 	appToolsErr error
+
+	// Beam-to-beam knobs.
+	peerKeyCreated bool
+	peerTargetLive bool
+	peersView      orch.BeamPeersView
 }
 
 func (f *fakeBackplane) record(call string, actor orch.Actor) {
@@ -288,6 +293,31 @@ func (f *fakeBackplane) UpdateBeam(ctx context.Context, actor orch.Actor, beamha
 	return &domain.Beam{ID: beamID, BeamhallID: beamhallID, Slug: "tracker",
 		Description: desc, DisplayName: name,
 		State: domain.StateRunning, Mode: domain.ModePreview}, nil
+}
+
+func (f *fakeBackplane) SetBeamPeers(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, spec orch.PeerSpec) (orch.SetBeamPeersResult, error) {
+	f.record(fmt.Sprintf("SetBeamPeers:%s:peers=%v:external=%v:clear=%v", beamID, spec.Peers, spec.External, spec.Clear), actor)
+	if f.failWith != nil {
+		return orch.SetBeamPeersResult{}, f.failWith
+	}
+	if spec.Clear {
+		return orch.SetBeamPeersResult{}, nil
+	}
+	res := orch.SetBeamPeersResult{KeyCreated: f.peerKeyCreated}
+	for _, p := range spec.Peers {
+		ws, app, _ := strings.Cut(p, "/")
+		res.Targets = append(res.Targets, orch.PeerTargetView{Workspace: ws, App: app, Live: f.peerTargetLive})
+	}
+	res.Grant.Peers.External = spec.External
+	return res, nil
+}
+
+func (f *fakeBackplane) ShowBeamPeers(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.BeamPeersView, error) {
+	f.record(fmt.Sprintf("ShowBeamPeers:%s", beamID), actor)
+	if f.failWith != nil {
+		return orch.BeamPeersView{}, f.failWith
+	}
+	return f.peersView, nil
 }
 
 func (f *fakeBackplane) ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error) {
@@ -904,7 +934,8 @@ func TestToolListMatchesContract(t *testing.T) {
 	for _, want := range []string{"list_beams", "create_beam", "update_beam", "deploy_beam", "get_repo",
 		"create_database", "set_secret", "show_logs", "pause_preview", "resume_preview",
 		"promote_to_live", "rollback", "show_metrics", "archive_beam", "destroy_beam",
-		"show_branding", "try_beam_tool", "list_apps", "describe_app", "use_app", "create_queue"} {
+		"show_branding", "try_beam_tool", "list_apps", "describe_app", "use_app", "create_queue",
+		"show_beam_peers"} {
 		if !got[want] {
 			t.Errorf("builder tool %q missing from the contract", want)
 		}
@@ -912,7 +943,7 @@ func TestToolListMatchesContract(t *testing.T) {
 	// The admin surface must NOT leak into a builder's tool list.
 	for _, hidden := range []string{"admin_create_beamhall", "admin_list_beamhalls",
 		"admin_query_audit", "admin_set_branding", "admin_set_app_audience",
-		"list_pending_promotions", "approve_promotion"} {
+		"admin_set_beam_peers", "list_pending_promotions", "approve_promotion"} {
 		if got[hidden] {
 			t.Errorf("admin tool %q leaked into the builder tool list", hidden)
 		}

@@ -87,6 +87,10 @@ func TestMintVerifiesAgainstOwnJWKS(t *testing.T) {
 	claims := parsed.Claims.(jwt.MapClaims)
 	for k, want := range map[string]string{
 		"sub": "id-123", "email": "erin@corp.test", "channel": "live", "tool": "whoami",
+		// CallerType unset must stamp "user" — apps branch on this claim, so
+		// every assertion carries it; absence would make Stage-2 assertions
+		// indistinguishable from a claim-stripping downgrade.
+		"caller_type": CallerUser,
 	} {
 		if claims[k] != want {
 			t.Errorf("claim %s = %v, want %s", k, claims[k], want)
@@ -98,6 +102,32 @@ func TestMintVerifiesAgainstOwnJWKS(t *testing.T) {
 	exp, _ := claims.GetExpirationTime()
 	if until := time.Until(exp.Time); until > AssertionTTL+time.Second {
 		t.Errorf("exp too far out: %v", until)
+	}
+}
+
+func TestMintCallerTypeBeam(t *testing.T) {
+	s := newTestSigner(t)
+	tok, err := s.Mint(Assertion{Subject: "beam-src-1", CallerType: CallerBeam, Audience: "beam-9", Channel: "live", Tool: "add"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Split(tok, ".")[1]
+	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		CallerType string `json:"caller_type"`
+		Email      string `json:"email"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.CallerType != CallerBeam {
+		t.Errorf("caller_type = %q, want %q", c.CallerType, CallerBeam)
+	}
+	if c.Email != "" {
+		t.Errorf("a beam caller must carry no email, got %q", c.Email)
 	}
 }
 

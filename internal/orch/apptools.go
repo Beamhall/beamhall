@@ -153,7 +153,7 @@ func (o *Orchestrator) useApp(ctx context.Context, actor Actor, req UseAppReques
 	if err != nil {
 		return UseAppResult{}, hallID, beamID, err
 	}
-	res, err := o.callAppTool(ctx, actor, hallID, beamID, addr, "live", req.Tool, req.Arguments)
+	res, err := o.callAppTool(ctx, actor, apptools.CallerUser, hallID, beamID, addr, "live", req.Tool, req.Arguments)
 	res.View = view
 	return res, hallID, beamID, err
 }
@@ -193,20 +193,21 @@ func (o *Orchestrator) tryBeamTool(ctx context.Context, actor Actor, beamhallID,
 	case st.State != driver.WorkloadRunning || st.BackendAddr == "":
 		return UseAppResult{}, fmt.Errorf("the preview is not running (state %s) — deploy_beam to bring it up", st.State)
 	}
-	return o.callAppTool(ctx, actor, beamhallID, beamID, st.BackendAddr, "preview", tool, args)
+	return o.callAppTool(ctx, actor, apptools.CallerUser, beamhallID, beamID, st.BackendAddr, "preview", tool, args)
 }
 
 // callAppTool mints the assertion, performs the brokered request, and scrubs
 // everything app-authored before it leaves the process.
-func (o *Orchestrator) callAppTool(ctx context.Context, actor Actor, beamhallID, beamID domain.ID,
+func (o *Orchestrator) callAppTool(ctx context.Context, actor Actor, callerType string, beamhallID, beamID domain.ID,
 	addr, channel, tool string, args []byte) (UseAppResult, error) {
 	assertion, err := o.appSigner.Mint(apptools.Assertion{
-		Subject:  string(actor.ID),
-		Email:    actor.Email,
-		Groups:   actor.Groups,
-		Audience: string(beamID),
-		Channel:  channel,
-		Tool:     tool,
+		Subject:    string(actor.ID),
+		CallerType: callerType,
+		Email:      actor.Email,
+		Groups:     actor.Groups,
+		Audience:   string(beamID),
+		Channel:    channel,
+		Tool:       tool,
 	})
 	if err != nil {
 		return UseAppResult{}, fmt.Errorf("mint assertion: %w", err)
@@ -321,9 +322,10 @@ func (o *Orchestrator) probeAgentTools(ctx context.Context, beamID, releaseID do
 		channel = string(domain.ChannelPreview)
 	}
 	assertion, err := o.appSigner.Mint(apptools.Assertion{
-		Subject:  apptools.ProbeSubject,
-		Audience: string(beamID),
-		Channel:  channel,
+		Subject:    apptools.ProbeSubject,
+		CallerType: apptools.CallerProbe,
+		Audience:   string(beamID),
+		Channel:    channel,
 	})
 	if err != nil {
 		return

@@ -58,6 +58,7 @@ var toolScope = map[string]string{
 	"destroy_beam":           auth.ScopeBeamsWrite,
 	"try_beam_tool":          auth.ScopeBeamsOperate,
 	"update_beam":            auth.ScopeBeamsWrite,
+	"show_beam_peers":        auth.ScopeBeamhallsRead,
 
 	// Using tier (beams:use): discovery of apps published TO the caller, and
 	// the brokered call into one. No membership anywhere is required — the
@@ -92,6 +93,7 @@ var toolScope = map[string]string{
 	"admin_set_object_store_quota":    auth.ScopeAdminIT,
 	"admin_set_branding":              auth.ScopeAdminIT,
 	"admin_set_app_audience":          auth.ScopeAdminIT,
+	"admin_set_beam_peers":            auth.ScopeAdminIT,
 	"admin_list_releases":             auth.ScopeAdminIT,
 	"admin_query_audit":               auth.ScopeAdminIT,
 	"admin_verify_audit_chain":        auth.ScopeAdminIT,

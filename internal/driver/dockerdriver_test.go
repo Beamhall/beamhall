@@ -26,3 +26,20 @@ func TestUsernsRemapConfigured(t *testing.T) {
 		})
 	}
 }
+
+// TestBeamIDFromContainerName pins the name→beam derivation the relay's
+// caller-address check and the egress per-source rules depend on: workload
+// names are "bh_"+sanitize(beamID)+"-"+hex4, beam IDs are hyphen-free ULIDs,
+// broker/infra containers must not parse.
+func TestBeamIDFromContainerName(t *testing.T) {
+	name := "bh_" + instanceID("01M1DEYCQZWA0QA7B4G72CXVF6")
+	id, ok := BeamIDFromContainerName(name)
+	if !ok || id != "01M1DEYCQZWA0QA7B4G72CXVF6" {
+		t.Fatalf("BeamIDFromContainerName(%q) = %q %v", name, id, ok)
+	}
+	for _, n := range []string{"bh-postgres", "bh-mail", "beamhall-keycloak", "bh_", "bh_-abcd", "random"} {
+		if _, ok := BeamIDFromContainerName(n); ok {
+			t.Errorf("%q must not parse as a workload", n)
+		}
+	}
+}

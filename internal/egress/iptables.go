@@ -54,10 +54,25 @@ var AlwaysDeny = []string{
 	"169.254.0.0/16", // link-local incl. 169.254.169.254 cloud metadata
 }
 
+// SourceRule permits ONE workload (by its current container IP) to reach one
+// destination — the per-beam external grants. Re-derived from live network
+// state on every reconcile; a stale IP matches nothing (fail-closed).
+type SourceRule struct {
+	SourceIP string
+	Dest     string
+}
+
 // Policy is the egress desired-state for one Beamhall bridge.
 type Policy struct {
 	Bridge string   // host bridge interface, e.g. "br-0a1b2c3d4e5f" or "wcbr-ops"
 	Allow  []string // permitted destination CIDRs (e.g. "10.20.0.0/16", "1.1.1.1/32")
+	// SameBridgeAllow are the broker container IPs (managed Postgres, mail,
+	// object store) exempted from the intra-bridge deny — in BOTH directions.
+	// Everything else on the bridge, sibling workloads included, is denied:
+	// beam-to-beam rides the backplane relay, never the bridge.
+	SameBridgeAllow []string
+	// PerSource are the per-beam external grants for workloads on this bridge.
+	PerSource []SourceRule
 }
 
 // Reconciler programs the BEAMHALL-EGRESS and BEAMHALL-INPUT chains. The zero
@@ -164,14 +179,31 @@ func (r *Reconciler) buildScript(policies []Policy) ([]byte, error) {
 		}
 		// (Always-deny is the bridge-independent block above, ahead of this
 		// loop — it already covers this bridge, so no per-bridge repeat here.)
-		// Same-bridge traffic (container↔container and container↔broker inside
-		// one hall) is not egress. Whether it traverses FORWARD/DOCKER-USER at
-		// all depends on br_netfilter — a module Beamhall does not own and
-		// Docker may load at any time — and without this exemption the terminal
-		// DROP below would then sever every intra-hall connection, including
-		// the beams' own Postgres/SMTP broker links. The always-deny set above
-		// still precedes it.
-		fmt.Fprintf(&buf, "-A %s -i %s -o %s -j RETURN\n", chain, p.Bridge, p.Bridge)
+		// Same-bridge traffic may or may not traverse FORWARD/DOCKER-USER at
+		// all, depending on br_netfilter — a module Beamhall does not own and
+		// Docker may load at any time — so these rules must be correct under
+		// BOTH states. Only the hall's broker containers (managed Postgres,
+		// mail, object store) are exempt from the intra-bridge deny, and in
+		// both directions: rules here match origin-direction packets only (no
+		// conntrack, see above), so without the -s twin every broker REPLY
+		// would die at the per-bridge DROP under br_netfilter. Sibling
+		// workloads get no exemption — beam-to-beam rides the backplane
+		// relay, never the bridge.
+		for _, ip := range p.SameBridgeAllow {
+			if !restoreSafe(ip) {
+				return nil, fmt.Errorf("egress: unsafe broker address %q for bridge %s", ip, p.Bridge)
+			}
+			fmt.Fprintf(&buf, "-A %s -i %s -o %s -d %s -j RETURN\n", chain, p.Bridge, p.Bridge, ip)
+			fmt.Fprintf(&buf, "-A %s -i %s -o %s -s %s -j RETURN\n", chain, p.Bridge, p.Bridge, ip)
+		}
+		// Per-workload external grants: one source, one destination. Ahead of
+		// the hall allowlist only for readability — both RETURN.
+		for _, r := range p.PerSource {
+			if !restoreSafe(r.SourceIP) || !restoreSafe(r.Dest) {
+				return nil, fmt.Errorf("egress: unsafe per-source rule %q -> %q for bridge %s", r.SourceIP, r.Dest, p.Bridge)
+			}
+			fmt.Fprintf(&buf, "-A %s -i %s -s %s -d %s -j RETURN\n", chain, p.Bridge, r.SourceIP, r.Dest)
+		}
 		// Allowlist: permitted destinations RETURN to DOCKER-USER (accepted).
 		for _, cidr := range p.Allow {
 			if !restoreSafe(cidr) {

@@ -84,6 +84,14 @@ type BeamAudience struct {
 	UpdatedAt    int64
 }
 
+type BeamPeer struct {
+	SourceBeamID string
+	BeamhallID   string
+	PeersJson    string
+	UpdatedBy    string
+	UpdatedAt    int64
+}
+
 type Beamhall struct {
 	ID                string
 	Slug              string
@@ -128,6 +136,12 @@ type Build struct {
 	TriggeredBy   string
 	StartedAt     int64
 	FinishedAt    int64
+}
+
+type C2cKey struct {
+	BeamID    string
+	KeyHash   string
+	CreatedAt int64
 }
 
 type ControlKey struct {

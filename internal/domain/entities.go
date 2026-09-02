@@ -242,6 +242,40 @@ type BeamAudience struct {
 	UpdatedAt   time.Time
 }
 
+// PeerSet is what one beam is granted to reach: peer beams (relayed by the
+// backplane, stored by target beam id — stable across slug ambiguity) and
+// external destinations (per-beam egress entries, same grammar as the hall
+// allowlist).
+type PeerSet struct {
+	Beams    []ID     `json:"beams,omitempty"`
+	External []string `json:"external,omitempty"`
+}
+
+// Empty reports whether the set grants nothing.
+func (p PeerSet) Empty() bool { return len(p.Beams) == 0 && len(p.External) == 0 }
+
+// AllowsBeam reports whether target is a granted peer.
+func (p PeerSet) AllowsBeam(target ID) bool {
+	for _, id := range p.Beams {
+		if id == target {
+			return true
+		}
+	}
+	return false
+}
+
+// BeamPeers is one SOURCE beam's grant record. Its existence is the grant; a
+// beam with no row (or an empty set) reaches nothing. Targets are filtered at
+// read time (the relay's live-gate), so a stale target id is inert, never a
+// hole.
+type BeamPeers struct {
+	SourceBeamID ID
+	BeamhallID   ID
+	Peers        PeerSet
+	UpdatedBy    ID
+	UpdatedAt    time.Time
+}
+
 // ---------------------------------------------------------------------------
 // Beam, Build, Release, Route
 // ---------------------------------------------------------------------------

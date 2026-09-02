@@ -27,6 +27,22 @@ const (
 	// MountPath is where the verification material (issuer, audience, JWKS)
 	// is bound into every workload.
 	MountPath = "/run/beamhall/assertion.json"
+
+	// C2CMountPath is where a beam with peer grants finds its calling
+	// instructions (relay endpoint + key file path). Present only when the
+	// beam's release carries the relay key.
+	C2CMountPath = "/run/beamhall/c2c.json"
+	// C2CKeyName is the reserved secret key holding the beam's relay
+	// credential, injected at /run/secrets/<C2CKeyName>.
+	C2CKeyName = "BEAMHALL_C2C_KEY"
+	// HeaderC2CKey authenticates a beam to the relay listener.
+	HeaderC2CKey = "Beamhall-C2C-Key"
+	// C2CPathPeers lists the caller's granted targets; C2CPathPeer is the
+	// prefix for per-target menu/invoke routes:
+	//   GET  C2CPathPeer/<workspace>/<app>/tools
+	//   POST C2CPathPeer/<workspace>/<app>/tools/<name>
+	C2CPathPeers = "/c2c/v1/peers"
+	C2CPathPeer  = "/c2c/v1/peer/"
 )
 
 // Caps enforced broker-side so an app can never balloon an agent's context

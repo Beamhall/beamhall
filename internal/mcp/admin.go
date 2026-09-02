@@ -142,6 +142,14 @@ type setAppAudienceArgs struct {
 	Clear       bool     `json:"clear,omitempty" jsonschema:"UNPUBLISH — remove the app from every user's list (the inverse of publishing); all other fields are ignored"`
 }
 
+type setBeamPeersArgs struct {
+	Beamhall string   `json:"beamhall" jsonschema:"workspace (beamhall) slug that owns the CALLING app — from admin_list_beamhalls"`
+	Beam     string   `json:"beam" jsonschema:"the CALLING app (beam) slug — the one that needs to reach others"`
+	Peers    []string `json:"peers,omitempty" jsonschema:"apps this one may call, as \"<workspace>/<app>\" (any workspace, e.g. [\"finance/ledger\"]); calls go through the audited Beamhall relay, never directly over the network"`
+	External []string `json:"external,omitempty" jsonschema:"outside destinations this app's workloads may reach directly: IPv4 address, IPv4 CIDR, or hostname — no port suffixes (rules match the destination address)"`
+	Clear    bool     `json:"clear,omitempty" jsonschema:"REVOKE everything this app was granted (the inverse); all other fields are ignored"`
+}
+
 type federateDirectoryArgs struct {
 	Name          string `json:"name" jsonschema:"a label for the federation source, e.g. corp-ad"`
 	Vendor        string `json:"vendor,omitempty" jsonschema:"directory kind: ad (Active Directory) | other (generic LDAP)"`
@@ -314,6 +322,11 @@ func (s *Server) registerAdminTools() {
 		Name:        "admin_set_app_audience",
 		Description: "IT only: PUBLISH an app to the people who should use it. This is the third tier of Beamhall — IT admins run the platform, builders build the apps, and everyone else simply USES what's been published to them through their own AI agent (they connect with the beamhall-user-agent client and see only list_apps/describe_app). Name the workspace + app, then say who: everyone (any registered employee), groups (IdP group names, e.g. finance), identities (specific ids from admin_list_identities), or any combination — the audience is the union of all three. Those people's agents then see the app in list_apps / describe_app and get its live URL; to everyone else the app does not appear to exist. PUBLISHING IS NOT DEPLOYING: the owning team must still run promote_to_live before the URL works — publishing an unpromoted app is allowed and shows to users as \"not live yet\". Audiences are stored in Beamhall, never in your IdP; group names are matched against the group claim in the user's token (admin_list_groups lists the bundled IdP's groups). Set-and-replace: pass the FULL audience every time — anything you omit is dropped. Pass clear=true to UNPUBLISH (the inverse): the app vanishes from every user's list immediately, while the app itself keeps running and anyone already holding its URL can still reach it — publication controls discovery, not the network. Apps are unpublished by default, so nothing is exposed until you run this. Optional description sets the one-line \"what this is for\" users see (it otherwise stays whatever the builder wrote with create_beam).",
 	}, s.adminSetAppAudience)
+
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "admin_set_beam_peers",
+		Description: "IT only: grant one app permission to CALL OTHER APPS' tools, or to reach an outside service — the integration control (\"let the tracker use the ledger\", \"let this app call the payments API\"). By default apps reach NOTHING: not each other (even in the same workspace — the network between them is closed) and not the internet. Peers may live in ANY workspace; the calls never travel between the apps directly — they go through the Beamhall relay, which verifies the calling workload, re-checks this grant on EVERY call, and records each one on the audit chain, so revoking bites instantly. The TARGET app must be live (promote_to_live) and expose agent tools (the same contract use_app calls; docs/app-tools.md). GRANTING IS NOT ENOUGH for the SOURCE app: its workload picks up the relay credential and calling instructions (/run/beamhall/c2c.json) on its NEXT deploy_beam — tell its team to redeploy once after the first grant (show_beam_peers tells them the exact state). external entries open direct egress for this ONE app's workloads (IPv4/CIDR/hostname, no port suffixes) on top of the workspace-wide allowlist. Set-and-replace: pass the FULL grant every time — an entry you omit is revoked; clear=true revokes everything. Builders can read grants with show_beam_peers but never widen them.",
+	}, s.adminSetBeamPeers)
 
 	// Owned-IdP administration (bundled Keycloak). Disabled for bring-your-own-IdP.
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
@@ -1390,6 +1403,52 @@ func (s *Server) adminSetBranding(ctx context.Context, req *sdkmcp.CallToolReque
 	msg := fmt.Sprintf("branding set for %s (logo %s). Builders see it with show_branding and apply it to the apps they build; the palette stylesheet and logo are live at their public URLs now (show_branding returns them), and each beam picks the values up as /run/beamhall/brand.json on its next deploy_beam.",
 		scopeName, logoState)
 	return text(msg), map[string]any{"scope": scopeName, "logo": logoState}, nil
+}
+
+func (s *Server) adminSetBeamPeers(ctx context.Context, req *sdkmcp.CallToolRequest, args setBeamPeersArgs) (*sdkmcp.CallToolResult, any, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeAdminIT)
+	if err != nil {
+		return nil, nil, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, nil, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, nil, err
+	}
+	res, err := s.bp.SetBeamPeers(ctx, actor, bh.ID, beam.ID, orch.PeerSpec{
+		Peers: args.Peers, External: args.External, Clear: args.Clear,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if args.Clear {
+		return text(fmt.Sprintf("app %q in workspace %q now reaches NOTHING — every peer and external grant is revoked, effective immediately (the relay re-checks per call; in-flight external flows are cut on the next reconcile). Re-grant with admin_set_beam_peers.",
+			beam.Slug, bh.Slug)), map[string]any{"app": beam.Slug, "workspace": bh.Slug, "cleared": true}, nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "app %q in workspace %q may now reach:", beam.Slug, bh.Slug)
+	for _, t := range res.Targets {
+		fmt.Fprintf(&b, "\n  - app %s/%s via the audited relay", t.Workspace, t.App)
+		if !t.Live {
+			b.WriteString(" (NOT live yet — calls will refuse until its team runs promote_to_live)")
+		}
+	}
+	for _, e := range res.Grant.Peers.External {
+		fmt.Fprintf(&b, "\n  - external destination %s (this app's workloads only)", e)
+	}
+	if res.KeyCreated {
+		fmt.Fprintf(&b, "\nA relay credential was minted for %q — its team must run deploy_beam ONCE so the workload picks up /run/secrets/BEAMHALL_C2C_KEY and the calling instructions in /run/beamhall/c2c.json. show_beam_peers shows them the state and the how-to.", beam.Slug)
+	} else {
+		b.WriteString("\nThe grant is live now (the relay re-checks per call); the app's existing credential keeps working.")
+	}
+	b.WriteString("\nSet-and-replace: re-run with the full grant to change it; clear=true revokes everything.")
+	return text(b.String()), map[string]any{
+		"app": beam.Slug, "workspace": bh.Slug,
+		"peers": res.Targets, "external": res.Grant.Peers.External, "key_created": res.KeyCreated,
+	}, nil
 }
 
 func (s *Server) adminSetAppAudience(ctx context.Context, req *sdkmcp.CallToolRequest, args setAppAudienceArgs) (*sdkmcp.CallToolResult, any, error) {

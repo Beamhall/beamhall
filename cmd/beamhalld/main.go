@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,6 +33,7 @@ import (
 	"github.com/Beamhall/beamhall/internal/backup"
 	"github.com/Beamhall/beamhall/internal/brand"
 	"github.com/Beamhall/beamhall/internal/build"
+	"github.com/Beamhall/beamhall/internal/c2c"
 	"github.com/Beamhall/beamhall/internal/config"
 	"github.com/Beamhall/beamhall/internal/domain"
 	"github.com/Beamhall/beamhall/internal/driver"
@@ -589,7 +591,15 @@ func run() error {
 
 	// --- backplane: PEP + orchestrator + build + resources ----------------
 	pep := policy.New(st, auditLog)
-	egressSync := egressSyncFunc(cfg, st, drv, gw, logger)
+	// The c2c relay server is bound after the orchestrator exists (the
+	// pauseFn pattern); until then the sink is a no-op — the boot-time sync
+	// at the bottom of run() re-pushes once it is live.
+	var c2cSrv *c2c.Server
+	egressSync := egressSyncFunc(cfg, st, drv, gw, func(subnets []string) {
+		if c2cSrv != nil {
+			c2cSrv.SetSubnets(subnets)
+		}
+	}, logger)
 	repos := build.NewRepos(filepath.Join(cfg.DataDir, "repos")) // shared with the git server
 	// Backup config for the admin backup tools: the key path mirrors the boot
 	// key resolution; backups land in <DataDir>/backups unless overridden.
@@ -732,8 +742,16 @@ func run() error {
 	opts = append(opts, orch.WithAppTools(appSigner,
 		apptools.NewClient(time.Duration(cfg.AppToolTimeoutSecs)*time.Second, 5*time.Second),
 		orch.AppToolsConfig{RatePerMinute: cfg.UseAppRatePerMin, Burst: cfg.UseAppBurst}))
+	// Beam-to-beam relay (PLAN §5.15 stage 3): grants, the caller key mint,
+	// the c2c.json binding, and the relay ops. The facts fn keeps the
+	// RuntimeDriver seam untouched.
+	opts = append(opts, orch.WithC2C(orch.C2CConfig{
+		RatePerMinute: cfg.C2CRatePerMin, Burst: cfg.C2CBurst,
+		MaxInflight: cfg.C2CMaxInflight, Port: c2cPort(cfg.C2CAddr),
+	}, drv.NetworkFacts))
 	orchestrator := orch.New(st, drv, gw, sched, vault, pep, auditLog, cfg.BaseDomain, opts...)
 	pauseFn = orchestrator.PauseFunc()
+	c2cSrv = c2c.New(orchestrator, logger)
 
 	// --- boot reconciliation ----------------------------------------------
 	if err := orchestrator.Boot(ctx); err != nil {
@@ -868,10 +886,26 @@ func run() error {
 		Handler:           normalizeSourceIP(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	errCh := make(chan error, 1)
+	// The relay listener is DELIBERATELY a separate server: it is the one
+	// host port the BEAMHALL-INPUT guard opens to workload bridges, so
+	// nothing from the control mux may ever be mounted on it — and it reads
+	// raw socket addresses (no normalizeSourceIP: the remote address is
+	// authentication material and this listener has no proxy in front).
+	c2cHTTP := &http.Server{
+		Addr:              cfg.C2CAddr,
+		Handler:           c2cSrv,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	errCh := make(chan error, 2) // one slot per listener: a second failure must not block its goroutine
 	go func() {
 		logger.Info("http listener up", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+	go func() {
+		logger.Info("c2c relay listener up", "addr", cfg.C2CAddr)
+		if err := c2cHTTP.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -885,7 +919,21 @@ func run() error {
 	logger.Info("beamhalld shutting down")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutCtx)
+	return errors.Join(srv.Shutdown(shutCtx), c2cHTTP.Shutdown(shutCtx))
+}
+
+// c2cPort extracts the numeric port of the relay listener for c2c.json and
+// the BEAMHALL-INPUT allow list; 0 (unparsable) leaves the relay binding off.
+func c2cPort(addr string) int {
+	_, p, err := splitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0
+	}
+	return n
 }
 
 // egressSyncFunc asserts the default-deny + allowlist iptables state for
@@ -897,9 +945,16 @@ func run() error {
 // boot-only assertion would leave a new beamhall's first workloads
 // unprotected until the next restart. Linux-only by nature; a no-op elsewhere
 // (dev hosts have no DOCKER-USER chain).
-func egressSyncFunc(cfg config.Config, st *store.Store, drv *driver.DockerDriver, gw *gateway.Gateway, logger *slog.Logger) func(context.Context) error {
+func egressSyncFunc(cfg config.Config, st *store.Store, drv *driver.DockerDriver, gw *gateway.Gateway, c2cSubnets func([]string), logger *slog.Logger) func(context.Context) error {
 	rec := egress.New(cfg.EgressAlwaysDeny...)
-	rec.AllowHostPorts(listenPorts(cfg.GatewayListen)...)
+	guardPorts := listenPorts(cfg.GatewayListen)
+	if p := c2cPort(cfg.C2CAddr); p > 0 {
+		// The relay listener is the ONE deliberate, authenticated hole in the
+		// bridge→host guard.
+		guardPorts = append(guardPorts, p)
+	}
+	rec.AllowHostPorts(guardPorts...)
+	brokerNames := []string{cfg.PGBeamHost, cfg.MailBeamHost, cfg.ObjStoreBeamHost}
 	return func(ctx context.Context) error {
 		if runtime.GOOS != "linux" {
 			logger.Debug("egress reconciliation skipped (not linux)")
@@ -909,11 +964,21 @@ func egressSyncFunc(cfg config.Config, st *store.Store, drv *driver.DockerDriver
 		if err != nil {
 			return fmt.Errorf("egress: list beamhalls: %w", err)
 		}
+		grants, err := st.ListBeamPeers(ctx)
+		if err != nil {
+			return fmt.Errorf("egress: list peer grants: %w", err)
+		}
+		external := make(map[string][]string) // beam id -> external entries
+		for _, g := range grants {
+			if len(g.Peers.External) > 0 {
+				external[string(g.SourceBeamID)] = g.Peers.External
+			}
+		}
 		var policies []egress.Policy
 		var subnets []string
 		for _, bh := range halls {
 			netName := "bh-" + string(bh.ID)
-			bridge, err := drv.NetworkBridge(ctx, netName)
+			facts, err := drv.NetworkFacts(ctx, netName)
 			if err != nil {
 				continue // no network yet — nothing to protect or break
 			}
@@ -924,18 +989,38 @@ func egressSyncFunc(cfg config.Config, st *store.Store, drv *driver.DockerDriver
 				// mode back.
 				allow = nil
 			}
-			policies = append(policies, egress.Policy{Bridge: bridge, Allow: allow})
-			sn, err := drv.NetworkSubnets(ctx, netName)
-			if err != nil {
-				return fmt.Errorf("egress: subnets for %s: %w", netName, err)
+			p := egress.Policy{Bridge: facts.Bridge, Allow: allow}
+			// Only the hall's broker containers are exempt from the
+			// intra-bridge deny; sibling workloads talk through the relay.
+			for name, ip := range facts.ContainerIPs {
+				if slices.Contains(brokerNames, name) {
+					p.SameBridgeAllow = append(p.SameBridgeAllow, ip)
+					continue
+				}
+				// Per-beam external grants ride the workload's CURRENT
+				// container address — re-derived here on every reconcile.
+				if beamID, ok := driver.BeamIDFromContainerName(name); ok {
+					for _, dest := range external[beamID] {
+						p.PerSource = append(p.PerSource, egress.SourceRule{SourceIP: ip, Dest: dest})
+					}
+				}
 			}
-			subnets = append(subnets, sn...)
+			sort.Strings(p.SameBridgeAllow)
+			sort.Slice(p.PerSource, func(i, j int) bool {
+				a, b := p.PerSource[i], p.PerSource[j]
+				return a.SourceIP+a.Dest < b.SourceIP+b.Dest
+			})
+			policies = append(policies, p)
+			subnets = append(subnets, facts.Subnets...)
 		}
 		if err := rec.Reconcile(ctx, policies); err != nil {
 			return err
 		}
 		if err := gw.SetWorkloadSubnets(ctx, subnets); err != nil {
 			return fmt.Errorf("gateway workload guard: %w", err)
+		}
+		if c2cSubnets != nil {
+			c2cSubnets(subnets)
 		}
 		logger.Info("egress policy asserted", "bridges", len(policies), "guarded_subnets", len(subnets))
 		return nil

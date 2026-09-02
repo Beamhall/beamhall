@@ -195,17 +195,77 @@ func (d *DockerDriver) NetworkBridge(ctx context.Context, name string) (string, 
 // gateway's workload guard needs them to recognize container-originated
 // requests by source address.
 func (d *DockerDriver) NetworkSubnets(ctx context.Context, name string) ([]string, error) {
+	f, err := d.NetworkFacts(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return f.Subnets, nil
+}
+
+// NetworkFacts is everything the network-policy machinery needs about one
+// Beamhall network, from a single inspect: the host bridge (egress rules key
+// on it), the IPAM subnets (the gateway/relay guards match sources against
+// them), the gateway IP (workloads reach the relay through it), and the
+// current container name→IPv4 map (broker exemptions, per-beam source rules,
+// and the relay's caller-address check).
+type NetworkFacts struct {
+	Bridge       string
+	Subnets      []string
+	Gateway      string
+	ContainerIPs map[string]string
+}
+
+// NetworkFacts inspects one Beamhall network. One driver call serves every
+// per-reconcile consumer — the reconcile runs on every workload spawn, so
+// this stays a single inspect per hall.
+func (d *DockerDriver) NetworkFacts(ctx context.Context, name string) (NetworkFacts, error) {
 	n, err := d.cli.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("network inspect %q: %w", name, err)
+		return NetworkFacts{}, fmt.Errorf("network inspect %q: %w", name, err)
 	}
-	var subnets []string
+	f := NetworkFacts{ContainerIPs: make(map[string]string, len(n.Containers))}
+	if br := n.Options["com.docker.network.bridge.name"]; br != "" {
+		f.Bridge = br
+	} else if len(n.ID) >= 12 {
+		f.Bridge = "br-" + n.ID[:12]
+	} else {
+		return NetworkFacts{}, fmt.Errorf("network %q has no resolvable bridge", name)
+	}
 	for _, c := range n.IPAM.Config {
 		if c.Subnet != "" {
-			subnets = append(subnets, c.Subnet)
+			f.Subnets = append(f.Subnets, c.Subnet)
+		}
+		if f.Gateway == "" && c.Gateway != "" {
+			f.Gateway = c.Gateway
 		}
 	}
-	return subnets, nil
+	for _, c := range n.Containers {
+		ip := c.IPv4Address
+		if i := strings.IndexByte(ip, '/'); i >= 0 {
+			ip = ip[:i]
+		}
+		if c.Name != "" && ip != "" {
+			f.ContainerIPs[c.Name] = ip
+		}
+	}
+	return f, nil
+}
+
+// BeamIDFromContainerName recovers the beam ID a workload container belongs
+// to from its name, or ok=false for non-workload containers (brokers, infra).
+// Names are minted as "bh_"+sanitize(beamID)+"-"+4 random hex bytes
+// (instanceID); beam IDs are ULIDs — alphanumeric, unchanged by sanitize and
+// hyphen-free — so the trailing "-suffix" is unambiguous.
+func BeamIDFromContainerName(name string) (string, bool) {
+	rest, ok := strings.CutPrefix(name, "bh_")
+	if !ok {
+		return "", false
+	}
+	i := strings.LastIndexByte(rest, '-')
+	if i <= 0 {
+		return "", false
+	}
+	return rest[:i], true
 }
 
 // Deploy creates (does not start) a container from the pinned image with the

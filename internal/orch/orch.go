@@ -157,6 +157,17 @@ type Orchestrator struct {
 	appToolsCfg AppToolsConfig
 	useLimiters map[domain.ID]*rate.Limiter
 	useLimMu    sync.Mutex
+
+	// Beam-to-beam relay (WithC2C, PLAN §5.15 stage 3). netFacts resolves a
+	// hall network's live facts (injected from main — keeps the RuntimeDriver
+	// seam untouched); nil leaves the relay, the key mint, and the c2c
+	// binding inert. c2cLimiters/c2cInflight are a SEPARATE keyspace from
+	// useLimiters — beam callers must not drain user budgets.
+	c2cCfg      C2CConfig
+	netFacts    NetworkFactsFn
+	c2cLimiters map[domain.ID]*rate.Limiter
+	c2cInflight map[domain.ID]int
+	c2cLimMu    sync.Mutex
 }
 
 // startupPolls divides the startup grace into status checks.

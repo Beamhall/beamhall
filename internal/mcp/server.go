@@ -76,6 +76,11 @@ type Backplane interface {
 	UseApp(ctx context.Context, actor orch.Actor, req orch.UseAppRequest) (orch.UseAppResult, error)
 	TryBeamTool(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, tool string, args []byte) (orch.UseAppResult, error)
 	UpdateBeam(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, upd orch.BeamUpdate) (*domain.Beam, error)
+	// Beam-to-beam grants (stage 3): the IT write and the builder read. The
+	// relay invocation itself never crosses MCP — beams authenticate to the
+	// dedicated c2c listener with their injected key.
+	SetBeamPeers(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, spec orch.PeerSpec) (orch.SetBeamPeersResult, error)
+	ShowBeamPeers(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (orch.BeamPeersView, error)
 	ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error)
 	PausePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ResumePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (string, error)
@@ -266,6 +271,13 @@ APPS WITH THEIR OWN TOOLS (builders): any beam may expose tools to its users' ` 
 	`header against /run/beamhall/assertion.json (mounted on every deploy). Test with ` +
 	`try_beam_tool while the app is still in preview; after promote_to_live and IT's ` +
 	`admin_set_app_audience, users reach the same tools with use_app.
+
+APPS CALLING APPS (builders): apps cannot reach each other over the network — the ` +
+	`only path is the audited Beamhall relay, and only for targets IT has granted with ` +
+	`admin_set_beam_peers. If the app you are building needs another app (or an outside ` +
+	`API), check show_beam_peers: it shows what this app may reach and teaches the ` +
+	`in-app calling contract (/run/beamhall/c2c.json). Never work around a missing ` +
+	`grant by proxying through a browser or an external service — ask IT.
 
 COMPANY BRANDING: before you write or restyle any web UI, call show_branding — the ` +
 	`company may define the header, footer, logo, and colour palette every app built ` +

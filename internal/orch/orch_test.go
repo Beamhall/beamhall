@@ -156,6 +156,7 @@ type world struct {
 	drv   *fakeDriver
 	gw    *fakeGateway
 	sched *scheduler.Scheduler
+	vault *secret.Vault
 	bh    *domain.Beamhall
 	admin Actor
 	build Actor // builder-role actor
@@ -216,7 +217,7 @@ func newWorldOpts(t *testing.T, extra ...Option) *world {
 		WithUserTier(UserTierConfig{AutoRegister: true, GroupAudiences: true}),
 	}, extra...)
 	o := New(st, drv, gw, sched, vault, pep, alog, "bh.example", opts...)
-	return &world{o: o, st: st, drv: drv, gw: gw, sched: sched, bh: bh,
+	return &world{o: o, st: st, drv: drv, gw: gw, sched: sched, vault: vault, bh: bh,
 		admin: mkActor(domain.RoleBeamhallAdmin), build: mkActor(domain.RoleBuilder)}
 }
 

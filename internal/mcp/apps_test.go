@@ -451,3 +451,85 @@ func TestUpdateBeamScopesAndCopy(t *testing.T) {
 		t.Fatalf("UpdateBeam not called with the description: %v", h.bp.calls)
 	}
 }
+
+func TestShowBeamPeersScopeAndCopy(t *testing.T) {
+	h := newHarness(t)
+
+	// The using tier never reaches it.
+	user := h.connect(t, auth.ScopeBeamsUse, nil)
+	res, err := user.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name: "show_beam_peers", Arguments: map[string]any{"beamhall": "ops", "beam": "tracker"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(callText(t, res), "insufficient_scope") {
+		t.Fatalf("user reached show_beam_peers: %q", callText(t, res))
+	}
+
+	// Builder read: the copy must teach the in-app calling contract and the
+	// pending-deploy state.
+	h.bp.peersView = orch.BeamPeersView{
+		Targets:   []orch.PeerTargetView{{Workspace: "finance", App: "ledger", Live: true, AgentTools: true}},
+		External:  []string{"api.corp.internal"},
+		KeyMinted: true, PreviewHas: false,
+	}
+	builder := h.connect(t, auth.ScopeBeamhallsRead, nil)
+	_, txt := h.call(t, builder, "show_beam_peers", map[string]any{"beamhall": "ops", "beam": "tracker"}, false)
+	for _, want := range []string{"finance/ledger", "api.corp.internal", "deploy_beam once", "c2c.json"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("show_beam_peers text missing %q: %q", want, txt)
+		}
+	}
+
+	// Nothing granted: says so, and names the IT tool.
+	h.bp.peersView = orch.BeamPeersView{}
+	_, txt = h.call(t, builder, "show_beam_peers", map[string]any{"beamhall": "ops", "beam": "tracker"}, false)
+	if !strings.Contains(txt, "NOTHING") || !strings.Contains(txt, "admin_set_beam_peers") {
+		t.Fatalf("empty-grant text = %q", txt)
+	}
+}
+
+func TestAdminSetBeamPeersScopeAndCopy(t *testing.T) {
+	h := newHarness(t)
+
+	// Builders cannot write grants.
+	builder := h.connect(t, auth.ScopeBeamsWrite, nil)
+	res, err := builder.CallTool(context.Background(), &sdkmcp.CallToolParams{
+		Name: "admin_set_beam_peers", Arguments: map[string]any{
+			"beamhall": "ops", "beam": "tracker", "peers": []any{"finance/ledger"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(callText(t, res), "insufficient_scope") {
+		t.Fatalf("builder reached admin_set_beam_peers: %q", callText(t, res))
+	}
+
+	// The IT grant: on a first grant the copy must front-load the redeploy.
+	h.bp.peerKeyCreated = true
+	h.bp.peerTargetLive = true
+	admin := h.connect(t, auth.ScopeAdminIT, nil)
+	_, txt := h.call(t, admin, "admin_set_beam_peers", map[string]any{
+		"beamhall": "ops", "beam": "tracker",
+		"peers": []any{"finance/ledger"}, "external": []any{"api.corp.internal"}}, false)
+	for _, want := range []string{"finance/ledger", "audited relay", "api.corp.internal", "deploy_beam ONCE", "show_beam_peers"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("grant text missing %q: %q", want, txt)
+		}
+	}
+	var seen bool
+	for _, c := range h.bp.calls {
+		if strings.HasPrefix(c, "SetBeamPeers:") && strings.Contains(c, "peers=[finance/ledger]") {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatalf("SetBeamPeers not called: %v", h.bp.calls)
+	}
+
+	// Revocation copy: immediate effect, named inverse.
+	_, txt = h.call(t, admin, "admin_set_beam_peers", map[string]any{
+		"beamhall": "ops", "beam": "tracker", "clear": true}, false)
+	if !strings.Contains(txt, "NOTHING") || !strings.Contains(txt, "effective immediately") {
+		t.Fatalf("clear text = %q", txt)
+	}
+}

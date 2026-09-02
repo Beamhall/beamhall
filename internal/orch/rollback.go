@@ -186,6 +186,9 @@ func (o *Orchestrator) destroy(ctx context.Context, beamhallID, beamID domain.ID
 	// they'd survive the beam's destruction with no way to ever reach or
 	// delete them again).
 	o.reclaimUserSecrets(ctx, beamhallID, beamID)
+	// Sweep the beam's peer grants and relay key (grants naming it as a
+	// TARGET need no sweep — they read-time-filter into nothing).
+	o.reclaimPeerGrants(ctx, beamID)
 
 	// Retire the managed git repo aside so a reused slug starts fresh (a stale
 	// inherited history otherwise forces divergent-push reconciliation; lab

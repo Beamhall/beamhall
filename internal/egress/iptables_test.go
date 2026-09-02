@@ -14,7 +14,7 @@ import (
 func TestBuildScriptAtomicAndOrdered(t *testing.T) {
 	r := New("10.0.0.5/32") // extra always-deny (host IP)
 	script, err := r.buildScript([]Policy{
-		{Bridge: "br-abc123", Allow: []string{"1.1.1.1/32"}},
+		{Bridge: "br-abc123", Allow: []string{"1.1.1.1/32"}, SameBridgeAllow: []string{"172.18.0.9"}},
 	})
 	if err != nil {
 		t.Fatalf("buildScript: %v", err)
@@ -33,50 +33,95 @@ func TestBuildScriptAtomicAndOrdered(t *testing.T) {
 
 	metadataIdx := strings.Index(s, "-d 169.254.0.0/16 -j DROP")
 	hostIdx := strings.Index(s, "-d 10.0.0.5/32 -j DROP")
-	sameBridgeIdx := strings.Index(s, "-A "+chain+" -i br-abc123 -o br-abc123 -j RETURN")
+	brokerIdx := strings.Index(s, "-A "+chain+" -i br-abc123 -o br-abc123 -d 172.18.0.9 -j RETURN")
 	allowIdx := strings.Index(s, "-d 1.1.1.1/32 -j RETURN")
 	defaultDenyIdx := strings.Index(s, "-A "+chain+" -i br-abc123 -j DROP")
-	if metadataIdx < 0 || hostIdx < 0 || sameBridgeIdx < 0 || allowIdx < 0 || defaultDenyIdx < 0 {
+	if metadataIdx < 0 || hostIdx < 0 || brokerIdx < 0 || allowIdx < 0 || defaultDenyIdx < 0 {
 		t.Fatalf("missing expected rule(s):\n%s", s)
 	}
-	if !(metadataIdx < sameBridgeIdx && hostIdx < sameBridgeIdx && sameBridgeIdx < allowIdx && allowIdx < defaultDenyIdx) {
-		t.Fatalf("rule ordering wrong (always-deny < same-bridge exemption < allow < default-deny):\n%s", s)
+	if !(metadataIdx < brokerIdx && hostIdx < brokerIdx && brokerIdx < allowIdx && allowIdx < defaultDenyIdx) {
+		t.Fatalf("rule ordering wrong (always-deny < broker exemption < allow < default-deny):\n%s", s)
 	}
 }
 
-// TestSameBridgeTrafficIsExempt guards the br_netfilter failure mode: with the
-// bridge-nf-call-iptables sysctl on (Docker can load the module at any time),
-// same-bridge container traffic traverses DOCKER-USER and, without an explicit
-// -i br -o br RETURN ahead of the terminal DROP, every intra-hall connection —
-// beam↔beam and beam↔broker (Postgres, SMTP) — is silently severed.
-func TestSameBridgeTrafficIsExempt(t *testing.T) {
+// TestSameBridgeExemptionIsBrokerScoped: only broker containers are exempt
+// from the intra-bridge deny — in BOTH directions (rules match origin packets
+// only, no conntrack, so under br_netfilter broker REPLIES need the -s twin
+// or they die at the per-bridge DROP). Sibling workloads get NO exemption —
+// beam-to-beam rides the backplane relay, never the bridge — and a bridge
+// with no brokers attached has no same-bridge exemption at all.
+func TestSameBridgeExemptionIsBrokerScoped(t *testing.T) {
 	r := New()
 	script, err := r.buildScript([]Policy{
-		{Bridge: "br-abc123"},
+		{Bridge: "br-abc123", SameBridgeAllow: []string{"172.18.0.9", "172.18.0.10"}},
 		{Bridge: "br-def456", Allow: []string{"1.1.1.1/32"}},
 	})
 	if err != nil {
 		t.Fatalf("buildScript: %v", err)
 	}
 	s := string(script)
-	for _, br := range []string{"br-abc123", "br-def456"} {
-		ret := "-A " + chain + " -i " + br + " -o " + br + " -j RETURN"
-		drop := "-A " + chain + " -i " + br + " -j DROP"
-		if !strings.Contains(s, ret) {
-			t.Fatalf("bridge %s has no same-bridge exemption:\n%s", br, s)
+	drop := "-A " + chain + " -i br-abc123 -j DROP"
+	for _, ip := range []string{"172.18.0.9", "172.18.0.10"} {
+		dst := "-A " + chain + " -i br-abc123 -o br-abc123 -d " + ip + " -j RETURN"
+		src := "-A " + chain + " -i br-abc123 -o br-abc123 -s " + ip + " -j RETURN"
+		if !strings.Contains(s, dst) || !strings.Contains(s, src) {
+			t.Fatalf("broker %s missing a direction (need both -d and -s):\n%s", ip, s)
 		}
-		if strings.Index(s, ret) > strings.Index(s, drop) {
-			t.Fatalf("bridge %s: same-bridge RETURN must precede the terminal DROP:\n%s", br, s)
+		if strings.Index(s, dst) > strings.Index(s, drop) || strings.Index(s, src) > strings.Index(s, drop) {
+			t.Fatalf("broker rules must precede the terminal DROP:\n%s", s)
 		}
 	}
-	// The exemption must stay bridge-pinned on both sides: cross-bridge
-	// traffic (-i br-a -o br-b) must fall through to the terminal DROP.
+	// The blanket exemption is gone: no bare -i br -o br RETURN anywhere.
+	if strings.Contains(s, "-i br-abc123 -o br-abc123 -j RETURN") ||
+		strings.Contains(s, "-i br-def456 -o br-def456 -j RETURN") {
+		t.Fatalf("blanket same-bridge RETURN must not exist (sibling dial is closed):\n%s", s)
+	}
+	// Cross-bridge stays pinned: nothing pairs two different bridges.
 	if strings.Contains(s, "-i br-abc123 -o br-def456") {
 		t.Fatalf("cross-bridge exemption must not exist:\n%s", s)
 	}
-	// And it must not outrank the metadata always-deny.
-	if strings.Index(s, "-d 169.254.0.0/16 -j DROP") > strings.Index(s, "-o br-abc123 -j RETURN") {
-		t.Fatalf("always-deny must precede the same-bridge exemption:\n%s", s)
+	// And nothing outranks the metadata always-deny.
+	if strings.Index(s, "-d 169.254.0.0/16 -j DROP") > strings.Index(s, "-o br-abc123 -d 172.18.0.9 -j RETURN") {
+		t.Fatalf("always-deny must precede the broker exemption:\n%s", s)
+	}
+}
+
+// TestPerSourceRules: a per-beam external grant permits exactly one workload
+// (source IP) to one destination; other workloads on the bridge still hit the
+// terminal DROP for that destination.
+func TestPerSourceRules(t *testing.T) {
+	r := New()
+	script, err := r.buildScript([]Policy{{
+		Bridge:    "br-abc123",
+		PerSource: []SourceRule{{SourceIP: "172.18.0.4", Dest: "api.corp.internal"}},
+	}})
+	if err != nil {
+		t.Fatalf("buildScript: %v", err)
+	}
+	s := string(script)
+	rule := "-A " + chain + " -i br-abc123 -s 172.18.0.4 -d api.corp.internal -j RETURN"
+	drop := "-A " + chain + " -i br-abc123 -j DROP"
+	if !strings.Contains(s, rule) {
+		t.Fatalf("per-source rule missing:\n%s", s)
+	}
+	if strings.Index(s, rule) > strings.Index(s, drop) {
+		t.Fatalf("per-source rule must precede the terminal DROP:\n%s", s)
+	}
+	if strings.Index(s, "-d 169.254.0.0/16 -j DROP") > strings.Index(s, rule) {
+		t.Fatalf("always-deny must precede per-source rules:\n%s", s)
+	}
+	// Injection guard covers the new fields too.
+	if _, err := r.buildScript([]Policy{{
+		Bridge:    "br-x",
+		PerSource: []SourceRule{{SourceIP: "1.2.3.4\n-A INPUT -j ACCEPT", Dest: "d"}},
+	}}); err == nil {
+		t.Fatal("expected rejection of a newline-embedded source IP")
+	}
+	if _, err := r.buildScript([]Policy{{
+		Bridge:          "br-x",
+		SameBridgeAllow: []string{"1.2.3.4\n-A INPUT -j ACCEPT"},
+	}}); err == nil {
+		t.Fatal("expected rejection of a newline-embedded broker address")
 	}
 }
 

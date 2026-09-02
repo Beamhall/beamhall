@@ -92,6 +92,15 @@ type Config struct {
 	UseAppRatePerMin   int
 	UseAppBurst        int
 
+	// Beam-to-beam relay (BEAMHALL_C2C_*): the dedicated listener address
+	// workloads reach through their bridge gateway, the per-source-beam call
+	// rate (0 disables), and the per-source in-flight cap bounding relay
+	// amplification (A→B→A chains; 0 disables).
+	C2CAddr        string
+	C2CRatePerMin  int
+	C2CBurst       int
+	C2CMaxInflight int
+
 	// Admin console (OIDC Authorization Code flow). Empty AdminClientID
 	// disables /admin. The console requires the admin:it scope.
 	AdminClientID     string
@@ -253,6 +262,10 @@ func Load() (Config, error) {
 	c.AppToolTimeoutSecs = envInt("BEAMHALL_APP_TOOL_TIMEOUT_SECS", 30)
 	c.UseAppRatePerMin = envInt("BEAMHALL_USE_APP_RATE_PER_MIN", 30)
 	c.UseAppBurst = envInt("BEAMHALL_USE_APP_BURST", 15)
+	c.C2CAddr = envOr("BEAMHALL_C2C_ADDR", ":8444")
+	c.C2CRatePerMin = envInt("BEAMHALL_C2C_RATE_PER_MIN", 60)
+	c.C2CBurst = envInt("BEAMHALL_C2C_BURST", 30)
+	c.C2CMaxInflight = envInt("BEAMHALL_C2C_MAX_INFLIGHT", 4)
 	for _, sc := range strings.Fields(envOr("BEAMHALL_ADMIN_SCOPES", "openid admin:it")) {
 		c.AdminScopes = append(c.AdminScopes, sc)
 	}

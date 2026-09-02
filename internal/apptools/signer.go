@@ -26,14 +26,24 @@ const AssertionTTL = 60 * time.Second
 // are UUID-shaped, and ":" is outside the tool/slug alphabets).
 const ProbeSubject = "beamhall:probe"
 
+// Caller types carried in the `caller_type` claim, so an app can tell a
+// person's agent from another beam (or the capability probe) without parsing
+// the subject's shape. Apps that authorize on identity should branch on it.
+const (
+	CallerUser  = "user"
+	CallerBeam  = "beam"
+	CallerProbe = "probe"
+)
+
 // Assertion is what the backplane attests about one brokered request.
 type Assertion struct {
-	Subject  string
-	Email    string
-	Groups   []string
-	Audience string // the target beam's ID
-	Channel  string // "live" | "preview"
-	Tool     string // invoked tool name; "" for a menu fetch or probe
+	Subject    string
+	CallerType string // CallerUser | CallerBeam | CallerProbe; "" defaults to CallerUser
+	Email      string
+	Groups     []string
+	Audience   string // the target beam's ID
+	Channel    string // "live" | "preview"
+	Tool       string // invoked tool name; "" for a menu fetch or probe
 }
 
 // Signer mints ES256 assertions under a stable kid. The private key lives
@@ -82,10 +92,14 @@ func (s *Signer) Mint(a Assertion) (string, error) {
 	if groups == nil {
 		groups = []string{}
 	}
+	ct := a.CallerType
+	if ct == "" {
+		ct = CallerUser
+	}
 	now := time.Now()
 	tok := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
 		"iss": s.issuer, "aud": a.Audience, "sub": a.Subject,
-		"email": a.Email, "groups": groups,
+		"caller_type": ct, "email": a.Email, "groups": groups,
 		"channel": a.Channel, "tool": a.Tool,
 		"jti": hex.EncodeToString(jti),
 		"iat": now.Unix(), "exp": now.Add(AssertionTTL).Unix(),

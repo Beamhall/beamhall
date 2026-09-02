@@ -115,6 +115,17 @@ func TestRoleMatrix(t *testing.T) {
 	wantDenied(t, f.authorize(viewer, ActionUseBeamTools), `does not grant`)
 	wantDenied(t, f.authorize(viewer, ActionUpdateBeam), `does not grant`)
 
+	// Reading what IT granted a beam to reach is a read like show_branding —
+	// every member tier gets it (viewers audit, builders build against it).
+	for _, a := range []struct {
+		name  string
+		actor domain.ID
+	}{{"viewer", viewer}, {"builder", builder}, {"admin", admin}} {
+		if err := f.authorize(a.actor, ActionShowBeamPeers); err != nil {
+			t.Fatalf("%s show_beam_peers: %v", a.name, err)
+		}
+	}
+
 	if err := f.authorize(admin, ActionPromoteToLive); err != nil {
 		t.Fatalf("beamhall_admin promote_to_live: %v", err)
 	}

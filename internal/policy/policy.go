@@ -68,6 +68,11 @@ const (
 	// never reaches this matrix.
 	ActionUseBeamTools Action = "try_beam_tool"
 	ActionUpdateBeam   Action = "update_beam"
+	// Beam-to-beam grants (Stage 3): the builder READ of what IT granted a
+	// beam. The grant write (admin_set_beam_peers) is an admin:it action via
+	// requireIT/itAudit; the relay invocation authenticates the CALLING BEAM
+	// by its injected key and never reaches this matrix.
+	ActionShowBeamPeers Action = "show_beam_peers"
 )
 
 // Forbidden actions: hard-denied for every role, including it_admin, on the
@@ -104,6 +109,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionShowEmail:       true,
 		ActionShowObjectStore: true,
 		ActionShowBranding:    true,
+		ActionShowBeamPeers:   true,
 	},
 	domain.RoleBuilder: {
 		ActionReadBeamhall:   true,
@@ -133,6 +139,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionShowBranding:         true,
 		ActionUseBeamTools:         true,
 		ActionUpdateBeam:           true,
+		ActionShowBeamPeers:        true,
 	},
 	domain.RoleBeamhallAdmin: {
 		ActionReadBeamhall:         true,
@@ -158,6 +165,7 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionShowBranding:         true,
 		ActionUseBeamTools:         true,
 		ActionUpdateBeam:           true,
+		ActionShowBeamPeers:        true,
 	},
 }
 

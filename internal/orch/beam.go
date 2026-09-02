@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Beamhall/beamhall/internal/build"
@@ -103,6 +104,11 @@ var secretKeyRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
 func validateSecretKey(key string) error {
 	if !secretKeyRe.MatchString(key) {
 		return fmt.Errorf("invalid secret key %q: use 1-64 letters, digits, or underscores (the key becomes the file name /run/secrets/<key>)", key)
+	}
+	// The BEAMHALL_ namespace is the backplane's (the relay key today): a
+	// user-writable row there could shadow or clobber platform credentials.
+	if strings.HasPrefix(key, "BEAMHALL_") {
+		return fmt.Errorf("secret key %q: the BEAMHALL_ prefix is reserved for platform-injected credentials — pick another name", key)
 	}
 	return nil
 }
@@ -377,8 +383,10 @@ func (o *Orchestrator) spawnWorkload(ctx context.Context, beamhallID, beamID, re
 		Security:  profileOf(sc),
 		Resources: limitsOf(sc),
 		Secrets:   mounts,
-		Bindings:  append(o.brandingBinding(ctx, bh), o.assertionBinding(beamID)...),
-		Port:      o.beamPort,
+		Bindings: append(append(o.brandingBinding(ctx, bh),
+			o.assertionBinding(beamID)...),
+			o.c2cBinding(ctx, beamhallID, refs)...),
+		Port: o.beamPort,
 	})
 	if err != nil {
 		return driver.Status{}, err
@@ -423,7 +431,36 @@ func (o *Orchestrator) spawnWorkload(ctx context.Context, beamhallID, beamID, re
 	}
 	needsCleanup = false
 	o.probeAgentTools(ctx, beamID, releaseID, status.BackendAddr)
+	// Per-beam external grants key on container IPs, which exist only now —
+	// the pre-start reconcile above could not cover this workload. Without
+	// this second pass a granted beam's own redeploy leaves it fail-closed
+	// until some OTHER deploy reconciles. Advisory for ungranted beams (the
+	// pre-start pass already asserted the deny posture).
+	o.resyncEgressForGrants(ctx)
 	return status, nil
+}
+
+// resyncEgressForGrants re-runs the egress reconcile iff any beam holds
+// external grants (their source-IP rules must reflect the just-started
+// container). Failures log — the deny posture was already asserted
+// fail-closed before start; a stale grant rule only under-allows.
+func (o *Orchestrator) resyncEgressForGrants(ctx context.Context) {
+	if o.egressSync == nil {
+		return
+	}
+	grants, err := o.st.ListBeamPeers(ctx)
+	if err != nil {
+		o.log.Warn("post-start egress resync: list grants", "err", err)
+		return
+	}
+	for _, g := range grants {
+		if len(g.Peers.External) > 0 {
+			if err := o.egressSync(ctx); err != nil {
+				o.log.Warn("post-start egress resync failed", "err", err)
+			}
+			return
+		}
+	}
 }
 
 // finalizeActiveRelease mints the preview channel's route, points the Beam at
