@@ -25,6 +25,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -83,6 +84,7 @@ type Reconciler struct {
 	restoreBin string   // iptables-restore binary (atomic chain replace)
 	alwaysDeny []string // applied to every bridge before the allowlist
 	hostPorts  []int    // host TCP ports workloads may reach (the gateway); everything else is dropped
+	lookup     func(host string) ([]net.IP, error)
 }
 
 // New returns a Reconciler. Pass any extra always-deny CIDRs (host IP,
@@ -92,7 +94,40 @@ func New(extraAlwaysDeny ...string) *Reconciler {
 		bin:        "iptables",
 		restoreBin: "iptables-restore",
 		alwaysDeny: append(append([]string{}, AlwaysDeny...), extraAlwaysDeny...),
+		lookup:     net.LookupIP,
 	}
+}
+
+// Warn receives non-fatal reconcile findings (an allowlist hostname that no
+// longer resolves, and was therefore skipped). Defaults to slog's default
+// logger; set it to the appliance logger.
+var Warn = func(msg string, args ...any) { slog.Warn(msg, args...) }
+
+// resolveDest turns one allowlist destination into the address strings the
+// rules use. IPs and CIDRs pass through; hostnames are resolved HERE, per
+// entry — letting iptables-restore resolve them would make one dead hostname
+// (NXDOMAIN today, DNS rot tomorrow) fail the whole appliance-wide
+// transaction and with it every subsequent deploy. An unresolvable entry is
+// skipped (ok=false): the terminal DROP still stands, so the failure mode is
+// under-allowing, never a hole.
+func (r *Reconciler) resolveDest(entry string) ([]string, bool) {
+	if strings.Contains(entry, "/") {
+		return []string{entry}, true // CIDR
+	}
+	if ip := net.ParseIP(entry); ip != nil {
+		return []string{entry}, true
+	}
+	ips, err := r.lookup(entry)
+	if err != nil || len(ips) == 0 {
+		return nil, false
+	}
+	var out []string
+	for _, ip := range ips {
+		if v4 := ip.To4(); v4 != nil {
+			out = append(out, v4.String())
+		}
+	}
+	return out, len(out) > 0
 }
 
 // AllowHostPorts sets the host TCP ports the BEAMHALL-INPUT guard leaves open
@@ -207,18 +242,32 @@ func (r *Reconciler) buildScript(policies []Policy) ([]byte, error) {
 		}
 		// Per-workload external grants: one source, one destination. Ahead of
 		// the hall allowlist only for readability — both RETURN.
-		for _, r := range p.PerSource {
-			if !restoreSafe(r.SourceIP) || !restoreSafe(r.Dest) {
-				return nil, fmt.Errorf("egress: unsafe per-source rule %q -> %q for bridge %s", r.SourceIP, r.Dest, p.Bridge)
+		for _, sr := range p.PerSource {
+			if !restoreSafe(sr.SourceIP) || !restoreSafe(sr.Dest) {
+				return nil, fmt.Errorf("egress: unsafe per-source rule %q -> %q for bridge %s", sr.SourceIP, sr.Dest, p.Bridge)
 			}
-			fmt.Fprintf(&buf, "-A %s -i %s -s %s -d %s -j RETURN\n", chain, p.Bridge, r.SourceIP, r.Dest)
+			dests, ok := r.resolveDest(sr.Dest)
+			if !ok {
+				Warn("egress: per-source destination does not resolve — rule skipped (traffic stays denied)", "dest", sr.Dest, "bridge", p.Bridge)
+				continue
+			}
+			for _, d := range dests {
+				fmt.Fprintf(&buf, "-A %s -i %s -s %s -d %s -j RETURN\n", chain, p.Bridge, sr.SourceIP, d)
+			}
 		}
 		// Allowlist: permitted destinations RETURN to DOCKER-USER (accepted).
 		for _, cidr := range p.Allow {
 			if !restoreSafe(cidr) {
 				return nil, fmt.Errorf("egress: unsafe allowlist entry %q for bridge %s", cidr, p.Bridge)
 			}
-			fmt.Fprintf(&buf, "-A %s -i %s -d %s -j RETURN\n", chain, p.Bridge, cidr)
+			dests, ok := r.resolveDest(cidr)
+			if !ok {
+				Warn("egress: allowlist entry does not resolve — rule skipped (traffic stays denied)", "entry", cidr, "bridge", p.Bridge)
+				continue
+			}
+			for _, d := range dests {
+				fmt.Fprintf(&buf, "-A %s -i %s -d %s -j RETURN\n", chain, p.Bridge, d)
+			}
 		}
 		// Default-deny everything else leaving this bridge.
 		fmt.Fprintf(&buf, "-A %s -i %s -j DROP\n", chain, p.Bridge)

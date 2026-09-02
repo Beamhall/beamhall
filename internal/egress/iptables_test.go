@@ -1,6 +1,8 @@
 package egress
 
 import (
+	"fmt"
+	"net"
 	"strings"
 	"testing"
 )
@@ -91,6 +93,7 @@ func TestSameBridgeExemptionIsBrokerScoped(t *testing.T) {
 // terminal DROP for that destination.
 func TestPerSourceRules(t *testing.T) {
 	r := New()
+	r.lookup = func(host string) ([]net.IP, error) { return []net.IP{net.ParseIP("10.20.30.40")}, nil }
 	script, err := r.buildScript([]Policy{{
 		Bridge:    "br-abc123",
 		PerSource: []SourceRule{{SourceIP: "172.18.0.4", Dest: "api.corp.internal"}},
@@ -99,7 +102,7 @@ func TestPerSourceRules(t *testing.T) {
 		t.Fatalf("buildScript: %v", err)
 	}
 	s := string(script)
-	rule := "-A " + chain + " -i br-abc123 -s 172.18.0.4 -d api.corp.internal -j RETURN"
+	rule := "-A " + chain + " -i br-abc123 -s 172.18.0.4 -d 10.20.30.40 -j RETURN"
 	drop := "-A " + chain + " -i br-abc123 -j DROP"
 	if !strings.Contains(s, rule) {
 		t.Fatalf("per-source rule missing:\n%s", s)
@@ -274,5 +277,45 @@ func TestBuildScriptRejectsNewlineInjection(t *testing.T) {
 				t.Fatal("expected an error rejecting the newline-embedded value, got nil")
 			}
 		})
+	}
+}
+
+// TestUnresolvableHostnameIsSkippedNotFatal guards the appliance-wide blast
+// radius the admin copy-smoke found live: iptables-restore resolves hostname
+// entries itself at load time, so one NXDOMAIN entry (typo today, DNS rot
+// tomorrow) failed the whole atomic transaction — and with it every
+// subsequent deploy. Hostnames are now resolved per entry in the reconciler;
+// a dead one is skipped (the DROP stands: under-allow, never a hole) while
+// live entries still emit rules.
+func TestUnresolvableHostnameIsSkippedNotFatal(t *testing.T) {
+	r := New()
+	r.lookup = func(host string) ([]net.IP, error) {
+		if host == "alive.corp.internal" {
+			return []net.IP{net.ParseIP("10.9.8.7")}, nil
+		}
+		return nil, fmt.Errorf("NXDOMAIN")
+	}
+	script, err := r.buildScript([]Policy{{
+		Bridge:    "br-abc123",
+		Allow:     []string{"dead.example.invalid", "alive.corp.internal", "1.2.3.4"},
+		PerSource: []SourceRule{{SourceIP: "172.18.0.4", Dest: "dead.example.invalid"}},
+	}})
+	if err != nil {
+		t.Fatalf("a dead hostname must not fail the build: %v", err)
+	}
+	s := string(script)
+	if strings.Contains(s, "dead.example.invalid") {
+		t.Fatalf("unresolvable entry leaked into the script:\n%s", s)
+	}
+	for _, want := range []string{"-d 10.9.8.7 -j RETURN", "-d 1.2.3.4 -j RETURN"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("resolvable entries must still emit (%q):\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "-s 172.18.0.4") {
+		t.Fatalf("per-source rule with a dead destination must be skipped:\n%s", s)
+	}
+	if !strings.Contains(s, "-A "+chain+" -i br-abc123 -j DROP") {
+		t.Fatalf("terminal DROP must survive:\n%s", s)
 	}
 }
