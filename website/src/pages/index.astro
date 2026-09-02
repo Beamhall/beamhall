@@ -48,7 +48,7 @@ const jsonLd = {
       operatingSystem: "Linux",
       url: `${site}/`,
       downloadUrl: repo,
-      softwareVersion: "0.6.0",
+      softwareVersion: "0.6.1",
       license: "https://www.apache.org/licenses/LICENSE-2.0",
       isAccessibleForFree: true,
       description:
@@ -621,6 +621,28 @@ const jsonLd = {
               </div>
 
               <div class="worry">
+                <div class="worry-q">If employees' own AI agents can act through our apps, can one impersonate a colleague or reach an app it wasn't given?</div>
+                <div class="worry-a">
+                  No. A person's agent sees only the apps IT published to them,
+                  and only the live version; anything else is invisible to it. It
+                  also can't act as someone else: Beamhall brokers every call and
+                  hands the app a <span class="c-strong">short-lived signed
+                  statement</span> of who is calling and which action they asked
+                  for — good for about a minute, accepted by that one app only,
+                  and issued by nothing but the backplane. The employee's company
+                  sign-in token is <span class="c-strong">never forwarded</span>,
+                  so an app never holds a credential it could replay elsewhere,
+                  and the person has nothing extra to sign into. Every brokered
+                  call is <span class="c-strong">audited</span> under the caller's
+                  identity, rate-limited per person, and scrubbed of secrets like
+                  every other output. And because an app's replies travel back
+                  into that person's AI agent, we treat them as untrusted content:
+                  bounded by size caps, the same scrubber, and the fact that only
+                  published apps can be reached at all.
+                </div>
+              </div>
+
+              <div class="worry">
                 <div class="worry-q">It's AI-written code on our hardware: can it break out and reach the host?</div>
                 <div class="worry-a">
                   Every app runs locked down: least privilege, read-only filesystem,
@@ -729,6 +751,7 @@ const jsonLd = {
                 <li>object-storage facility: <span class="c-dim">one call gives a beam S3-compatible object storage via a shared in-hall broker (the second connector); per-request SigV4 isolation, separate preview/live buckets, per-beam quota, local + forward-to-external-S3 backends, per-op audit, verified on real hardware</span></li>
                 <li>company branding: <span class="c-dim">IT sets the header, footer, logo and palette every app built here wears; a hot-linkable palette stylesheet reaches running apps with no redeploy, per-team overrides, resolved values injected into each workload as <span class="c-cyan">/run/beamhall/brand.json</span>, verified on real hardware</span></li>
                 <li>the using tier: <span class="c-dim">IT publishes an app to an audience (everyone, IdP groups, or named people) and employees' own AI agents discover it with <span class="c-cyan">list_apps</span> / <span class="c-cyan">describe_app</span>; no workspace membership, nothing that can change an app, out-of-audience apps are indistinguishable from apps that don't exist, users auto-register on first contact, verified on real hardware</span></li>
+                <li>app tools: <span class="c-dim">the using tier's second half — an app serves a tiny HTTP contract and its users' agents act through it with <span class="c-cyan">use_app</span>; the backplane brokers each call and delivers the caller's identity as a short-lived Beamhall-signed assertion (ES256, per-app audience, bound to the invoked tool), never the user's IdP token and nothing to sign into; builders rehearse on preview with <span class="c-cyan">try_beam_tool</span>, every call audited, rate-limited and scrubbed, verified on real hardware</span></li>
               </ul>
 
               <h3>planned: expanding what a beam inherits</h3>

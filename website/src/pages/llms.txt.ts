@@ -14,7 +14,7 @@ const body = `# Beamhall
 
 Beamhall is a single Go binary you run on your own hardware (private VM,
 dedicated VPC, or on-prem). Apache-2.0, no SaaS, no phone-home, air-gap
-friendly. Current release: v0.6.0 (pre-1.0, entering design-partner validation).
+friendly. Current release: v0.6.1 (pre-1.0, entering design-partner validation).
 
 Key ideas, if you only remember three things:
 
@@ -52,6 +52,7 @@ A "beamhall" is a workspace. The agent-facing control surface is MCP.
 - [Getting started](https://github.com/Beamhall/beamhall/blob/main/docs/getting-started.md): an IT admin's first hour, from install to a deployed beam.
 - [Beamhall for IT](https://github.com/Beamhall/beamhall/blob/main/docs/beamhall-for-it.md): what Beamhall requires of the team that runs it.
 - [Administering over MCP](https://github.com/Beamhall/beamhall/blob/main/docs/admin-over-mcp.md): the \`admin_*\` tool family and its guardrails.
+- [App tools](https://github.com/Beamhall/beamhall/blob/main/docs/app-tools.md): the HTTP contract an app serves so its users' AI agents can act through it via \`use_app\`, and how to verify the Beamhall-signed caller assertion.
 - [Identity provider setup](https://github.com/Beamhall/beamhall/blob/main/docs/idp-setup.md): connecting Keycloak, Okta, Entra or any OIDC IdP.
 - [Air-gapped operation](https://github.com/Beamhall/beamhall/blob/main/docs/air-gapped.md): running with no internet egress.
 - [Agent-conformance suite](https://github.com/Beamhall/beamhall/blob/main/docs/agent-conformance.md): four authenticated personas proving isolation and four-eyes control.

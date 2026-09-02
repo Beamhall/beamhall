@@ -1,7 +1,7 @@
 # Beamhall — a self-hosted AI app platform
 
 > Canonical page: https://beamhall.com/
-> Source: https://github.com/Beamhall/beamhall (Apache-2.0) · Current release: v0.6.0
+> Source: https://github.com/Beamhall/beamhall (Apache-2.0) · Current release: v0.6.1
 
 Beamhall is a self-hosted **application backplane**: AI coding agents build and
 deploy internal apps (**beams**) by intent alone. Each beam **inherits everything
@@ -81,7 +81,7 @@ https://github.com/Beamhall/beamhall/blob/main/docs/threat-model.md
 
 ## Status
 
-Pre-1.0 (v0.6.0). The core security surface and the end-to-end workflow are built
+Pre-1.0 (v0.6.1). The core security surface and the end-to-end workflow are built
 and validated on hardware; the project is entering design-partner validation.
 Company sign-in, outbound email and object storage ship today; queues and further
 brokered connectors to internal systems are next.
