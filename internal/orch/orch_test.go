@@ -1308,6 +1308,110 @@ func TestSetSecretRejectsPathShapedKey(t *testing.T) {
 	}
 }
 
+func TestSetSecretRefusesFacilitySealedKeys(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	enableEmail(w, &fakeEmailProv{})
+	enableObjectStore(w, &fakeObjectStoreProv{})
+
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "sealed", "Sealed", "", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.o.ProvisionEmail(ctx, w.build, w.bh.ID, beam.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.o.ProvisionObjectStore(ctx, w.build, w.bh.ID, beam.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A user write at a facility-sealed shared key targets the exact same
+	// vault row and would replace the injected platform credential.
+	for key, tool := range map[string]string{
+		"SMTP_HOST": "provision_email", "SMTP_PASS": "provision_email",
+		"S3_ENDPOINT": "provision_object_store",
+	} {
+		err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, key, []byte("evil"))
+		if err == nil {
+			t.Fatalf("write to sealed key %s must be refused", key)
+		}
+		if !strings.Contains(err.Error(), tool) {
+			t.Fatalf("refusal for %s should name %s: %v", key, tool, err)
+		}
+	}
+
+	// Adjacent names and per-channel-sealed keys stay writable: injection
+	// prefers the channel-specific row, so no shared-row write can shadow one.
+	for _, key := range []string{"SMTP_FROM", "S3_BUCKET", "MAIN_URL", "OIDC_ISSUER"} {
+		if err := w.o.SetSecret(ctx, w.build, w.bh.ID, beam.ID, key, []byte("v")); err != nil {
+			t.Fatalf("key %s must stay writable: %v", key, err)
+		}
+	}
+
+	// An unprovisioned beam keeps the documented degrade recipe (set_secret
+	// with the SMTP_*/S3_* names when the facility is not wired for it).
+	plain, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "plain", "Plain", "", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, plain.ID, "SMTP_HOST", []byte("smtp.corp")); err != nil {
+		t.Fatalf("unprovisioned beam must accept SMTP_HOST: %v", err)
+	}
+}
+
+func TestSecretInjectionPrefersBeamScopedRow(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	enableEmail(w, &fakeEmailProv{})
+
+	beam, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "mailer", "Mailer", "", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.o.ProvisionEmail(ctx, w.build, w.bh.ID, beam.ID); err != nil {
+		t.Fatal(err)
+	}
+	// A beamhall-wide row under the same key is a legitimate write (other
+	// beams may use it as the degrade recipe) — but it sorts ahead of the
+	// beam-scoped sealed row, so only specificity ordering keeps the sealed
+	// value in the provisioned beam's mount.
+	if err := w.o.SetSecret(ctx, w.build, w.bh.ID, "", "SMTP_HOST", []byte("hall-wide.example")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := w.o.DeployBeam(ctx, w.build, w.bh.ID, beam.ID, DeployRequest{ImageDigest: "sha256:x"}); err != nil {
+		t.Fatal(err)
+	}
+	spec := w.drv.deploys[len(w.drv.deploys)-1]
+	for _, m := range spec.Secrets {
+		if m.MountPath == "/run/secrets/SMTP_HOST" && string(m.Value) != "bh-mail" {
+			t.Fatalf("hall-wide row shadowed the sealed SMTP_HOST: %q", m.Value)
+		}
+	}
+
+	// The hall-wide row still serves an unprovisioned beam.
+	plain, err := w.o.CreateBeam(ctx, w.build, w.bh.ID, "plainmail", "Plainmail", "", "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.o.DeployBeam(ctx, w.build, w.bh.ID, plain.ID, DeployRequest{ImageDigest: "sha256:x"}); err != nil {
+		t.Fatal(err)
+	}
+	spec = w.drv.deploys[len(w.drv.deploys)-1]
+	found := false
+	for _, m := range spec.Secrets {
+		if m.MountPath == "/run/secrets/SMTP_HOST" {
+			found = true
+			if string(m.Value) != "hall-wide.example" {
+				t.Fatalf("hall-wide SMTP_HOST = %q", m.Value)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("hall-wide SMTP_HOST did not inject into the unprovisioned beam")
+	}
+}
+
 // progressLeakBuilder simulates pack echoing a hardcoded copy of a vaulted
 // value into the build output and failing with it in the error tail.
 type progressLeakBuilder struct{ leak string }

@@ -87,6 +87,9 @@ func (o *Orchestrator) SetSecret(ctx context.Context, actor Actor, beamhallID, b
 	if err == nil && beamID != "" {
 		_, err = o.operableBeam(ctx, beamhallID, beamID)
 	}
+	if err == nil && beamID != "" {
+		err = o.refuseFacilitySealedKey(ctx, beamID, key)
+	}
 	if err == nil {
 		_, err = o.vault.Set(ctx, domain.SecretRef{BeamhallID: beamhallID, BeamID: beamID, Key: key}, value, actor.ID)
 	}
@@ -109,6 +112,36 @@ func validateSecretKey(key string) error {
 	// user-writable row there could shadow or clobber platform credentials.
 	if strings.HasPrefix(key, "BEAMHALL_") {
 		return fmt.Errorf("secret key %q: the BEAMHALL_ prefix is reserved for platform-injected credentials — pick another name", key)
+	}
+	return nil
+}
+
+// refuseFacilitySealedKey blocks a user write to a key the email or
+// object-store facility sealed at ChannelShared for this beam: that row lives
+// at the exact ref set_secret writes, so the write would replace the injected
+// platform credential. An unprovisioned beam passes — the same key names are
+// the documented set_secret recipe when the facility is not wired. Per-channel
+// seals (OIDC_*, DSNs, S3 bucket/creds) need no guard: injection prefers the
+// more specific row and users cannot write those channels.
+func (o *Orchestrator) refuseFacilitySealedKey(ctx context.Context, beamID domain.ID, key string) error {
+	var typ domain.ResourceType
+	var tool string
+	switch key {
+	case emailHostKey, emailPortKey, emailUserKey, emailPassKey, emailCAKey:
+		typ, tool = domain.ResourceEmail, "provision_email"
+	case s3EndpointKey, s3RegionKey, s3PathStyleKey:
+		typ, tool = domain.ResourceObjectStore, "provision_object_store"
+	default:
+		return nil
+	}
+	resources, err := o.st.ListResourcesByBeam(ctx, beamID)
+	if err != nil {
+		return err
+	}
+	for _, r := range resources {
+		if r.Type == typ {
+			return fmt.Errorf("secret key %q is sealed by %s on this beam — writing it would replace the platform-injected credential at /run/secrets/%s; pick another name", key, tool, key)
+		}
 	}
 	return nil
 }
@@ -616,8 +649,7 @@ func (o *Orchestrator) mintRoute(ctx context.Context, beam *domain.Beam, relID d
 // channel, so a shared and a channel-specific secret sharing a key would
 // otherwise produce two mounts at the identical target path — Docker rejects
 // that as a duplicate mount, failing every subsequent deploy with no
-// delete_secret tool to recover. The
-// channel-specific one wins.
+// delete_secret tool to recover. The most specific ref wins.
 func (o *Orchestrator) secretRefs(ctx context.Context, beamhallID, beamID domain.ID, ch domain.Channel) ([]domain.SecretRef, error) {
 	metas, err := o.st.ListSecretsByBeamhall(ctx, beamhallID)
 	if err != nil {
@@ -634,7 +666,7 @@ func (o *Orchestrator) secretRefs(ctx context.Context, beamhallID, beamID domain
 		}
 		ref := domain.SecretRef{BeamhallID: m.BeamhallID, BeamID: m.BeamID, Key: m.Key, Channel: m.Channel}
 		if i, ok := idxByKey[m.Key]; ok {
-			if refs[i].Channel == domain.ChannelShared && ref.Channel != domain.ChannelShared {
+			if refSpecificity(ref) > refSpecificity(refs[i]) {
 				refs[i] = ref
 			}
 			continue
@@ -643,6 +675,22 @@ func (o *Orchestrator) secretRefs(ctx context.Context, beamhallID, beamID domain
 		refs = append(refs, ref)
 	}
 	return refs, nil
+}
+
+// refSpecificity orders same-key rows for injection: channel-specific beats
+// shared, and beam-scoped beats beamhall-wide, so a facility-sealed row can
+// never be shadowed by a broader user-writable one. Without this, precedence
+// between a hall-wide and a beam-scoped shared row would fall to list order —
+// and the list sorts beam_id ascending, putting the hall-wide row (”) first.
+func refSpecificity(r domain.SecretRef) int {
+	s := 0
+	if r.Channel != domain.ChannelShared {
+		s += 2
+	}
+	if r.BeamID != "" {
+		s++
+	}
+	return s
 }
 
 func (o *Orchestrator) pauseAfter(beam domain.Beam) time.Duration {

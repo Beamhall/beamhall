@@ -212,7 +212,7 @@ func (s *Server) registerTools() {
 	}, s.showBeamPeers)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "set_secret",
-		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back. Keys with the BEAMHALL_ prefix are reserved for platform-injected credentials.",
+		Description: "Store a secret (write-only). It surfaces as the file /run/secrets/<key> inside the workload on the next deploy. There is no tool to read secrets back. Keys with the BEAMHALL_ prefix are reserved for platform-injected credentials, and on a beam where provision_email or provision_object_store has run, the keys those tools sealed (SMTP_HOST/PORT/USER/PASS/CA, S3_ENDPOINT/REGION/FORCE_PATH_STYLE) are refused — overwriting them would break the platform-managed connection; pick another name.",
 	}, s.setSecret)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "show_logs",

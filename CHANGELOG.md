@@ -15,6 +15,20 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Security
+- **`set_secret` can no longer overwrite a platform-sealed connection secret.**
+  On a beam where `provision_email` or `provision_object_store` has run, writes
+  to the keys those tools sealed (`SMTP_HOST/PORT/USER/PASS/CA`,
+  `S3_ENDPOINT/REGION/FORCE_PATH_STYLE`) are refused with a teaching error —
+  before, such a write silently replaced the injected platform credential. On
+  beams without the facility the keys stay writable (they remain the documented
+  `set_secret` recipe when a facility is not wired).
+- **Secret injection now prefers the most specific row for a key** —
+  channel-specific over shared, beam-scoped over workspace-wide. Before,
+  precedence between a workspace-wide row and a beam's platform-sealed row of
+  the same name fell to list order, letting a workspace-wide `set_secret`
+  shadow a provisioned beam's sealed `SMTP_*`/`S3_*` values in every deploy.
+
 ## [0.7.0] - 2026-09-01
 
 The beam-to-beam wave: apps stop being islands. IT can grant one app the
