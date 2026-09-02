@@ -16,7 +16,7 @@ const body = `# Beamhall
 
 Beamhall is a single Go binary you run on your own hardware (private VM,
 dedicated VPC, or on-prem). Apache-2.0, no SaaS, no phone-home, air-gap
-friendly. Current release: v0.7.0 (pre-1.0, entering design-partner validation).
+friendly. Current release: v0.7.1 (pre-1.0, entering design-partner validation).
 
 Key ideas, if you only remember four things:
 
