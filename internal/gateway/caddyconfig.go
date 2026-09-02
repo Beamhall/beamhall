@@ -70,12 +70,24 @@ type routeCfg struct {
 }
 
 type matchCfg struct {
-	Host []string `json:"host"`
+	Host []string `json:"host,omitempty"`
+	// RemoteIP matches the client's socket address — used by the workload
+	// guard to recognize container-originated requests (bridge subnets).
+	RemoteIP *remoteIPCfg `json:"remote_ip,omitempty"`
+	// Not inverts: the request matches if it matches NONE of these sets.
+	Not []matchCfg `json:"not,omitempty"`
+}
+
+type remoteIPCfg struct {
+	Ranges []string `json:"ranges"`
 }
 
 type handleCfg struct {
 	Handler   string        `json:"handler"`
-	Upstreams []upstreamCfg `json:"upstreams"`
+	Upstreams []upstreamCfg `json:"upstreams,omitempty"`
+	// static_response fields (the workload-guard 403).
+	StatusCode int    `json:"status_code,omitempty"`
+	Body       string `json:"body,omitempty"`
 }
 
 type upstreamCfg struct {

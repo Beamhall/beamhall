@@ -158,7 +158,7 @@ type showBeamhallArgs struct {
 type setEgressArgs struct {
 	Slug      string   `json:"slug" jsonschema:"beamhall (workspace) slug"`
 	Mode      string   `json:"mode" jsonschema:"egress mode: deny_all (fully isolated, default) | allowlist"`
-	Allowlist []string `json:"allowlist,omitempty" jsonschema:"FQDN/CIDR[:port] entries beams in this workspace may reach (used when mode=allowlist)"`
+	Allowlist []string `json:"allowlist,omitempty" jsonschema:"destinations beams in this workspace may reach (used when mode=allowlist): IPv4 address, IPv4 CIDR, or hostname — no port suffix, rules match the destination address only"`
 }
 
 type updateBeamhallArgs struct {
@@ -284,7 +284,7 @@ func (s *Server) registerAdminTools() {
 	}, s.adminShowBeamhall)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_set_egress",
-		Description: "IT only: set a beamhall's egress policy. mode is deny_all (default isolation) or allowlist; allowlist is FQDN/CIDR[:port] entries reachable from beams in that workspace. Re-asserted on the next deploy (and immediately if egress sync is wired).",
+		Description: "IT only: set a beamhall's egress policy. mode is deny_all (default isolation) or allowlist; allowlist entries are IPv4 addresses, IPv4 CIDRs, or hostnames beams in that workspace may reach (destination address only — no port suffixes). deny_all ignores any stored entries until the mode is switched back. Re-asserted on the next deploy (and immediately if egress sync is wired).",
 	}, s.adminSetEgress)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "admin_set_auth_groups",

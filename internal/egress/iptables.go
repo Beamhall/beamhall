@@ -1,27 +1,50 @@
 // Package egress programs default-deny outbound network policy for Beamhall
-// bridges using iptables. It owns a single chain, BEAMHALL-EGRESS, jumped from
-// Docker's DOCKER-USER chain, and rebuilds it idempotently from the desired
-// state on every Reconcile — so drift (and a host reboot) self-heals. This is
-// the enforcement half of the per-Beamhall egress policy; the metadata/host/
-// management always-deny set is applied regardless of any allowlist
-// (SSRF/metadata defense). See PLAN §6 and hardest-problem #2.
+// bridges using iptables. It owns two chains, rebuilt idempotently from the
+// desired state on every Reconcile — so drift (and a host reboot) self-heals:
 //
-// iptables (not nftables) per the 2026 hardening findings. Rules match on the
-// inbound bridge interface (-i br...), i.e. packets leaving a container, so
-// host SSH (INPUT) is never affected.
+//   - BEAMHALL-EGRESS, jumped from Docker's DOCKER-USER chain (FORWARD path):
+//     the enforcement half of the per-Beamhall egress policy; the metadata/
+//     host/management always-deny set is applied regardless of any allowlist
+//     (SSRF/metadata defense). See PLAN §6 and hardest-problem #2.
+//   - BEAMHALL-INPUT, jumped from INPUT: DOCKER-USER never sees traffic a
+//     container addresses to the host itself (its bridge gateway IP, or any
+//     host-owned address) — that is delivered locally through INPUT. Without
+//     this chain a workload can open TCP to every host listener bound to a
+//     wildcard address: the backplane HTTP port, and the gateway — and via
+//     the gateway, any other beam's public URL, cross-hall. The guard drops
+//     everything bridge-originated except the gateway ports; what those ports
+//     serve to workloads is then decided at L7 by the gateway's own guard.
+//
+// iptables (not nftables) per the 2026 hardening findings. Egress rules match
+// on the inbound bridge interface (-i br...), i.e. packets leaving a
+// container, so host SSH (INPUT from operator networks) is never affected —
+// the INPUT guard matches bridge interfaces only.
 package egress
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
 const (
-	chain     = "BEAMHALL-EGRESS"
-	hookChain = "DOCKER-USER"
+	chain          = "BEAMHALL-EGRESS"
+	hookChain      = "DOCKER-USER"
+	inputChain     = "BEAMHALL-INPUT"
+	inputHookChain = "INPUT"
+
+	// bridgeWildcard matches every Docker-managed bridge interface (br-<id12>),
+	// Beamhall's and otherwise. The guard is deliberately not scoped to known
+	// Beamhall bridges: the bridge set is dynamic (halls are lazy-created) and a
+	// container can start on a fresh or orphaned bridge before any per-bridge
+	// rule exists — the same reasoning that made the metadata always-deny
+	// bridge-independent. On the dedicated appliance every br-* interface
+	// carries workload-adjacent traffic; none of it belongs on host listeners.
+	bridgeWildcard = "br-+"
 )
 
 // AlwaysDeny is the default set of destinations denied for every Beamhall
@@ -37,12 +60,13 @@ type Policy struct {
 	Allow  []string // permitted destination CIDRs (e.g. "10.20.0.0/16", "1.1.1.1/32")
 }
 
-// Reconciler programs the BEAMHALL-EGRESS chain. The zero value is not usable;
-// use New.
+// Reconciler programs the BEAMHALL-EGRESS and BEAMHALL-INPUT chains. The zero
+// value is not usable; use New.
 type Reconciler struct {
 	bin        string   // iptables binary
 	restoreBin string   // iptables-restore binary (atomic chain replace)
 	alwaysDeny []string // applied to every bridge before the allowlist
+	hostPorts  []int    // host TCP ports workloads may reach (the gateway); everything else is dropped
 }
 
 // New returns a Reconciler. Pass any extra always-deny CIDRs (host IP,
@@ -55,6 +79,15 @@ func New(extraAlwaysDeny ...string) *Reconciler {
 	}
 }
 
+// AllowHostPorts sets the host TCP ports the BEAMHALL-INPUT guard leaves open
+// to bridge-originated traffic — the gateway's listen ports, so workloads can
+// still reach gateway-fronted infrastructure the gateway chooses to serve
+// them. Every other bridge→host packet is dropped. With no ports set the
+// guard drops all bridge→host traffic (fail-closed).
+func (r *Reconciler) AllowHostPorts(ports ...int) {
+	r.hostPorts = ports
+}
+
 // Reconcile makes the live ruleset match policies exactly: it ensures the chain
 // exists and is hooked from DOCKER-USER, then atomically replaces the chain's
 // entire rule set in one iptables-restore transaction. A flush-then-rebuild
@@ -64,10 +97,16 @@ func New(extraAlwaysDeny ...string) *Reconciler {
 // on every deploy (bridges are lazy-created), not just at boot. Safe to call
 // repeatedly and on boot.
 func (r *Reconciler) Reconcile(ctx context.Context, policies []Policy) error {
-	if err := r.ensureChain(ctx); err != nil {
+	if err := r.ensureChain(ctx, chain); err != nil {
 		return err
 	}
-	if err := r.ensureHook(ctx); err != nil {
+	if err := r.ensureChain(ctx, inputChain); err != nil {
+		return err
+	}
+	if err := r.ensureHook(ctx, hookChain, chain, true); err != nil {
+		return err
+	}
+	if err := r.ensureHook(ctx, inputHookChain, inputChain, false); err != nil {
 		return err
 	}
 
@@ -87,7 +126,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, policies []Policy) error {
 // injection guard — can be checked without root or a real iptables.
 func (r *Reconciler) buildScript(policies []Policy) ([]byte, error) {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "*filter\n:%s -\n", chain)
+	fmt.Fprintf(&buf, "*filter\n:%s -\n:%s -\n", chain, inputChain)
 
 	// Permanent, bridge-independent backstop: metadata/link-local is denied
 	// for EVERY bridge — including one omitted from this Reconcile call
@@ -143,6 +182,31 @@ func (r *Reconciler) buildScript(policies []Policy) ([]byte, error) {
 		// Default-deny everything else leaving this bridge.
 		fmt.Fprintf(&buf, "-A %s -i %s -j DROP\n", chain, p.Bridge)
 	}
+
+	// Host-listener guard (INPUT path). Container→host traffic never traverses
+	// FORWARD/DOCKER-USER — it is delivered locally — so the egress chain above
+	// cannot see it. Only the gateway ports pass; the gateway then decides at
+	// L7 what a workload-originated request may reach.
+	//
+	// Unlike the egress chain, this one NEEDS the conntrack RETURN: replies to
+	// host-originated dials (the backplane brokering a tool call into a
+	// workload, health checks) ingress on the very bridge interface the guard
+	// matches, addressed to the host's ephemeral source port — the terminal
+	// DROP would sever every such connection mid-handshake. It is also not the
+	// bypass it would be on the egress chain: a tuple's reply direction targets
+	// the ephemeral port the host dialed from, never a listening service port,
+	// so a container cannot ride an existing tuple to reach a host listener —
+	// new connections still start with an unmatched SYN and fall through to
+	// the port rules below.
+	fmt.Fprintf(&buf, "-A %s -i %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN\n", inputChain, bridgeWildcard)
+	for _, port := range r.hostPorts {
+		if port <= 0 || port > 65535 {
+			return nil, fmt.Errorf("egress: invalid host guard port %d", port)
+		}
+		fmt.Fprintf(&buf, "-A %s -i %s -p tcp --dport %d -j RETURN\n", inputChain, bridgeWildcard, port)
+	}
+	fmt.Fprintf(&buf, "-A %s -i %s -j DROP\n", inputChain, bridgeWildcard)
+
 	buf.WriteString("COMMIT\n")
 	return buf.Bytes(), nil
 }
@@ -172,42 +236,45 @@ func (r *Reconciler) restore(ctx context.Context, rules []byte) error {
 	return nil
 }
 
-// Teardown removes the DOCKER-USER hook and deletes the chain. Best-effort:
-// returns the first hard error encountered.
+// Teardown removes both hooks and deletes both chains. Best-effort: returns
+// the first hard error encountered.
 func (r *Reconciler) Teardown(ctx context.Context) error {
-	// Remove the hook if present (ignore "not found").
-	if r.exists(ctx, hookChain, "-j", chain) {
-		if err := r.run(ctx, "-D", hookChain, "-j", chain); err != nil {
-			return err
+	for _, pair := range [][2]string{{hookChain, chain}, {inputHookChain, inputChain}} {
+		// Remove the hook if present (ignore "not found").
+		if r.exists(ctx, pair[0], "-j", pair[1]) {
+			if err := r.run(ctx, "-D", pair[0], "-j", pair[1]); err != nil {
+				return err
+			}
 		}
+		_ = r.run(ctx, "-F", pair[1])
+		_ = r.run(ctx, "-X", pair[1])
 	}
-	_ = r.run(ctx, "-F", chain)
-	_ = r.run(ctx, "-X", chain)
 	return nil
 }
 
-func (r *Reconciler) ensureChain(ctx context.Context) error {
-	if r.run(ctx, "-n", "-L", chain) == nil {
+func (r *Reconciler) ensureChain(ctx context.Context, name string) error {
+	if r.run(ctx, "-n", "-L", name) == nil {
 		return nil
 	}
-	if err := r.run(ctx, "-N", chain); err != nil {
-		return fmt.Errorf("create chain %s: %w", chain, err)
+	if err := r.run(ctx, "-N", name); err != nil {
+		return fmt.Errorf("create chain %s: %w", name, err)
 	}
 	return nil
 }
 
-// ensureHook inserts a jump from DOCKER-USER to our chain at the top, exactly
+// ensureHook inserts a jump from a hook chain to ours at the top, exactly
 // once. DOCKER-USER is created by Docker; if it is missing we create it so the
-// reconciler also works before any container network exists.
-func (r *Reconciler) ensureHook(ctx context.Context) error {
-	if r.run(ctx, "-n", "-L", hookChain) != nil {
-		_ = r.run(ctx, "-N", hookChain)
+// reconciler also works before any container network exists (INPUT is a
+// built-in and always exists).
+func (r *Reconciler) ensureHook(ctx context.Context, from, to string, createFrom bool) error {
+	if createFrom && r.run(ctx, "-n", "-L", from) != nil {
+		_ = r.run(ctx, "-N", from)
 	}
-	if r.exists(ctx, hookChain, "-j", chain) {
+	if r.exists(ctx, from, "-j", to) {
 		return nil
 	}
-	if err := r.run(ctx, "-I", hookChain, "1", "-j", chain); err != nil {
-		return fmt.Errorf("hook %s -> %s: %w", hookChain, chain, err)
+	if err := r.run(ctx, "-I", from, "1", "-j", to); err != nil {
+		return fmt.Errorf("hook %s -> %s: %w", from, to, err)
 	}
 	return nil
 }
@@ -216,6 +283,53 @@ func (r *Reconciler) ensureHook(ctx context.Context) error {
 func (r *Reconciler) exists(ctx context.Context, chainName string, rule ...string) bool {
 	args := append([]string{"-C", chainName}, rule...)
 	return r.run(ctx, args...) == nil
+}
+
+// hostnameRe matches an RFC 1123 hostname (labels of letters/digits/hyphens,
+// dot-separated). Deliberately narrow: anything it rejects would either fail
+// or surprise inside an iptables-restore -d field.
+var hostnameRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
+
+// ValidateAllowEntry reports whether one allowlist entry is a destination
+// iptables-restore can actually load: an IPv4 address, an IPv4 CIDR, or a
+// bare hostname. Callers MUST run this at write time: the reconciler renders
+// entries verbatim into one appliance-wide restore transaction, so a single
+// malformed entry in any beamhall — a "host:port" suffix, an IPv6 literal —
+// would fail the whole transaction and with it every subsequent deploy on the
+// appliance, not just the beamhall that stored it.
+func ValidateAllowEntry(entry string) error {
+	s := strings.TrimSpace(entry)
+	if s == "" {
+		return fmt.Errorf("empty allowlist entry")
+	}
+	if !restoreSafe(s) || strings.ContainsAny(s, " \t") {
+		return fmt.Errorf("allowlist entry %q contains unsafe characters", s)
+	}
+	if strings.Contains(s, ":") {
+		return fmt.Errorf("allowlist entry %q: port suffixes and IPv6 literals are not supported — egress rules match the destination address only (use a bare IPv4 address, IPv4 CIDR, or hostname)", s)
+	}
+	if strings.Contains(s, "/") {
+		ip, _, err := net.ParseCIDR(s)
+		if err != nil || ip.To4() == nil {
+			return fmt.Errorf("allowlist entry %q is not a valid IPv4 CIDR", s)
+		}
+		return nil
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		if ip.To4() == nil {
+			return fmt.Errorf("allowlist entry %q: IPv6 is not supported", s)
+		}
+		return nil
+	}
+	// All-numeric dotted entries are malformed IPs, not hostnames ("300.1.1.1"
+	// would pass the hostname shape but fail resolution at restore time).
+	if strings.Trim(s, "0123456789.") == "" {
+		return fmt.Errorf("allowlist entry %q is not a valid IPv4 address", s)
+	}
+	if !hostnameRe.MatchString(s) || len(s) > 253 {
+		return fmt.Errorf("allowlist entry %q is not a valid IPv4 address, IPv4 CIDR, or hostname", s)
+	}
+	return nil
 }
 
 func (r *Reconciler) run(ctx context.Context, args ...string) error {

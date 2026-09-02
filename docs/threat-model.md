@@ -170,14 +170,14 @@ Every "mitigation" below is enforced in code and exercised by a test; the
 
 | Attack | Mitigation (MVP) | Residual | Upgrade path | Verified |
 |---|---|---|---|---|
-| **Data exfiltration** | Per-Beamhall DOCKER-USER default-deny egress; always-deny metadata/link-local/host/mgmt | A beam can reach IT-allowlisted destinations | L7 egress proxy with content inspection | `TestAgentCannot/ExfiltrateData` (1.1.1.1 + 169.254.169.254 both dropped) |
+| **Data exfiltration** | Per-Beamhall DOCKER-USER default-deny egress; always-deny metadata/link-local (+ operator-set mgmt subnet); bridge→host traffic dropped except the gateway ports (`BEAMHALL-INPUT`, §7) | A beam can reach IT-allowlisted destinations | L7 egress proxy with content inspection | `TestAgentCannot/ExfiltrateData` (1.1.1.1 + 169.254.169.254 both dropped); `ReachTheHostOrSiblingBeams` (backplane listener unreachable) |
 | **Container escape** | Hardened baseline (§4) + `runsc` tier for regulated beamhalls | Shared kernel under `runc` (§5) | Firecracker microVM (§10) | lab: real Paketo beam under runc **and** runsc |
 | **Secret theft** | No `get_secret` tool; `set_secret` write-only; age-encrypted at rest; file-injected at `/run/secrets` (never env); logs/metrics scrubbed | A compromised *running* workload can read its own injected secrets (by design — it needs them) | HSM/lease-based short-lived secrets | `TestAgentCannot/ReadSecretsBack`, `ObtainDatabaseCredentials`; scrubber proven on a real leak |
-| **Lateral movement** | One Docker bridge per beamhall; db-per-beam scoped roles; secrets beam-scoped | Same-beamhall beams share a bridge | mTLS service mesh | `TestAgentCannot/EscapeItsBeamhall`; Postgres `42501` cross-db isolation (lab) |
+| **Lateral movement** | One Docker bridge per beamhall; the gateway refuses workload-originated requests to beam routes (403 — no cross-hall calls via public URLs, §7); db-per-beam scoped roles; secrets beam-scoped | Same-beamhall beams share a bridge | IT-granted, audited beam-to-beam (planned); mTLS service mesh | `TestAgentCannot/EscapeItsBeamhall`, `ReachTheHostOrSiblingBeams`; Postgres `42501` cross-db isolation (lab) |
 | **Resource exhaustion** | cgroup v2 CPU/mem/PID ceilings; live-slot quota; **concurrent-build cap** (build-bomb defense); auto-pause of idle previews | A beam can use up to its quota | Fair-share scheduling | build-cap unit test; quota race test |
 | **Malicious build input** | Cloud Native Buildpacks only; **agent Dockerfiles ignored**; pinned trusted builder; builds run off the runtime daemon, publish a pinned digest | Buildpack/base-image CVEs | SBOM + CVE gate before promote; full SLSA | `TestAgentCannot/SupplyADockerfile` (payload inert) |
 | **Privilege/posture tampering** | No agent-facing tool mutates seccomp/caps/quota/egress; `SecurityContext` immutable; forbidden actions are named and audited on attempt | — | — | `TestAgentCannot/MutateSecurityPosture` |
-| **SSRF / metadata theft** | Always-deny `169.254.0.0/16` (incl. cloud metadata) + host IP + mgmt subnet, independent of any allowlist | — | L7 proxy | `TestAgentCannot/ExfiltrateData` |
+| **SSRF / metadata theft** | Always-deny `169.254.0.0/16` (incl. cloud metadata) independent of any allowlist; host listeners unreachable via `BEAMHALL-INPUT` + the gateway workload guard (§7); mgmt subnet operator-set | — | L7 proxy | `TestAgentCannot/ExfiltrateData`, `ReachTheHostOrSiblingBeams` |
 | **Confused deputy / token replay** | `aud` == Beamhall resource URI; `iss` pinned; `Origin` checked (DNS rebinding); RS256/ES256 only (no `none`/HMAC) | — | — | `internal/auth` suite (forged alg, wrong aud/iss all rejected) |
 | **App-token replay against the backplane** (provisioned auth, §5.10) | A beam's own OIDC client mints tokens with `aud` = its own client id only; Beamhall never attaches the resource-URI audience to app clients, and `CreateClient` post-asserts no effective mapper injects it (refusing otherwise) | — | — | `internal/identityadmin` post-assert unit test; **lab: an app-client token is 401'd by `/mcp`** while a correctly-scoped token gets 200 (`auth-isolation.sh`) |
 | **Assertion forgery / replay across apps** (app tools, §5.15) | The backplane signs each brokered call's identity assertion with ES256; apps verify against a JWKS mounted at deploy (`/run/beamhall/assertion.json`), never fetched over the network. Per-beam `aud` (an assertion for one app fails another's check), ~60 s `exp` + `jti`, and a `tool` claim binding the assertion to the exact route. The private key is vault-sealed in the control-plane store (rides backups; a restore cannot silently mint a new key) and never leaves the host | An app that skips verification exposes **its own** tools to anyone holding its URL — verification is a documented MUST the platform cannot perform for the app | Gateway-enforced assertion check on the contract paths | `internal/apptools` mint/verify round trip; e2e: an app verifying for real answers `use_app`/`try_beam_tool` and 401s a bare request to its public tools URL |
@@ -212,12 +212,38 @@ the control plane against itself:
 ## 7. Network egress model
 
 Default posture is **deny-all** per beamhall. IT may add an explicit allowlist
-(FQDN/CIDR:port) via the Admin console. Regardless of the allowlist, an
-**always-deny** set is enforced first by the iptables `DOCKER-USER` reconciler:
-cloud metadata (`169.254.169.254`), link-local, the host IP, and the management
-subnet. The reconciler **asserts the full desired state from policy on every
-deploy and at boot** — drift cannot silently open or break isolation. Agents
-have no tool to change egress; only IT can, and the change is audited.
+(IPv4, IPv4 CIDR, or hostname — rules match the destination address; port
+suffixes are rejected at write time) via `admin_set_egress` or the Admin
+console. `deny_all` ignores any stored entries until the mode is switched
+back. Regardless of the allowlist, an **always-deny** set is enforced first by
+the iptables `DOCKER-USER` reconciler: cloud metadata (`169.254.169.254`) and
+link-local, extendable by the operator with the management subnet
+(`BEAMHALL_EGRESS_ALWAYS_DENY`). The reconciler **asserts the full desired
+state from policy on every deploy and at boot** — drift cannot silently open
+or break isolation. Agents have no tool to change egress; only IT can, and
+the change is audited.
+
+Workload-to-**host** traffic is governed separately, because it never
+traverses the forwarding path the egress chain hooks: a container addressing
+the host itself (its bridge gateway IP, or any host-owned address) is
+delivered locally. Two guards close that path, both asserted by the same
+reconcile cadence:
+
+- **`BEAMHALL-INPUT` (iptables):** everything bridge-originated to the host is
+  dropped except established replies and the gateway's listen ports — the
+  backplane's own HTTP listener (`/mcp`, `/admin`, git) is unreachable from
+  every workload.
+- **Gateway workload guard (L7):** requests arriving from container bridge
+  subnets are refused (403) for every hostname except the bundled IdP — so a
+  workload cannot use the gateway to call another beam's public URL
+  (cross-hall lateral movement) or the control endpoints fronted at the base
+  domain, while in-container OIDC against the bundled IdP keeps working.
+
+Verified: `TestAgentCannot/ReachTheHostOrSiblingBeams` (backplane listener
+unreachable from a workload; a workload-originated request to a sibling
+beam's public URL is refused 403); the IdP exemption is pinned by
+`internal/gateway` unit tests and exercised live by the appliance's
+provisioned-auth apps.
 
 ## 8. Secrets
 

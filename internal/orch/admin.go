@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Beamhall/beamhall/internal/domain"
+	"github.com/Beamhall/beamhall/internal/egress"
 )
 
 // IT-structural operations for the Admin console (PLAN §8). These set up the
@@ -104,6 +105,9 @@ func (o *Orchestrator) createBeamhall(ctx context.Context, spec NewBeamhallSpec)
 	mode := spec.EgressMode
 	if mode == "" {
 		mode = domain.EgressDenyAll
+	}
+	if err := validateAllowlist(spec.Allowlist); err != nil {
+		return nil, err
 	}
 	tmpl := spec.Template
 	if tmpl == "" {
@@ -206,6 +210,9 @@ func (o *Orchestrator) SetEgress(ctx context.Context, actor Actor, beamhallID do
 		return o.itAudit(ctx, actor, "admin_set_egress", beamhallID, err)
 	}
 	op := func() error {
+		if err := validateAllowlist(allowlist); err != nil {
+			return err
+		}
 		bh, err := o.st.GetBeamhall(ctx, beamhallID)
 		if err != nil {
 			return err
@@ -221,6 +228,20 @@ func (o *Orchestrator) SetEgress(ctx context.Context, actor Actor, beamhallID do
 		return nil
 	}
 	return o.itAudit(ctx, actor, "admin_set_egress", beamhallID, op())
+}
+
+// validateAllowlist rejects any entry iptables-restore could not load. The
+// reconciler renders every hall's entries into ONE appliance-wide restore
+// transaction, so a single malformed stored entry would fail that transaction
+// — and with it every subsequent deploy on the appliance. Refusing at write
+// time keeps the blast radius at "this tool call".
+func validateAllowlist(entries []string) error {
+	for _, e := range entries {
+		if err := egress.ValidateAllowEntry(e); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // BeamhallView is the it_admin read model for one workspace: the beamhall plus

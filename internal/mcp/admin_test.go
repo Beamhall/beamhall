@@ -172,12 +172,12 @@ func TestAdminBeamhallReadAndEgress(t *testing.T) {
 		t.Fatalf("admin_show_beamhall: want members + beams, got %q", txt)
 	}
 	_, txt = h.call(t, cs, "admin_set_egress", map[string]any{
-		"slug": "ops", "mode": "allowlist", "allowlist": []any{"api.corp.internal:443"},
+		"slug": "ops", "mode": "allowlist", "allowlist": []any{"api.corp.internal"},
 	}, false)
 	if !strings.Contains(txt, "allow_set") {
 		t.Fatalf("admin_set_egress: %q", txt)
 	}
-	assertCalled(t, h, "SetEgress:hall-1:allow_set:[api.corp.internal:443]")
+	assertCalled(t, h, "SetEgress:hall-1:allow_set:[api.corp.internal]")
 }
 
 func TestAdminBeamhallReadRequiresAdmin(t *testing.T) {

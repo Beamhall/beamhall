@@ -101,7 +101,7 @@
           <option value="deny_all" {{if eq (printf "%s" .Beamhall.NetworkPolicy.EgressMode) "deny_all"}}selected{{end}}>deny all (default)</option>
           <option value="allow_set" {{if eq (printf "%s" .Beamhall.NetworkPolicy.EgressMode) "allow_set"}}selected{{end}}>allow listed</option>
         </select></div>
-      <div><label class="block text-slate-500">Allowlist (one FQDN/CIDR:port per line)</label>
+      <div><label class="block text-slate-500">Allowlist (one IPv4, CIDR, or hostname per line)</label>
         <textarea name="allowlist" rows="4" class="w-full border rounded px-2 py-1 font-mono text-xs">{{range .Beamhall.NetworkPolicy.EgressAllowlist}}{{.}}
 {{end}}</textarea></div>
       <button class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded">Update egress</button>

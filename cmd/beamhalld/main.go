@@ -18,6 +18,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -555,7 +557,12 @@ func run() error {
 	}
 	if cfg.BundledIDPUpstream != "" {
 		idpHost := "idp." + cfg.BaseDomain
-		gwOpts = append(gwOpts, gateway.WithStaticRoute(idpHost, cfg.BundledIDPUpstream))
+		// The IdP is the ONE hostname workloads may reach through the gateway
+		// (in-container OIDC: token exchange, JWKS). Everything else — beam
+		// routes and the control endpoints at the base domain — is refused for
+		// workload-originated requests by the gateway's workload guard.
+		gwOpts = append(gwOpts, gateway.WithStaticRoute(idpHost, cfg.BundledIDPUpstream),
+			gateway.WithWorkloadExempt(idpHost))
 		logger.Info("bundled IdP fronted by the gateway", "host", idpHost, "upstream", cfg.BundledIDPUpstream)
 	}
 	if cfg.BaseDomain != "" {
@@ -582,7 +589,7 @@ func run() error {
 
 	// --- backplane: PEP + orchestrator + build + resources ----------------
 	pep := policy.New(st, auditLog)
-	egressSync := egressSyncFunc(cfg, st, drv, logger)
+	egressSync := egressSyncFunc(cfg, st, drv, gw, logger)
 	repos := build.NewRepos(filepath.Join(cfg.DataDir, "repos")) // shared with the git server
 	// Backup config for the admin backup tools: the key path mirrors the boot
 	// key resolution; backups land in <DataDir>/backups unless overridden.
@@ -883,12 +890,16 @@ func run() error {
 
 // egressSyncFunc asserts the default-deny + allowlist iptables state for
 // every beamhall whose bridge exists (PLAN §6: assert from policy, never
-// accumulate drift). Runs at boot AND after every deploy — bridges are
-// created lazily at deploy time, so boot-only assertion would leave a new
-// beamhall's first workloads unprotected until the next restart. Linux-only
-// by nature; a no-op elsewhere (dev hosts have no DOCKER-USER chain).
-func egressSyncFunc(cfg config.Config, st *store.Store, drv *driver.DockerDriver, logger *slog.Logger) func(context.Context) error {
+// accumulate drift), plus the workload→host guard: the BEAMHALL-INPUT chain
+// (bridge→host drops except the gateway ports) and the gateway's L7 guard
+// (bridge subnets refused for all but the exempt hostnames). Runs at boot AND
+// after every deploy — bridges are created lazily at deploy time, so
+// boot-only assertion would leave a new beamhall's first workloads
+// unprotected until the next restart. Linux-only by nature; a no-op elsewhere
+// (dev hosts have no DOCKER-USER chain).
+func egressSyncFunc(cfg config.Config, st *store.Store, drv *driver.DockerDriver, gw *gateway.Gateway, logger *slog.Logger) func(context.Context) error {
 	rec := egress.New(cfg.EgressAlwaysDeny...)
+	rec.AllowHostPorts(listenPorts(cfg.GatewayListen)...)
 	return func(ctx context.Context) error {
 		if runtime.GOOS != "linux" {
 			logger.Debug("egress reconciliation skipped (not linux)")
@@ -899,22 +910,53 @@ func egressSyncFunc(cfg config.Config, st *store.Store, drv *driver.DockerDriver
 			return fmt.Errorf("egress: list beamhalls: %w", err)
 		}
 		var policies []egress.Policy
+		var subnets []string
 		for _, bh := range halls {
-			bridge, err := drv.NetworkBridge(ctx, "bh-"+string(bh.ID))
+			netName := "bh-" + string(bh.ID)
+			bridge, err := drv.NetworkBridge(ctx, netName)
 			if err != nil {
 				continue // no network yet — nothing to protect or break
 			}
-			policies = append(policies, egress.Policy{
-				Bridge: bridge,
-				Allow:  bh.NetworkPolicy.EgressAllowlist,
-			})
+			allow := bh.NetworkPolicy.EgressAllowlist
+			if bh.NetworkPolicy.EgressMode != domain.EgressAllowSet {
+				// deny_all must actually deny: entries left in the store from
+				// an earlier allow_set posture stay inert until IT flips the
+				// mode back.
+				allow = nil
+			}
+			policies = append(policies, egress.Policy{Bridge: bridge, Allow: allow})
+			sn, err := drv.NetworkSubnets(ctx, netName)
+			if err != nil {
+				return fmt.Errorf("egress: subnets for %s: %w", netName, err)
+			}
+			subnets = append(subnets, sn...)
 		}
 		if err := rec.Reconcile(ctx, policies); err != nil {
 			return err
 		}
-		logger.Info("egress policy asserted", "bridges", len(policies))
+		if err := gw.SetWorkloadSubnets(ctx, subnets); err != nil {
+			return fmt.Errorf("gateway workload guard: %w", err)
+		}
+		logger.Info("egress policy asserted", "bridges", len(policies), "guarded_subnets", len(subnets))
 		return nil
 	}
+}
+
+// listenPorts extracts the numeric TCP ports from gateway listen addresses
+// (":80", "0.0.0.0:443") — the only host ports the BEAMHALL-INPUT guard
+// leaves open to workloads.
+func listenPorts(addrs []string) []int {
+	var ports []int
+	for _, a := range addrs {
+		_, p, err := splitHostPort(a)
+		if err != nil {
+			continue
+		}
+		if n, err := strconv.Atoi(p); err == nil && n > 0 && n <= 65535 && !slices.Contains(ports, n) {
+			ports = append(ports, n)
+		}
+	}
+	return ports
 }
 
 // askURL is where Caddy's on-demand-TLS ask endpoint reaches this process.

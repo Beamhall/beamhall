@@ -126,6 +126,8 @@ func TestAgentCannot(t *testing.T) {
 		t.Logf("BLOCKED: tool surface is %v — no security/quota/egress mutation exists", names)
 	})
 
+	var exfilHost string // captured by ExfiltrateData for the host-guard probe
+
 	t.Run("ExfiltrateData", func(t *testing.T) {
 		// ATTEMPT: deploy a beam that phones home (public IP + cloud metadata)
 		// and report what its own logs show. Build+deploy succeeds — egress is
@@ -149,8 +151,9 @@ http.createServer((req, res) => res.end("up")).listen(process.env.PORT || 8080);
   console.log("probes done");
 })();`,
 		})
-		callTool(ctx, t, cs, "deploy_beam", map[string]any{
+		res, _ := callTool(ctx, t, cs, "deploy_beam", map[string]any{
 			"beamhall": "e2e", "beam": "exfil", "source_tarball": app}, false)
+		exfilHost = strings.TrimPrefix(structuredURL(t, res), "https://")
 
 		// Wait for both probes to time out inside the workload (≤ ~10s).
 		deadline := time.Now().Add(45 * time.Second)
@@ -175,6 +178,88 @@ http.createServer((req, res) => res.end("up")).listen(process.env.PORT || 8080);
 			t.Errorf("show_logs did not name the egress constraint:\n%s", logs)
 		}
 		t.Log("BLOCKED: default-deny egress dropped both the internet and the metadata endpoint")
+	})
+
+	t.Run("ReachTheHostOrSiblingBeams", func(t *testing.T) {
+		// ATTEMPT: from inside a workload, reach the host via the bridge
+		// gateway IP — the backplane HTTP listener directly, and another
+		// beam's public URL through the gateway. Container→host traffic is
+		// delivered locally (INPUT) and never traverses the FORWARD-hooked
+		// egress chain, so without the BEAMHALL-INPUT guard + the gateway's
+		// workload guard both paths would be open: any beam could call any
+		// other beam's public URL, cross-hall, and probe the backplane's
+		// auth surface.
+		if exfilHost == "" {
+			t.Fatal("exfil preview host was not captured by ExfiltrateData")
+		}
+		backplanePort := strings.TrimPrefix(httpAddr, "127.0.0.1:")
+		appJS := `const fs = require("fs"), http = require("http");
+http.createServer((q, s) => s.end("up")).listen(process.env.PORT || 8080);
+function gw() {
+  const lines = fs.readFileSync("/proc/net/route", "utf8").trim().split("\n").slice(1);
+  for (const l of lines) {
+    const f = l.trim().split(/\s+/);
+    if (f[1] === "00000000") {
+      const h = f[2]; // little-endian hex
+      return [h.slice(6,8),h.slice(4,6),h.slice(2,4),h.slice(0,2)].map(x => parseInt(x,16)).join(".");
+    }
+  }
+  throw new Error("no default route");
+}
+function probe(port, hostHeader, label) {
+  return new Promise(resolve => {
+    const opts = { host: GW, port: port, path: "/", timeout: 6000 };
+    if (hostHeader) opts.headers = { Host: hostHeader };
+    const r = http.get(opts, res => {
+      res.resume();
+      res.on("end", () => { console.log(label + " status=" + res.statusCode); resolve(); });
+    });
+    r.on("timeout", () => r.destroy(new Error("ETIMEDOUT")));
+    r.on("error", e => { console.log(label + " blocked (" + (e.code || e.message) + ")"); resolve(); });
+  });
+}
+const GW = gw();
+(async () => {
+  await probe(BACKPLANE_PORT, null, "backplane");
+  await probe(GATEWAY_PORT, "SIBLING_HOST", "gateway-sibling");
+  console.log("host probes done");
+})();`
+		appJS = strings.ReplaceAll(appJS, "BACKPLANE_PORT", backplanePort)
+		appJS = strings.ReplaceAll(appJS, "GATEWAY_PORT", gatewayPort)
+		appJS = strings.ReplaceAll(appJS, "SIBLING_HOST", exfilHost)
+		app := tarGz(t, map[string]string{
+			"package.json": `{ "name": "hostprobe", "version": "1.0.0", "main": "app.js", "scripts": { "start": "node app.js" } }`,
+			"app.js":       appJS,
+		})
+		// Reuse the "probe" beam registered by ObtainDatabaseCredentials —
+		// the hall's beam quota is already at its limit.
+		callTool(ctx, t, cs, "deploy_beam", map[string]any{
+			"beamhall": "e2e", "beam": "probe", "source_tarball": app}, false)
+
+		deadline := time.Now().Add(60 * time.Second)
+		var logs string
+		for time.Now().Before(deadline) {
+			_, logs = callTool(ctx, t, cs, "show_logs", map[string]any{"beamhall": "e2e", "beam": "probe"}, false)
+			if strings.Contains(logs, "host probes done") {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		if !strings.Contains(logs, "host probes done") {
+			t.Fatalf("host probes never completed:\n%s", logs)
+		}
+		if strings.Contains(logs, "backplane status=") {
+			t.Fatalf("the workload REACHED the backplane listener via the bridge gateway:\n%s", logs)
+		}
+		if !strings.Contains(logs, "backplane blocked") {
+			t.Errorf("missing the backplane-blocked probe result:\n%s", logs)
+		}
+		// The gateway port is deliberately open at L3 (the IdP exemption needs
+		// it) — the L7 workload guard must refuse proxying to a sibling beam.
+		if !strings.Contains(logs, "gateway-sibling status=403") {
+			t.Errorf("workload-originated request to a sibling beam's URL was not refused with 403:\n%s", logs)
+		}
+		t.Log("BLOCKED: bridge→host listeners dropped; gateway refuses workload-originated beam-route requests")
 	})
 
 	t.Run("SupplyADockerfile", func(t *testing.T) {

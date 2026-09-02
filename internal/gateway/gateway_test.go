@@ -253,3 +253,92 @@ func TestRandomPreviewHost(t *testing.T) {
 		seen[token] = true
 	}
 }
+
+// TestWorkloadGuardRoute proves the L7 half of the workload→host guard: once
+// bridge subnets are known, the FIRST rendered route must 403 requests from
+// those subnets for every hostname except the exempt set (the bundled IdP) —
+// before any beam or static route can reverse-proxy a workload into another
+// beam's public URL or the control endpoints at the base domain.
+func TestWorkloadGuardRoute(t *testing.T) {
+	url, last := captureCaddy(t)
+	g := New(
+		WithAdminURL(url),
+		WithWorkloadExempt("idp.wc.local"),
+		WithStaticRoute("idp.wc.local", "127.0.0.1:8888"),
+		WithStaticRoute("wc.local", "127.0.0.1:8443"), // control endpoints — NOT exempt
+	)
+	if err := g.Upsert(context.Background(), Route{Hostname: "beam.ops.wc.local", BackendAddr: "172.18.0.2:8080", Kind: Live}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := g.SetWorkloadSubnets(context.Background(), []string{"172.21.0.0/16", "172.18.0.0/16"}); err != nil {
+		t.Fatalf("SetWorkloadSubnets: %v", err)
+	}
+
+	srv := last().Apps.HTTP.Servers["beamhall"]
+	if len(srv.Routes) != 4 { // guard + beam + 2 static
+		t.Fatalf("expected 4 routes, got %+v", srv.Routes)
+	}
+	guard := srv.Routes[0]
+	if guard.ID != "bh_workload_guard" {
+		t.Fatalf("guard must be the FIRST route (ordering is the enforcement), got %+v", srv.Routes)
+	}
+	m := guard.Match[0]
+	if m.RemoteIP == nil || len(m.RemoteIP.Ranges) != 2 {
+		t.Fatalf("guard remote_ip wrong: %+v", m)
+	}
+	if len(m.Not) != 1 || len(m.Not[0].Host) != 1 || m.Not[0].Host[0] != "idp.wc.local" {
+		t.Fatalf("guard must exempt exactly the IdP host — never the base-domain control route: %+v", m.Not)
+	}
+	h := guard.Handle[0]
+	if h.Handler != "static_response" || h.StatusCode != 403 {
+		t.Fatalf("guard handler wrong: %+v", h)
+	}
+	if !guard.Terminal {
+		t.Fatal("guard route must be terminal")
+	}
+
+	// Unchanged subnet set (any order): no reload.
+	before := last()
+	if err := g.SetWorkloadSubnets(context.Background(), []string{"172.18.0.0/16", "172.21.0.0/16"}); err != nil {
+		t.Fatalf("SetWorkloadSubnets (same set): %v", err)
+	}
+	if last() != before {
+		t.Fatal("identical subnet set must not push a new config")
+	}
+}
+
+// TestNoGuardWithoutSubnets: with no known bridge subnets (fresh install, no
+// halls) the guard route must be absent — an empty remote_ip matcher would
+// otherwise match every request and 403 the world.
+func TestNoGuardWithoutSubnets(t *testing.T) {
+	url, last := captureCaddy(t)
+	g := New(WithAdminURL(url), WithWorkloadExempt("idp.wc.local"))
+	if err := g.Upsert(context.Background(), Route{Hostname: "b.ops.wc.local", BackendAddr: "172.18.0.2:8080", Kind: Live}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	for _, rt := range last().Apps.HTTP.Servers["beamhall"].Routes {
+		if rt.ID == "bh_workload_guard" {
+			t.Fatalf("guard rendered with no subnets: %+v", rt)
+		}
+	}
+}
+
+// TestSetWorkloadSubnetsRevertsOnFailedLoad mirrors Retire's contract: if
+// Caddy rejects the config, the in-memory subnet set must roll back so a
+// later successful reconcile pushes what Caddy actually needs.
+func TestSetWorkloadSubnetsRevertsOnFailedLoad(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	g := New(WithAdminURL(srv.URL))
+	if err := g.SetWorkloadSubnets(context.Background(), []string{"172.18.0.0/16"}); err == nil {
+		t.Fatal("expected the failed load to surface")
+	}
+	g.mu.Lock()
+	n := len(g.workloadSubnets)
+	g.mu.Unlock()
+	if n != 0 {
+		t.Fatal("subnets must roll back on a failed load")
+	}
+}

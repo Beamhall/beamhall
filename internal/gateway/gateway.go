@@ -24,6 +24,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -61,6 +62,15 @@ type Gateway struct {
 	// TLS allowlist — used for bundled infrastructure the gateway fronts (e.g.
 	// the bundled Keycloak IdP), not beam traffic. Set at construction.
 	static map[string]Route
+
+	// workloadSubnets are the container bridge subnets; requests from them are
+	// refused (403) for every hostname except workloadExempt — a workload must
+	// not use the gateway to reach the backplane's control endpoints or other
+	// beams' public URLs (the iptables host guard leaves the gateway ports
+	// open precisely so this L7 guard decides). Pushed by the egress sync, so
+	// a new hall's subnet is guarded before its first container starts.
+	workloadSubnets []string
+	workloadExempt  []string
 }
 
 // Option configures a Gateway.
@@ -93,6 +103,14 @@ func WithStaticRoute(hostname, backendAddr string) Option {
 		}
 		g.static[hostname] = Route{Hostname: hostname, BackendAddr: backendAddr, Kind: Live}
 	}
+}
+
+// WithWorkloadExempt names the hostnames workload-originated requests may
+// still reach through the gateway — the bundled IdP, so in-container OIDC
+// (token exchange, JWKS) keeps working. Everything else, the control-endpoint
+// static route at the base domain included, stays behind the workload guard.
+func WithWorkloadExempt(hostnames ...string) Option {
+	return func(g *Gateway) { g.workloadExempt = append(g.workloadExempt, hostnames...) }
 }
 
 // New builds a Gateway. Caddy must already be running with its Admin API
@@ -174,6 +192,32 @@ func (g *Gateway) Retire(ctx context.Context, hostname string) error {
 	return nil
 }
 
+// SetWorkloadSubnets replaces the bridge-subnet set behind the workload guard
+// and reconciles Caddy iff it changed. Called from the egress sync — which
+// runs before a fresh workload starts — so a new hall's subnet is guarded
+// before any of its containers can send a request. On a failed load the old
+// set is restored so the in-memory state matches what Caddy still serves.
+func (g *Gateway) SetWorkloadSubnets(ctx context.Context, subnets []string) error {
+	sorted := append([]string(nil), subnets...)
+	sort.Strings(sorted)
+	g.mu.Lock()
+	if slices.Equal(sorted, g.workloadSubnets) {
+		g.mu.Unlock()
+		return nil
+	}
+	prev := g.workloadSubnets
+	g.workloadSubnets = sorted
+	cfg := g.render()
+	g.mu.Unlock()
+	if err := g.load(ctx, cfg); err != nil {
+		g.mu.Lock()
+		g.workloadSubnets = prev
+		g.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 // Snapshot returns the current routes, sorted by hostname (for the Admin UI and
 // restart rebuild).
 func (g *Gateway) Snapshot() []Route {
@@ -246,7 +290,30 @@ func (g *Gateway) render() *caddyConfig {
 	}
 	sort.Strings(hosts)
 
-	routes := make([]routeCfg, 0, len(hosts))
+	routes := make([]routeCfg, 0, len(hosts)+1)
+	// The workload guard must be the FIRST route: requests from container
+	// bridge subnets are refused for every hostname except the exempt set
+	// (bundled IdP), before any host route can proxy them. Ordering is the
+	// enforcement — a matching later route would happily reverse-proxy a
+	// workload into another beam or the control endpoints.
+	if len(g.workloadSubnets) > 0 {
+		guard := matchCfg{RemoteIP: &remoteIPCfg{Ranges: g.workloadSubnets}}
+		if len(g.workloadExempt) > 0 {
+			exempt := append([]string(nil), g.workloadExempt...)
+			sort.Strings(exempt)
+			guard.Not = []matchCfg{{Host: exempt}}
+		}
+		routes = append(routes, routeCfg{
+			ID:    "bh_workload_guard",
+			Match: []matchCfg{guard},
+			Handle: []handleCfg{{
+				Handler:    "static_response",
+				StatusCode: 403,
+				Body:       "workload-originated requests may not use the gateway\n",
+			}},
+			Terminal: true,
+		})
+	}
 	for _, h := range hosts {
 		r := merged[h]
 		routes = append(routes, routeCfg{

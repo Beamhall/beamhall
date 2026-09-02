@@ -191,6 +191,23 @@ func (d *DockerDriver) NetworkBridge(ctx context.Context, name string) (string, 
 	return "", fmt.Errorf("network %q has no resolvable bridge", name)
 }
 
+// NetworkSubnets returns the IPAM subnets of a Beamhall network — the
+// gateway's workload guard needs them to recognize container-originated
+// requests by source address.
+func (d *DockerDriver) NetworkSubnets(ctx context.Context, name string) ([]string, error) {
+	n, err := d.cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("network inspect %q: %w", name, err)
+	}
+	var subnets []string
+	for _, c := range n.IPAM.Config {
+		if c.Subnet != "" {
+			subnets = append(subnets, c.Subnet)
+		}
+	}
+	return subnets, nil
+}
+
 // Deploy creates (does not start) a container from the pinned image with the
 // full hardening profile applied. An image that is not present locally is
 // pulled by digest from the internal registry — the runtime daemon never

@@ -15,6 +15,40 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Security
+- **Workloads can no longer reach the host's listeners.** A container
+  addressing the host itself (its bridge gateway IP, or any host-owned
+  address) is delivered locally through INPUT — a path the `DOCKER-USER`
+  egress chain, which hooks FORWARD, never sees. Before this fix a beam could
+  open TCP to the backplane's HTTP listener (`/mcp`, `/admin`, git — all
+  bearer-auth'd, but exposed) and to the gateway, and through the gateway
+  call **any other beam's public URL, across beamhalls**, ungoverned. Two
+  guards close the path, asserted by the same reconcile that runs at boot and
+  before every workload start: a new `BEAMHALL-INPUT` iptables chain drops
+  all bridge-originated traffic to the host except established replies and
+  the gateway ports, and the gateway now refuses (403) requests arriving
+  from container bridge subnets for every hostname except the bundled IdP —
+  preserving in-container OIDC for apps using `provision_auth`. Proven by
+  the new `TestAgentCannot/ReachTheHostOrSiblingBeams` negative-security
+  test; `docs/threat-model.md` §7 now describes the workload→host model
+  honestly (the host IP was previously claimed always-denied, which the
+  FORWARD hook could not enforce).
+- **`deny_all` egress now ignores stored allowlist entries.** Previously the
+  reconciler applied a beamhall's allowlist regardless of its egress mode, so
+  switching a hall back to `deny_all` without also clearing the list left
+  the old holes open. Entries stay stored but inert until IT switches the
+  mode back to `allowlist`.
+
+### Fixed
+- **A malformed egress allowlist entry can no longer break every deploy.**
+  Entries are rendered into one appliance-wide iptables transaction, so a
+  single stored `host:port` suffix (which the docs wrongly advertised — rules
+  match the destination address only) or IPv6 literal failed that transaction
+  and with it every subsequent deploy on the appliance. `admin_set_egress`,
+  `admin_create_beamhall`, and the bootstrap CLI now validate each entry at
+  write time (IPv4, IPv4 CIDR, or hostname) and refuse anything else with a
+  teaching error; the tool copy and Admin console no longer suggest `:port`.
+
 ## [0.6.1] - 2026-09-01
 
 ### Added

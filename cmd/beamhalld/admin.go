@@ -175,7 +175,7 @@ func runAdminBootstrap(args []string) error {
 		roleStr  = fs.String("role", "builder", "membership role: viewer|builder|beamhall_admin")
 		runtime  = fs.String("runtime", "runc", "runtime class: runc (hardened Docker) | runsc (gVisor)")
 		egress   = fs.String("egress", "deny_all", "egress mode: deny_all | allow_set")
-		allowCSV = fs.String("allow", "", "egress allowlist (FQDN/CIDR:port, comma-separated) when -egress=allow_set")
+		allowCSV = fs.String("allow", "", "egress allowlist (IPv4/CIDR/hostname, comma-separated) when -egress=allow_set")
 		maxBeams = fs.Int("max-beams", 10, "beamhall quota: max active beams")
 		liveSlot = fs.Int("live-slots", 2, "beamhall quota: max live (promoted) beams")
 	)
