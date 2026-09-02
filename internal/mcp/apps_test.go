@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,29 @@ func TestListAppsRequiresBeamsUse(t *testing.T) {
 	}
 	if len(h.bp.calls) != 0 {
 		t.Errorf("backplane reached despite missing scope: %v", h.bp.calls)
+	}
+}
+
+// TestUserTierMenuIsExactlyTheTrio pins the whole user-tier tool surface: a
+// beams:use-only caller sees list_apps + describe_app + use_app and NOTHING
+// else. Scope-less placeholder tools (create_queue) once leaked in here —
+// "visible to all" must still exclude the pure using tier, whose agents
+// never build anything.
+func TestUserTierMenuIsExactlyTheTrio(t *testing.T) {
+	h := newHarness(t)
+	cs := h.connect(t, auth.ScopeBeamsUse, nil)
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	sort.Strings(names)
+	want := []string{"describe_app", "list_apps", "use_app"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("user-tier menu = %v, want exactly %v", names, want)
 	}
 }
 

@@ -224,7 +224,10 @@ type applianceState struct {
 // the tier check, then applies the state gates. Fail-closed on unknown tools.
 func toolVisible(name string, info *sdkauth.TokenInfo, adminRole string, st applianceState) bool {
 	if alwaysVisible[name] {
-		return true
+		// "All" still excludes the pure using tier: a placeholder exists to
+		// give a BUILDING agent a clear "not enabled" answer, and a user's
+		// menu must stay exactly the using-tier trio.
+		return info != nil && auth.HasScope(info.Scopes, auth.ScopeResourcesWrite)
 	}
 	scope, known := toolScope[name]
 	if !known {

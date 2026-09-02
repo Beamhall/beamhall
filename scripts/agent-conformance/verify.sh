@@ -41,11 +41,12 @@ for u in "${targets[@]}"; do
     else warn "$u: NO admin_* tools — beamhall-it role likely not applied"; rc=1; fi
   elif is_user "$u"; then
     apps=$(printf '%s\n' "$names" | grep -c '^\(list_apps\|describe_app\|use_app\)$' || true)
-    builder=$(printf '%s\n' "$names" | grep -c '^\(create_beam\|deploy_beam\|set_secret\|try_beam_tool\|update_beam\)$' || true)
-    if [ "$apps" -eq 3 ] && [ "$admin" -eq 0 ] && [ "$builder" -eq 0 ]; then
-      ok "$u: list_apps + describe_app + use_app only ($total tool(s)), 0 admin_*, 0 builder — using tier OK"
+    # Total must be EXACTLY the trio: category greps alone once missed a
+    # scope-less placeholder (create_queue) leaking into the user menu.
+    if [ "$apps" -eq 3 ] && [ "$total" -eq 3 ]; then
+      ok "$u: exactly list_apps + describe_app + use_app — using tier OK"
     else
-      warn "$u: expected exactly the using tier (apps=$apps builder=$builder admin=$admin of $total)"; rc=1
+      warn "$u: expected EXACTLY the 3 using-tier tools, got $total: $(printf '%s' "$names" | tr '\n' ' ')"; rc=1
     fi
   else
     if [ "$admin" -eq 0 ]; then ok "$u: $total builder tools, 0 admin_* — correctly unprivileged"

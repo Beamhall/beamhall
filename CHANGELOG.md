@@ -40,6 +40,13 @@ their auto-generated notes.
   mode back to `allowlist`.
 
 ### Fixed
+- **The user-tier tool menu is exactly the trio again.** The scope-less
+  `create_queue` placeholder ("not enabled in this build") had been leaking
+  into the using-tier menu since the tier shipped in v0.6.0 — a non-technical
+  user's agent was offered a build tool it could never use. Placeholders now
+  require the `resources:write` scope (matching their real siblings, e.g.
+  `create_database`), and the conformance check asserts the user menu's total
+  count, not just category counts, so a future leak cannot hide.
 - **A malformed egress allowlist entry can no longer break every deploy.**
   Entries are rendered into one appliance-wide iptables transaction, so a
   single stored `host:port` suffix (which the docs wrongly advertised — rules
