@@ -15,6 +15,15 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-01
+
+The beam-to-beam wave: apps stop being islands. IT can grant one app the
+right to call another's tools — through an audited relay the platform runs,
+never over the network — and the network now enforces that this is the only
+path: workloads in the same workspace can no longer dial each other directly
+(the **BREAKING** note under **Changed**). All of it verified live on the
+appliance.
+
 ### Added
 - **Apps can now call each other — through the platform, never around it.**
   IT grants one app permission to use another app's tools with the new
@@ -25,13 +34,15 @@ their auto-generated notes.
   re-checks the grant on every call (revocation bites instantly), delivers
   the caller to the target as the standard signed assertion with the new
   `caller_type: "beam"` claim, applies the same size caps as `use_app` plus
-  per-app rate and in-flight limits, and records **every call on the audit
-  chain**. The same tool grants per-app **external destinations** (direct
-  egress for that one app's workloads, on top of the workspace allowlist).
-  Set-and-replace with `clear` as the inverse. The calling app finds its
-  instructions in `/run/beamhall/c2c.json` and its credential at
+  per-calling-app rate and in-flight caps (`BEAMHALL_C2C_RATE_PER_MIN`/
+  `_BURST`, `BEAMHALL_C2C_MAX_INFLIGHT`), and records **every call on the
+  audit chain**. The same tool grants per-app **external destinations**
+  (direct egress for that one app's workloads, on top of the workspace
+  allowlist). Set-and-replace with `clear` as the inverse. The calling app
+  finds its instructions in `/run/beamhall/c2c.json` and its credential at
   `/run/secrets/BEAMHALL_C2C_KEY` from its next deploy —
-  `docs/app-tools.md` has the new "Calling other apps" section.
+  `docs/app-tools.md` has the new "Calling other apps" section. Migration
+  0014.
 - **`show_beam_peers`** (builders, read-only): what IT granted this app to
   reach, whether the relay credential has reached each channel yet, and the
   in-app calling contract — builders can see grants but never widen them.
@@ -48,8 +59,33 @@ their auto-generated notes.
   traverses the filter when the kernel says so, the appliance now asserts
   `br_netfilter` + `bridge-nf-call-iptables=1` on every network reconcile
   (fail-closed) and the installer persists it across reboots.
+- **The standing agent orientation gains APPS CALLING APPS.** The MCP server
+  instructions — the first thing an agent reads, every session — now teach
+  builders that apps cannot reach each other over the network, that the
+  audited relay is the only path and works solely for IT-granted targets,
+  to check `show_beam_peers` for what an app may reach and the in-app
+  calling contract, and to ask IT for a grant instead of proxying around a
+  missing one through a browser or an external service. Existing agents
+  change behavior on their next session with no action from you.
+- Every signed assertion an app receives now carries a `caller_type` claim —
+  `user` (a person's agent), `beam` (another app, via the relay), or
+  `probe` — so an app that authorizes on identity can tell people from apps
+  without parsing the subject's shape. Additive: existing verification code
+  is unaffected (`docs/app-tools.md` documents the claim).
 - The `set_secret` key namespace `BEAMHALL_*` is now reserved for
   platform-injected credentials and refused with a teaching error.
+
+### Fixed
+- **A stored allowlist hostname that stops resolving can no longer brick
+  every deploy.** v0.6.2 validated egress entries at write time, but
+  hostname entries were still resolved by `iptables-restore` at load time,
+  so one dead name (a typo'd NXDOMAIN, or DNS rot on a once-valid name) —
+  in a workspace allowlist or a per-app external grant — failed the whole
+  appliance-wide rule transaction and with it every subsequent deploy. The
+  reconciler now resolves hostnames itself, per entry (one rule per IPv4
+  address), and skips an unresolvable entry with a loud warning: the
+  terminal deny stands, so the failure mode is that one entry
+  under-allowing — never an open hole, never a bricked appliance.
 
 ## [0.6.2] - 2026-09-01
 
@@ -517,7 +553,8 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Beamhall/beamhall/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/Beamhall/beamhall/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/Beamhall/beamhall/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Beamhall/beamhall/compare/v0.5.1...v0.6.0
