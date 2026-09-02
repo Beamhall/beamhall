@@ -15,6 +15,31 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-01
+
+A security patch, cut ahead of the next feature wave: the workload→host
+network path is closed and `deny_all` egress now means exactly that, with two
+bug fixes alongside — a stored egress entry that could brick every deploy, and
+a build tool leaking into the user-tier menu. No new tools and no seam
+changes; all of it verified live on the appliance.
+
+### Fixed
+- **A malformed egress allowlist entry can no longer break every deploy.**
+  Entries are rendered into one appliance-wide iptables transaction, so a
+  single stored `host:port` suffix (which the docs wrongly advertised — rules
+  match the destination address only) or IPv6 literal failed that transaction
+  and with it every subsequent deploy on the appliance. `admin_set_egress`,
+  `admin_create_beamhall`, and the bootstrap CLI now validate each entry at
+  write time (IPv4, IPv4 CIDR, or hostname) and refuse anything else with a
+  teaching error; the tool copy and Admin console no longer suggest `:port`.
+- **The user-tier tool menu is exactly the trio again.** The scope-less
+  `create_queue` placeholder ("not enabled in this build") had been leaking
+  into the using-tier menu since the tier shipped in v0.6.0 — a non-technical
+  user's agent was offered a build tool it could never use. Placeholders now
+  require the `resources:write` scope (matching their real siblings, e.g.
+  `create_database`), and the conformance check asserts the user menu's total
+  count, not just category counts, so a future leak cannot hide.
+
 ### Security
 - **Workloads can no longer reach the host's listeners.** A container
   addressing the host itself (its bridge gateway IP, or any host-owned
@@ -38,23 +63,6 @@ their auto-generated notes.
   switching a hall back to `deny_all` without also clearing the list left
   the old holes open. Entries stay stored but inert until IT switches the
   mode back to `allowlist`.
-
-### Fixed
-- **The user-tier tool menu is exactly the trio again.** The scope-less
-  `create_queue` placeholder ("not enabled in this build") had been leaking
-  into the using-tier menu since the tier shipped in v0.6.0 — a non-technical
-  user's agent was offered a build tool it could never use. Placeholders now
-  require the `resources:write` scope (matching their real siblings, e.g.
-  `create_database`), and the conformance check asserts the user menu's total
-  count, not just category counts, so a future leak cannot hide.
-- **A malformed egress allowlist entry can no longer break every deploy.**
-  Entries are rendered into one appliance-wide iptables transaction, so a
-  single stored `host:port` suffix (which the docs wrongly advertised — rules
-  match the destination address only) or IPv6 literal failed that transaction
-  and with it every subsequent deploy on the appliance. `admin_set_egress`,
-  `admin_create_beamhall`, and the bootstrap CLI now validate each entry at
-  write time (IPv4, IPv4 CIDR, or hostname) and refuse anything else with a
-  teaching error; the tool copy and Admin console no longer suggest `:port`.
 
 ## [0.6.1] - 2026-09-01
 
@@ -473,7 +481,8 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/Beamhall/beamhall/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/Beamhall/beamhall/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Beamhall/beamhall/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Beamhall/beamhall/compare/v0.5.0...v0.5.1
