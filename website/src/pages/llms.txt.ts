@@ -14,7 +14,7 @@ const body = `# Beamhall
 
 Beamhall is a single Go binary you run on your own hardware (private VM,
 dedicated VPC, or on-prem). Apache-2.0, no SaaS, no phone-home, air-gap
-friendly. Current release: v0.6.2 (pre-1.0, entering design-partner validation).
+friendly. Current release: v0.7.0 (pre-1.0, entering design-partner validation).
 
 Key ideas, if you only remember three things:
 
@@ -23,9 +23,9 @@ Key ideas, if you only remember three things:
   database connection strings are injected into the running app and never
   returned to the agent.
 - Security defaults are **structural, not advisory**: least privilege,
-  read-only root filesystem, default-deny egress, per-workspace isolation, and
-  IT-gated promotion from preview to live — with no agent tool to widen any of
-  them.
+  read-only root filesystem, default-deny egress, per-app isolation (apps reach
+  each other only through IT-granted, audited relay calls), and IT-gated
+  promotion from preview to live — with no agent tool to widen any of them.
 
 Common synonyms: a "beam" is an app / website / service / API / internal tool.
 A "beamhall" is a workspace. The agent-facing control surface is MCP.
@@ -52,7 +52,7 @@ A "beamhall" is a workspace. The agent-facing control surface is MCP.
 - [Getting started](https://github.com/Beamhall/beamhall/blob/main/docs/getting-started.md): an IT admin's first hour, from install to a deployed beam.
 - [Beamhall for IT](https://github.com/Beamhall/beamhall/blob/main/docs/beamhall-for-it.md): what Beamhall requires of the team that runs it.
 - [Administering over MCP](https://github.com/Beamhall/beamhall/blob/main/docs/admin-over-mcp.md): the \`admin_*\` tool family and its guardrails.
-- [App tools](https://github.com/Beamhall/beamhall/blob/main/docs/app-tools.md): the HTTP contract an app serves so its users' AI agents can act through it via \`use_app\`, and how to verify the Beamhall-signed caller assertion.
+- [App tools](https://github.com/Beamhall/beamhall/blob/main/docs/app-tools.md): the HTTP contract an app serves so its users' AI agents can act through it via \`use_app\`, how to verify the Beamhall-signed caller assertion, and how apps call each other's tools through the IT-granted relay (beam-to-beam).
 - [Identity provider setup](https://github.com/Beamhall/beamhall/blob/main/docs/idp-setup.md): connecting Keycloak, Okta, Entra or any OIDC IdP.
 - [Air-gapped operation](https://github.com/Beamhall/beamhall/blob/main/docs/air-gapped.md): running with no internet egress.
 - [Agent-conformance suite](https://github.com/Beamhall/beamhall/blob/main/docs/agent-conformance.md): four authenticated personas proving isolation and four-eyes control.

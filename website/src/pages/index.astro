@@ -48,7 +48,7 @@ const jsonLd = {
       operatingSystem: "Linux",
       url: `${site}/`,
       downloadUrl: repo,
-      softwareVersion: "0.6.2",
+      softwareVersion: "0.7.0",
       license: "https://www.apache.org/licenses/LICENSE-2.0",
       isAccessibleForFree: true,
       description:
@@ -60,7 +60,7 @@ const jsonLd = {
         "Write-only secret vault",
         "Company sign-in (OIDC) as a provisioned capability",
         "Brokered outbound email and S3-compatible object storage",
-        "Default-deny egress and per-workspace isolation",
+        "Default-deny egress and per-app isolation; apps call each other only through IT-granted, audited relay calls",
         "Separate preview and live lifecycle states with IT-gated promotion and optional four-eyes approval",
         "Full audit trail; self-hosted, no SaaS, no phone-home"
       ],
@@ -177,7 +177,7 @@ const jsonLd = {
               <ul class="list">
                 <li><b>Runtime</b>: <span class="c-dim">hardened, isolated compute (runc / gVisor runsc), built from source, no Dockerfile.</span></li>
                 <li><b>Data &amp; secrets</b>: <span class="c-dim">a managed Postgres database per beam and a write-only secret vault, injected at runtime.</span></li>
-                <li><b>Networking</b>: <span class="c-dim">routing + TLS at the gateway, default-deny egress, per-workspace isolation.</span></li>
+                <li><b>Networking</b>: <span class="c-dim">routing + TLS at the gateway, default-deny egress, per-app isolation; apps reach each other only through IT-granted, audited relay calls, never the network.</span></li>
                 <li><b>Identity</b>: <span class="c-dim">one call gives a beam company sign-in: it becomes an OIDC relying party on Beamhall's bundled IdP, so employees log in with the accounts they already have. No IdP config, no credential reaches the agent, and tokens are audience-isolated so an app token can't reach the backplane.</span></li>
                 <li><b>Email</b>: <span class="c-dim">one call gives a beam outbound email through a shared in-hall broker: it sends with any SMTP library, while the mail-provider credential stays in the broker, never in the beam or the agent, with a per-beam sender allowlist, STARTTLS, and every message audited.</span></li>
                 <li><b>Object storage</b>: <span class="c-dim">one call gives a beam S3-compatible object storage the same way a database is provisioned: it uses any stock S3 SDK while Beamhall stores the bytes (on the appliance or in your own S3, and the app can't tell which), with no storage account, and no credential it can use outside the hall.</span></li>
@@ -461,6 +461,7 @@ const jsonLd = {
                 <li><b>Decide who can do what.</b> <span class="c-dim">Deploy, promote to production, and destroy are role-based, and an agent can never exceed the role you granted it.</span></li>
                 <li><b>Require a human for production.</b> <span class="c-dim">Optional four-eyes approval: a different person signs off before anything goes live.</span></li>
                 <li><b>Curate who an app can let in.</b> <span class="c-dim">When a beam gets company sign-in, IT chooses which employee groups its tokens may carry. The builder exposes none by default. Preview and production get separate credentials, so a leaked preview secret can't touch production.</span></li>
+                <li><b>Decide which apps may talk.</b> <span class="c-dim">Apps have no network path to each other, not even in the same workspace. When one app should use another's tools, IT grants exactly that pair; the calls go through Beamhall's audited relay, and revoking the grant cuts them off instantly.</span></li>
                 <li><b>Govern every team from one console.</b> <span class="c-dim">All workspaces, apps, and deploys in one place, with idle previews pausing themselves to reclaim resources.</span></li>
                 <li><b>Prove what happened.</b> <span class="c-dim">Every action, and every denied attempt, on a tamper-evident, append-only record tied to an identity.</span></li>
                 <li><b>Recover from anything.</b> <span class="c-dim">Back up and restore the whole appliance (keys included) to a byte-identical state.</span></li>
@@ -537,13 +538,35 @@ const jsonLd = {
               <div class="worry">
                 <div class="worry-q">If one app is breached, does it spread to everything else?</div>
                 <div class="worry-a">
-                  No. Each team gets an isolated workspace, and each app gets its own
-                  network, its own database, and its own credentials. A compromised
-                  app can't see another team's apps, can't reach their data, and
-                  can't loop back in through the platform's own front door either:
-                  the gateway <span class="c-strong">refuses requests that originate
-                  from a workload</span>, so one app can't call another team's app
-                  through its public URL. A problem stays the size of one app.
+                  No. Each team gets an isolated workspace, and each app gets its
+                  own database and its own credentials. A compromised app has
+                  <span class="c-strong">no network path to any other app</span> —
+                  not even to its neighbors in the same workspace, where only the
+                  platform's own brokers are reachable — and it can't loop back in
+                  through the platform's front door either: the gateway
+                  <span class="c-strong">refuses requests that originate from a
+                  workload</span>, so one app can't call another through its public
+                  URL. A problem stays the size of one app.
+                </div>
+              </div>
+
+              <div class="worry">
+                <div class="worry-q">But our apps do need to talk to each other. Doesn't that reopen the door?</div>
+                <div class="worry-a">
+                  Only as far as you open it. When one app should use another's
+                  tools, IT grants exactly that pair, and the calls travel through
+                  a <span class="c-strong">relay the platform runs</span> — never
+                  app to app over the network. Beamhall verifies the calling app on
+                  every single request, by a credential it injected <em>and</em>
+                  the address the app is actually running at, so a stolen key works
+                  from nowhere else. It re-checks the grant every time (revoking
+                  cuts calls off instantly), tells the target exactly which app is
+                  calling — an app can never pass itself off as a person —
+                  rate-limits each caller, and writes
+                  <span class="c-strong">every call to the tamper-evident
+                  record</span>. The worst case of a compromised app is that it
+                  calls exactly the peers IT granted it, as itself, in plain view
+                  of the audit log.
                 </div>
               </div>
 
@@ -759,6 +782,7 @@ const jsonLd = {
                 <li>company branding: <span class="c-dim">IT sets the header, footer, logo and palette every app built here wears; a hot-linkable palette stylesheet reaches running apps with no redeploy, per-team overrides, resolved values injected into each workload as <span class="c-cyan">/run/beamhall/brand.json</span>, verified on real hardware</span></li>
                 <li>the using tier: <span class="c-dim">IT publishes an app to an audience (everyone, IdP groups, or named people) and employees' own AI agents discover it with <span class="c-cyan">list_apps</span> / <span class="c-cyan">describe_app</span>; no workspace membership, nothing that can change an app, out-of-audience apps are indistinguishable from apps that don't exist, users auto-register on first contact, verified on real hardware</span></li>
                 <li>app tools: <span class="c-dim">the using tier's second half — an app serves a tiny HTTP contract and its users' agents act through it with <span class="c-cyan">use_app</span>; the backplane brokers each call and delivers the caller's identity as a short-lived Beamhall-signed assertion (ES256, per-app audience, bound to the invoked tool), never the user's IdP token and nothing to sign into; builders rehearse on preview with <span class="c-cyan">try_beam_tool</span>, every call audited, rate-limited and scrubbed, verified on real hardware</span></li>
+                <li>beam-to-beam: <span class="c-dim">apps use each other's tools through the backplane relay, per IT grant (<span class="c-cyan">admin_set_beam_peers</span>) — the relay verifies the calling workload by injected key + live container address, re-checks the grant on every call, delivers the caller as <span class="c-cyan">caller_type: beam</span>, rate-limits and audits per call; sibling workloads can no longer dial each other directly (the bridge passes only broker traffic), and the same grant adds per-app external egress on top of the workspace allowlist, verified on real hardware</span></li>
               </ul>
 
               <h3>planned: expanding what a beam inherits</h3>
