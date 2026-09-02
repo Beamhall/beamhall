@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -112,6 +113,14 @@ func (r *Reconciler) AllowHostPorts(ports ...int) {
 // on every deploy (bridges are lazy-created), not just at boot. Safe to call
 // repeatedly and on boot.
 func (r *Reconciler) Reconcile(ctx context.Context, policies []Policy) error {
+	// The intra-bridge posture (broker-only exemptions; sibling workloads
+	// denied) is enforceable ONLY while bridged traffic traverses the filter
+	// — a kernel setting, not a rule. Assert it here, fail-closed: without it
+	// the per-bridge rules silently see nothing and sibling isolation does
+	// not exist.
+	if err := r.ensureBridgeNetfilter(ctx); err != nil {
+		return err
+	}
 	if err := r.ensureChain(ctx, chain); err != nil {
 		return err
 	}
@@ -280,6 +289,28 @@ func (r *Reconciler) Teardown(ctx context.Context) error {
 		}
 		_ = r.run(ctx, "-F", pair[1])
 		_ = r.run(ctx, "-X", pair[1])
+	}
+	return nil
+}
+
+// bridgeNFSysctl is the switch that sends bridged (same-L2) traffic through
+// the iptables filter path. Docker may or may not have it on; the appliance
+// REQUIRES it — the whole intra-bridge policy (broker exemptions, the sibling
+// deny, per-source grants) hangs off it — so the reconciler asserts it on
+// every run rather than hoping.
+const bridgeNFSysctl = "/proc/sys/net/bridge/bridge-nf-call-iptables"
+
+func (r *Reconciler) ensureBridgeNetfilter(ctx context.Context) error {
+	if b, err := os.ReadFile(bridgeNFSysctl); err == nil && strings.TrimSpace(string(b)) == "1" {
+		return nil
+	}
+	// The sysctl file appears only once the module is loaded; modprobe is
+	// idempotent.
+	if err := exec.CommandContext(ctx, "modprobe", "br_netfilter").Run(); err != nil {
+		return fmt.Errorf("egress: load br_netfilter (required for intra-bridge policy): %w", err)
+	}
+	if err := os.WriteFile(bridgeNFSysctl, []byte("1\n"), 0); err != nil {
+		return fmt.Errorf("egress: enable bridge-nf-call-iptables (required for intra-bridge policy): %w", err)
 	}
 	return nil
 }

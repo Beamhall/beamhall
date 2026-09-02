@@ -105,18 +105,26 @@ function relay(conf, method, path, body) {
   });
 }
 function tcpProbe(host, port) {
+  // Short and parallel-friendly: a DROPPED SYN answers nothing, so the
+  // timeout IS the blocked signal — and the whole report must finish inside
+  // the harness curl's 3s budget.
   return new Promise((resolve) => {
-    const s = net.connect({ host, port, timeout: 4000 });
+    const s = net.connect({ host, port, timeout: 1500 });
     s.on("connect", () => { s.destroy(); resolve("open"); });
     s.on("timeout", () => { s.destroy(); resolve("blocked (timeout)"); });
     s.on("error", (e) => resolve("blocked (" + (e.code || e.message) + ")"));
   });
 }
-function siblingNames() {
-  const out = [];
+function hostsNames() {
+  // Same-network peers snapshotted into /etc/hosts at deploy: workload
+  // containers are bh_<beam>-<hex>; the Postgres broker's name varies by
+  // install, so find it by substring instead of hardcoding.
+  const out = { siblings: [], postgres: null };
   for (const line of fs.readFileSync("/etc/hosts", "utf8").split("\n")) {
     const f = line.trim().split(/\s+/);
-    if (f.length >= 2 && f[1].startsWith("bh_")) out.push(f[1]);
+    if (f.length < 2) continue;
+    if (f[1].startsWith("bh_")) out.siblings.push(f[1]);
+    else if (f[1].includes("postgres")) out.postgres = f[1];
   }
   return out;
 }
@@ -125,6 +133,11 @@ http.createServer(async (req, res) => {
   if (req.url === "/") { res.end(JSON.stringify({ ok: true, app: "caller" })); return; }
   if (req.url !== "/c2c-report") { res.statusCode = 404; res.end("not found"); return; }
   const report = { has_c2c_json: false, peers: [], menu_tools: [] };
+  const known = hostsNames();
+  const probes = Promise.all([
+    known.siblings.length ? tcpProbe(known.siblings[0], 8080) : Promise.resolve("no-sibling-known"),
+    known.postgres ? tcpProbe(known.postgres, 5432) : Promise.resolve("no-broker-known"),
+  ]);
   const conf = readConf();
   if (conf) {
     report.has_c2c_json = true;
@@ -145,9 +158,9 @@ http.createServer(async (req, res) => {
     report.add_status = add.status;
     report.add_sum = add.json && add.json.sum;
   }
-  const sib = siblingNames();
-  report.sibling_dial = sib.length ? await tcpProbe(sib[0], 8080) : "no-sibling-known";
-  report.postgres_dial = await tcpProbe("bh-postgres", 5432);
+  const dials = await probes;
+  report.sibling_dial = dials[0];
+  report.postgres_dial = dials[1];
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(report));
 }).listen(process.env.PORT || 8080);

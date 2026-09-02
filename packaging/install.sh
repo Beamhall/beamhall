@@ -241,6 +241,16 @@ group_baseline() {
   local memkb; memkb="$(awk '/MemTotal/{print $2}' /proc/meminfo)"
   if [ "${memkb:-0}" -lt 6000000 ]; then note "RAM $((memkb/1024)) MiB < 8 GiB recommended (ok for evaluation)."; else ok "RAM $((memkb/1024)) MiB"; fi
 
+  # Bridged (same-L2) traffic must traverse the iptables filter or the
+  # intra-bridge policy — broker-only exemptions, the sibling-workload deny,
+  # per-app external grants — silently sees nothing. beamhalld re-asserts
+  # this at every reconcile; persisting it here covers reboots.
+  modprobe br_netfilter || die "br_netfilter module unavailable"
+  echo br_netfilter > /etc/modules-load.d/beamhall.conf
+  printf 'net.bridge.bridge-nf-call-iptables = 1\n' > /etc/sysctl.d/90-beamhall.conf
+  sysctl -q -p /etc/sysctl.d/90-beamhall.conf
+  ok "bridge-nf-call-iptables enabled (persisted)"
+
   run_step "Updating package lists" apt-get update -qq
   run_step "Installing base packages (curl, jq, age, …)" _apt_install ca-certificates curl gnupg jq python3 uidmap age
   run_step "Installing Docker Engine" _docker_repo

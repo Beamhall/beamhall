@@ -44,7 +44,10 @@ their auto-generated notes.
   everything else. Nothing sanctioned relied on direct sibling dialing; apps
   that need each other now go through the granted, audited relay. This
   removes the threat model's long-standing "same-beamhall beams share a
-  bridge" residual (§6 lateral movement).
+  bridge" residual (§6 lateral movement). Because bridged traffic only
+  traverses the filter when the kernel says so, the appliance now asserts
+  `br_netfilter` + `bridge-nf-call-iptables=1` on every network reconcile
+  (fail-closed) and the installer persists it across reboots.
 - The `set_secret` key namespace `BEAMHALL_*` is now reserved for
   platform-injected credentials and refused with a teaching error.
 

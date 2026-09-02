@@ -231,6 +231,13 @@ the host itself (its bridge gateway IP, or any host-owned address) is
 delivered locally. Two guards close that path, both asserted by the same
 reconcile cadence:
 
+On the bridge itself, only the platform brokers (managed Postgres, mail,
+object storage) are exempt from the deny — in both directions — so **sibling
+workloads cannot dial each other**; app-to-app calls exist only as granted
+relay calls (§6). Bridged traffic traverses the filter only when the kernel's
+`bridge-nf-call-iptables` is on, so the reconciler asserts it (with
+`br_netfilter`) on every run, fail-closed, and the installer persists it.
+
 - **`BEAMHALL-INPUT` (iptables):** everything bridge-originated to the host is
   dropped except established replies, the gateway's listen ports, and the
   beam-to-beam relay port — the backplane's own HTTP listener (`/mcp`,
