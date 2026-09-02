@@ -10,9 +10,9 @@ const site = Astro.site?.href.replace(/\/$/, "") ?? "https://beamhall.com";
 const canonical = `${site}/`;
 const title = "Beamhall: self-hosted AI app platform — agent-built apps";
 const description =
-  "Beamhall is a self-hosted AI app platform: coding agents ship internal apps that inherit data, identity and secure connectivity — no credentials shared.";
+  "Beamhall is a self-hosted AI app platform: coding agents ship internal apps that inherit their infrastructure; employees' own agents discover and use them. No credentials shared.";
 const ogDescription =
-  "AI agents build internal apps; the apps inherit data, identity, and secure connectivity from Beamhall: no infrastructure to wire, no credentials shared.";
+  "AI agents build internal apps that inherit data, identity and secure connectivity from Beamhall — and employees' own agents discover and use them. No credentials shared.";
 const compare = pages.find((p) => p.id === "alternatives")!;
 
 // Structured data. `application/ld+json` is a data block, not an executable
@@ -52,7 +52,7 @@ const jsonLd = {
       license: "https://www.apache.org/licenses/LICENSE-2.0",
       isAccessibleForFree: true,
       description:
-        "Self-hosted application backplane for AI coding agents. Agents request capabilities over MCP — runtime, Postgres, secrets, company sign-in, email, object storage — and Beamhall provisions them behind policy without ever returning a credential to the agent.",
+        "Self-hosted application backplane for AI coding agents. Agents request capabilities over MCP — runtime, Postgres, secrets, company sign-in, email, object storage — and Beamhall provisions them behind policy without ever returning a credential to the agent. Live apps are published to audiences, and employees' own agents discover and use them through brokered, audited tool calls.",
       featureList: [
         "MCP tool surface as the agent's only control plane",
         "Hardened, isolated runtime (runc or gVisor runsc), built from source with Cloud Native Buildpacks",
@@ -60,6 +60,7 @@ const jsonLd = {
         "Write-only secret vault",
         "Company sign-in (OIDC) as a provisioned capability",
         "Brokered outbound email and S3-compatible object storage",
+        "Audience-published apps: employees' own AI agents discover and use live apps (list_apps / describe_app / use_app), with a short-lived Beamhall-signed caller identity on every brokered call",
         "Default-deny egress and per-app isolation; apps call each other only through IT-granted, audited relay calls",
         "Separate preview and live lifecycle states with IT-gated promotion and optional four-eyes approval",
         "Full audit trail; self-hosted, no SaaS, no phone-home"
@@ -128,7 +129,8 @@ const jsonLd = {
              search engines, screen readers and text extraction. -->
         <h1 class="sr-only">
           Beamhall — a self-hosted AI app platform: AI coding agents build
-          internal apps, and the apps inherit their infrastructure
+          internal apps, the apps inherit their infrastructure, and employees'
+          own agents discover and use them
         </h1>
         <div class="term-bar">
           <span class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></span>
@@ -152,7 +154,10 @@ const jsonLd = {
                 as managed capabilities from Beamhall: compute, data, secrets,
                 identity, and secure connectivity to your internal systems. The
                 agent never provisions, configures, or holds credentials for any
-                of it.
+                of it. And once an app is live, the rest of the company reaches
+                it the same way: through their <span class="c-strong">own AI
+                agents</span>, which discover and use exactly the apps IT
+                published to them.
               </p>
               <p>
                 The agent asks for a capability (a database, a secret, user
@@ -181,6 +186,7 @@ const jsonLd = {
                 <li><b>Identity</b>: <span class="c-dim">one call gives a beam company sign-in: it becomes an OIDC relying party on Beamhall's bundled IdP, so employees log in with the accounts they already have. No IdP config, no credential reaches the agent, and tokens are audience-isolated so an app token can't reach the backplane.</span></li>
                 <li><b>Email</b>: <span class="c-dim">one call gives a beam outbound email through a shared in-hall broker: it sends with any SMTP library, while the mail-provider credential stays in the broker, never in the beam or the agent, with a per-beam sender allowlist, STARTTLS, and every message audited.</span></li>
                 <li><b>Object storage</b>: <span class="c-dim">one call gives a beam S3-compatible object storage the same way a database is provisioned: it uses any stock S3 SDK while Beamhall stores the bytes (on the appliance or in your own S3, and the app can't tell which), with no storage account, and no credential it can use outside the hall.</span></li>
+                <li><b>Users</b>: <span class="c-dim">once live, IT publishes the beam to an audience (everyone, groups, or named people) and those people's own AI agents discover it and act through its tools — brokered, audited, no rollout, no per-app accounts.</span></li>
                 <li><b>Connectors</b>: <span class="c-dim">email and object storage ship today; </span><span class="c-amber">(coming)</span> <span class="c-dim">queues, and brokered paths to internal systems (ERP databases, integrations), without the beam ever holding their credentials.</span></li>
               </ul>
 
@@ -200,6 +206,22 @@ const jsonLd = {
                 Comparing platforms?
                 <a href={compare.href}>Beamhall vs Dokploy vs Coolify</a> — why a
                 self-hosted PaaS and an agent backplane answer different questions.
+              </p>
+
+              <h3>employees use apps through their own agents</h3>
+              <p>
+                Shipping is half the story. Once an app is live, IT publishes it
+                to an <span class="c-strong">audience</span> (everyone, specific
+                groups, or named people) and those people's own AI agents take it
+                from there: they discover the app and act through the tools it
+                exposes, with no workspace membership, no separate sign-in, and
+                no rollout. Employees don't get another dashboard — a person's
+                agent sees <span class="c-strong">exactly the apps published to
+                them</span>, and anything else might as well not exist. Beamhall
+                brokers every call, hands the app a short-lived signed statement
+                of who is calling (<span class="c-strong">never</span> the
+                person's login token), and writes every call to the audit
+                record.
               </p>
 
               <h3>IT decides where apps run</h3>
@@ -451,6 +473,10 @@ const jsonLd = {
                       <td class="get"><b>Object storage</b>: one call gives an app S3-compatible storage through an in-hall broker; the storage credential never reaches the app or the agent, and the bytes stay on your own infrastructure</td>
                       <td class="skip">S3 / R2 / GCS account · bucket setup · access keys in the app</td>
                     </tr>
+                    <tr>
+                      <td class="get"><b>Built-in distribution</b>: IT publishes an app to an audience and employees' own AI agents discover and use it, with the caller's identity delivered on every call</td>
+                      <td class="skip">App catalog · per-user API keys · rollout emails</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -461,6 +487,7 @@ const jsonLd = {
                 <li><b>Decide who can do what.</b> <span class="c-dim">Deploy, promote to production, and destroy are role-based, and an agent can never exceed the role you granted it.</span></li>
                 <li><b>Require a human for production.</b> <span class="c-dim">Optional four-eyes approval: a different person signs off before anything goes live.</span></li>
                 <li><b>Curate who an app can let in.</b> <span class="c-dim">When a beam gets company sign-in, IT chooses which employee groups its tokens may carry. The builder exposes none by default. Preview and production get separate credentials, so a leaked preview secret can't touch production.</span></li>
+                <li><b>Publish to exactly the right people.</b> <span class="c-dim">An app ships dark: IT publishes it to everyone, specific groups, or named people, and anyone outside that audience can't tell it exists. Audiences live in Beamhall, not your IdP — group audiences match the groups your IdP already asserts.</span></li>
                 <li><b>Decide which apps may talk.</b> <span class="c-dim">Apps have no network path to each other, not even in the same workspace. When one app should use another's tools, IT grants exactly that pair; the calls go through Beamhall's audited relay, and revoking the grant cuts them off instantly.</span></li>
                 <li><b>Govern every team from one console.</b> <span class="c-dim">All workspaces, apps, and deploys in one place, with idle previews pausing themselves to reclaim resources.</span></li>
                 <li><b>Prove what happened.</b> <span class="c-dim">Every action, and every denied attempt, on a tamper-evident, append-only record tied to an identity.</span></li>

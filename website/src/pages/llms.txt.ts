@@ -10,13 +10,15 @@ const body = `# Beamhall
 > infrastructure — hardened runtime, managed Postgres, a write-only secret
 > vault, company sign-in, brokered email and object storage, TLS routing — as
 > capabilities provisioned behind policy. The agent never receives a credential,
-> an endpoint, or a config file.
+> an endpoint, or a config file. Live apps are published to audiences, and
+> employees' own AI agents discover and use them through brokered, audited
+> tool calls.
 
 Beamhall is a single Go binary you run on your own hardware (private VM,
 dedicated VPC, or on-prem). Apache-2.0, no SaaS, no phone-home, air-gap
 friendly. Current release: v0.7.0 (pre-1.0, entering design-partner validation).
 
-Key ideas, if you only remember three things:
+Key ideas, if you only remember four things:
 
 - The agent and the code it writes are both treated as **untrusted**.
 - The agent asks for a **capability**, not for infrastructure; secrets and
@@ -26,6 +28,12 @@ Key ideas, if you only remember three things:
   read-only root filesystem, default-deny egress, per-app isolation (apps reach
   each other only through IT-granted, audited relay calls), and IT-gated
   promotion from preview to live — with no agent tool to widen any of them.
+- Shipping is half the surface: IT publishes each live app to an **audience**
+  (everyone, IdP groups, or named people), and employees' own AI agents
+  discover and use it over MCP (\`list_apps\` / \`describe_app\` / \`use_app\`) —
+  identity delivered per call as a short-lived Beamhall-signed assertion, never
+  the user's IdP token, and an unpublished app is indistinguishable from one
+  that doesn't exist.
 
 Common synonyms: a "beam" is an app / website / service / API / internal tool.
 A "beamhall" is a workspace. The agent-facing control surface is MCP.
