@@ -15,6 +15,13 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-02
+
+A security patch: two integrity fixes around platform-sealed connection
+secrets — a `set_secret` can no longer overwrite or shadow the credentials
+`provision_email`/`provision_object_store` sealed into a provisioned beam.
+No new tools, no seam changes, no migrations.
+
 ### Security
 - **`set_secret` can no longer overwrite a platform-sealed connection secret.**
   On a beam where `provision_email` or `provision_object_store` has run, writes
@@ -567,7 +574,8 @@ way it inherits a database — one MCP call, no IdP setup, no credential to the 
 - The agent-conformance MCP proxy recovers from appliance restarts (stale session
   / dropped connection) instead of wedging.
 
-[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Beamhall/beamhall/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/Beamhall/beamhall/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Beamhall/beamhall/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/Beamhall/beamhall/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/Beamhall/beamhall/compare/v0.6.0...v0.6.1
