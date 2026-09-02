@@ -48,7 +48,7 @@ const jsonLd = {
       operatingSystem: "Linux",
       url: `${site}/`,
       downloadUrl: repo,
-      softwareVersion: "0.6.1",
+      softwareVersion: "0.6.2",
       license: "https://www.apache.org/licenses/LICENSE-2.0",
       isAccessibleForFree: true,
       description:
@@ -540,8 +540,10 @@ const jsonLd = {
                   No. Each team gets an isolated workspace, and each app gets its own
                   network, its own database, and its own credentials. A compromised
                   app can't see another team's apps, can't reach their data, and
-                  can't pivot across your environment. A problem stays the size of
-                  one app.
+                  can't loop back in through the platform's own front door either:
+                  the gateway <span class="c-strong">refuses requests that originate
+                  from a workload</span>, so one app can't call another team's app
+                  through its public URL. A problem stays the size of one app.
                 </div>
               </div>
 
@@ -646,7 +648,12 @@ const jsonLd = {
                 <div class="worry-q">It's AI-written code on our hardware: can it break out and reach the host?</div>
                 <div class="worry-a">
                   Every app runs locked down: least privilege, read-only filesystem,
-                  no access to the host or the build system. The code is built from a
+                  no access to the host or the build system. The network path to the
+                  host is closed structurally, not by convention: a firewall rule
+                  <span class="c-strong">drops app-to-host traffic</span> at the
+                  boundary, leaving only the platform's public front door, so
+                  Beamhall's own control interface is unreachable from inside any
+                  app. The code is built from a
                   trusted, pinned toolchain (the agent can't supply its own container
                   definition or build steps), so you run a known-good image, not
                   whatever the model improvised. For regulated or sensitive workloads,
