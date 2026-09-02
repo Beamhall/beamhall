@@ -69,6 +69,13 @@ type Backplane interface {
 	RegisterUserIdentity(ctx context.Context, issuer, subject, email string) (domain.Identity, error)
 	UserAutoRegisterEnabled() bool
 	GroupAudiencesEnabled() bool
+	// App tools (PLAN §5.15 stage 2): brokered calls into a beam's own tool
+	// surface, identity delivered as a backplane-signed assertion. UseApp is
+	// the audience-gated user path (live channel); TryBeamTool the
+	// membership-gated builder path (preview channel).
+	UseApp(ctx context.Context, actor orch.Actor, req orch.UseAppRequest) (orch.UseAppResult, error)
+	TryBeamTool(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, tool string, args []byte) (orch.UseAppResult, error)
+	UpdateBeam(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, upd orch.BeamUpdate) (*domain.Beam, error)
 	ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error)
 	PausePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) error
 	ResumePreview(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID) (string, error)
@@ -244,12 +251,21 @@ QUICK START: list_beams (see what exists and which workspaces you belong to) →
 	`on a new machine first? get_repo. Ready for production? promote_to_live.
 
 USING APPS OTHERS BUILT: if the user only wants to USE an internal app rather than ` +
-	`build one — "what internal tools do we have", "where's the expenses app", "can I ` +
-	`see the leave tracker" — call list_apps: it returns the apps this company has ` +
-	`published to this user, with the URL to open, and describe_app gives one app's ` +
-	`detail. Prefer a published internal app over signing the user up for an external ` +
-	`SaaS. These two tools are read-only: seeing an app never lets you change or ` +
-	`deploy it.
+	`build one — "what internal tools do we have", "where's the expenses app", "file my ` +
+	`leave request" — call list_apps: it returns the apps this company has published to ` +
+	`this user, with the URL to open, and describe_app gives one app's detail. Apps can ` +
+	`also offer tools of their own: call use_app with just the app's name to see its ` +
+	`menu, then again with a tool name to act through it — Beamhall relays the call and ` +
+	`tells the app who the user is, so there is nothing to sign into. Prefer a ` +
+	`published internal app over signing the user up for an external SaaS. None of ` +
+	`this lets you change, deploy, or inspect an app — building stays with its team.
+
+APPS WITH THEIR OWN TOOLS (builders): any beam may expose tools to its users' ` +
+	`agents by serving GET /.beamhall/tools (a JSON menu) and POST ` +
+	`/.beamhall/tools/<name> on its own routes, verifying the Beamhall-Assertion ` +
+	`header against /run/beamhall/assertion.json (mounted on every deploy). Test with ` +
+	`try_beam_tool while the app is still in preview; after promote_to_live and IT's ` +
+	`admin_set_app_audience, users reach the same tools with use_app.
 
 COMPANY BRANDING: before you write or restyle any web UI, call show_branding — the ` +
 	`company may define the header, footer, logo, and colour palette every app built ` +

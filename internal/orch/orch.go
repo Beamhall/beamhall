@@ -19,6 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/time/rate"
+
+	"github.com/Beamhall/beamhall/internal/apptools"
 	"github.com/Beamhall/beamhall/internal/audit"
 	"github.com/Beamhall/beamhall/internal/build"
 	"github.com/Beamhall/beamhall/internal/domain"
@@ -65,6 +68,7 @@ type Actor struct {
 	ITAdmin  bool
 	SourceIP string
 	Groups   []string // IdP group names from the token's groups claim (app audiences)
+	Email    string   // delivered to apps in the signed assertion (app tools)
 }
 
 // Orchestrator wires the backplane services behind the PEP.
@@ -143,6 +147,16 @@ type Orchestrator struct {
 	// userTier configures the using tier (WithUserTier): auto-registration of
 	// user identities and whether group audiences can match.
 	userTier UserTierConfig
+
+	// Agent-facing app tools (PLAN §5.15, WithAppTools): the assertion signer
+	// + broker HTTP client. Nil = the whole surface is inert (no binding, no
+	// probe, no brokered calls). useLimiters bounds the user-tier call rate
+	// per identity.
+	appSigner   *apptools.Signer
+	appClient   *apptools.Client
+	appToolsCfg AppToolsConfig
+	useLimiters map[domain.ID]*rate.Limiter
+	useLimMu    sync.Mutex
 }
 
 // startupPolls divides the startup grace into status checks.

@@ -130,6 +130,12 @@ type Build struct {
 	FinishedAt    int64
 }
 
+type ControlKey struct {
+	Kind      string
+	Sealed    string
+	CreatedAt int64
+}
+
 type Identity struct {
 	ID              string
 	ExternalSubject string

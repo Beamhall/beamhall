@@ -71,6 +71,7 @@ type AppView struct {
 	URL         string    `json:"url,omitempty"` // live channel only; empty until promoted
 	Live        bool      `json:"live"`
 	SignIn      string    `json:"sign_in"` // "company_sso" | "app_managed"
+	AgentTools  bool      `json:"agent_tools"`
 	PublishedAt time.Time `json:"published_at"`
 }
 
@@ -145,31 +146,48 @@ func (o *Orchestrator) ListApps(ctx context.Context, actor Actor) ([]AppView, er
 // published set only. workspace is needed only to disambiguate two teams
 // publishing the same app name.
 func (o *Orchestrator) DescribeApp(ctx context.Context, actor Actor, app, workspace string) (AppView, error) {
-	views, err := o.ListApps(ctx, actor)
+	_, view, err := o.resolvePublishedApp(ctx, actor, app, workspace)
+	return view, err
+}
+
+// resolvePublishedApp matches one app over the caller's published set and
+// returns the publication row alongside the view — the shared resolver for
+// DescribeApp and UseApp, so both keep the identical refusal behavior.
+func (o *Orchestrator) resolvePublishedApp(ctx context.Context, actor Actor, app, workspace string) (domain.BeamAudience, AppView, error) {
+	pubs, err := o.st.ListBeamAudiences(ctx)
 	if err != nil {
-		return AppView{}, err
+		return domain.BeamAudience{}, AppView{}, err
 	}
-	var matches []AppView
-	for _, v := range views {
-		if v.App != app {
+	var (
+		matchPubs  []domain.BeamAudience
+		matchViews []AppView
+	)
+	for _, pub := range pubs {
+		if !pub.Audience.Allows(actor.ID, actor.Groups) {
 			continue
 		}
-		if workspace != "" && v.Workspace != workspace {
+		view, ok := o.appView(ctx, pub)
+		if !ok || view.App != app {
 			continue
 		}
-		matches = append(matches, v)
+		if workspace != "" && view.Workspace != workspace {
+			continue
+		}
+		matchPubs = append(matchPubs, pub)
+		matchViews = append(matchViews, view)
 	}
-	switch len(matches) {
+	switch len(matchPubs) {
 	case 0:
-		return AppView{}, ErrAppNotPublished
+		return domain.BeamAudience{}, AppView{}, ErrAppNotPublished
 	case 1:
-		return matches[0], nil
+		return matchPubs[0], matchViews[0], nil
 	default:
 		e := &AmbiguousAppError{App: app}
-		for _, m := range matches {
-			e.Workspaces = append(e.Workspaces, m.Workspace)
+		for _, v := range matchViews {
+			e.Workspaces = append(e.Workspaces, v.Workspace)
 		}
-		return AppView{}, e
+		sort.Strings(e.Workspaces)
+		return domain.BeamAudience{}, AppView{}, e
 	}
 }
 
@@ -196,6 +214,14 @@ func (o *Orchestrator) appView(ctx context.Context, pub domain.BeamAudience) (Ap
 	}
 	if view.Live {
 		view.URL = "https://" + o.liveHost(beam.Slug, bh.Slug)
+		// The capability probe stamps the live release when its workload
+		// serves the app-tools contract. Advisory: use_app fetches the menu
+		// live either way.
+		if beam.LiveReleaseID != "" {
+			if rel, err := o.st.GetRelease(ctx, beam.LiveReleaseID); err == nil {
+				view.AgentTools = rel.ConfigSnapshot["agent_tools"] == "true"
+			}
+		}
 	}
 	return view, true
 }

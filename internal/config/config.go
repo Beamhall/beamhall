@@ -84,6 +84,13 @@ type Config struct {
 	// its own identity row (BEAMHALL_USER_AUTO_REGISTER, default on) so IT
 	// never hand-registers every employee.
 	UserAutoRegister bool
+	// App tools (PLAN §5.15 stage 2): how long one brokered tool invocation
+	// may run (BEAMHALL_APP_TOOL_TIMEOUT_SECS), and the per-identity use_app
+	// rate (BEAMHALL_USE_APP_RATE_PER_MIN, 0 disables; _BURST) bounding both
+	// the apps and the one-audit-event-per-call chain growth.
+	AppToolTimeoutSecs int
+	UseAppRatePerMin   int
+	UseAppBurst        int
 
 	// Admin console (OIDC Authorization Code flow). Empty AdminClientID
 	// disables /admin. The console requires the admin:it scope.
@@ -243,6 +250,9 @@ func Load() (Config, error) {
 	c.OAuthTrustFlatRolesClaim = envOr("BEAMHALL_OAUTH_TRUST_FLAT_ROLES", "off") == "on"
 	c.OAuthGroupsClaim = envOr("BEAMHALL_OAUTH_GROUPS_CLAIM", "groups")
 	c.UserAutoRegister = envOr("BEAMHALL_USER_AUTO_REGISTER", "on") == "on"
+	c.AppToolTimeoutSecs = envInt("BEAMHALL_APP_TOOL_TIMEOUT_SECS", 30)
+	c.UseAppRatePerMin = envInt("BEAMHALL_USE_APP_RATE_PER_MIN", 30)
+	c.UseAppBurst = envInt("BEAMHALL_USE_APP_BURST", 15)
 	for _, sc := range strings.Fields(envOr("BEAMHALL_ADMIN_SCOPES", "openid admin:it")) {
 		c.AdminScopes = append(c.AdminScopes, sc)
 	}

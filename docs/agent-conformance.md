@@ -184,8 +184,12 @@ over MCP as a persona.
   (with a user-facing description), erin's first `list_apps` auto-registers her, IT publishes
   to her identity (`admin_set_app_audience`), erin sees it ("not live yet" — publishing ≠
   deploying) while frank gets the uniform leak-free refusal, the tier boundary denies erin
-  any build/admin tool, unpublish removes it, and the group-audience path (bundled IdP)
-  proves erin-in/frank-out via the `groups` claim.
+  any build/admin tool, unpublish removes it, the group-audience path (bundled IdP)
+  proves erin-in/frank-out via the `groups` claim, and the app-tools surface holds its
+  boundaries pure-MCP: `use_app` on an unpromoted app says "not live yet", frank's `use_app`
+  gets the same uniform refusal, erin cannot reach `try_beam_tool`, and a builder's
+  `update_beam` shows up in erin's `describe_app`. (The full brokered-invoke path — a
+  deployed app verifying the signed assertion — is `TestAppToolsEndToEnd` in the e2e suite.)
 - `scripts/agent-conformance/env.example` — secrets template (the real `.env` is gitignored).
 - `.mcp.json` — the six persona servers.
 - `.claude/agents/bh-{admin-alice,admin-bob,builder-carol,builder-dave,user-erin,user-frank}.md` — the personas.

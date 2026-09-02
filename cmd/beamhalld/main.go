@@ -24,6 +24,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/Beamhall/beamhall/internal/apptools"
 	"github.com/Beamhall/beamhall/internal/audit"
 	"github.com/Beamhall/beamhall/internal/auth"
 	"github.com/Beamhall/beamhall/internal/backup"
@@ -707,6 +708,23 @@ func run() error {
 	}))
 	logger.Info("user tier configured",
 		"auto_register", cfg.UserAutoRegister, "groups_claim", cfg.OAuthGroupsClaim)
+	// App tools (PLAN §5.15 stage 2): the assertion key must survive restarts
+	// AND restores — every deployed workload verifies against a JWKS injected
+	// at deploy time — so it lives vault-sealed in the store and a load failure
+	// fails the boot (silent regeneration would break every app at once).
+	appSigner, appKeyCreated, err := apptools.LoadOrCreateSigner(ctx, st, vault, cfg.OAuthAudience)
+	if err != nil {
+		logger.Error("load app-assertion signing key", "err", err)
+		return err
+	}
+	if appKeyCreated {
+		logger.Info("app-assertion signing key generated (sealed into the store; rides admin_backup_now)")
+	} else {
+		logger.Info("app-assertion signing key loaded")
+	}
+	opts = append(opts, orch.WithAppTools(appSigner,
+		apptools.NewClient(time.Duration(cfg.AppToolTimeoutSecs)*time.Second, 5*time.Second),
+		orch.AppToolsConfig{RatePerMinute: cfg.UseAppRatePerMin, Burst: cfg.UseAppBurst}))
 	orchestrator := orch.New(st, drv, gw, sched, vault, pep, auditLog, cfg.BaseDomain, opts...)
 	pauseFn = orchestrator.PauseFunc()
 

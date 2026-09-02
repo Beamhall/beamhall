@@ -25,6 +25,7 @@ import (
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Beamhall/beamhall/internal/apptools"
 	"github.com/Beamhall/beamhall/internal/auth"
 	"github.com/Beamhall/beamhall/internal/build"
 	"github.com/Beamhall/beamhall/internal/domain"
@@ -62,6 +63,13 @@ type fakeBackplane struct {
 	autoRegister    bool
 	groupAudiences  bool
 	registeredUsers []string // subjects RegisterUserIdentity created
+
+	// App-tools knobs: the menu/result UseApp and TryBeamTool answer with;
+	// appToolsErr (when set) is what the brokered call fails with after the
+	// app resolves.
+	appMenu     *apptools.Manifest
+	appResult   []byte
+	appToolsErr error
 }
 
 func (f *fakeBackplane) record(call string, actor orch.Actor) {
@@ -227,6 +235,60 @@ func (f *fakeBackplane) RegisterUserIdentity(ctx context.Context, issuer, subjec
 
 func (f *fakeBackplane) UserAutoRegisterEnabled() bool { return f.autoRegister }
 func (f *fakeBackplane) GroupAudiencesEnabled() bool   { return f.groupAudiences }
+
+// UseApp models the orch resolution chain over f.apps: uniform not-published,
+// ambiguity, the live gate, then menu/invoke from the knobs.
+func (f *fakeBackplane) UseApp(ctx context.Context, actor orch.Actor, req orch.UseAppRequest) (orch.UseAppResult, error) {
+	f.record(fmt.Sprintf("UseApp:%s:tool=%s", req.App, req.Tool), actor)
+	view, err := f.DescribeApp(ctx, actor, req.App, req.Workspace)
+	if err != nil {
+		return orch.UseAppResult{}, err
+	}
+	if !view.Live {
+		return orch.UseAppResult{}, orch.ErrAppNotLive
+	}
+	if f.appToolsErr != nil {
+		return orch.UseAppResult{}, f.appToolsErr
+	}
+	if req.Tool == "" {
+		if f.appMenu == nil {
+			return orch.UseAppResult{}, orch.ErrAppNoTools
+		}
+		return orch.UseAppResult{View: view, Menu: f.appMenu}, nil
+	}
+	return orch.UseAppResult{View: view, Result: f.appResult}, nil
+}
+
+func (f *fakeBackplane) TryBeamTool(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, tool string, args []byte) (orch.UseAppResult, error) {
+	f.record(fmt.Sprintf("TryBeamTool:%s:tool=%s", beamID, tool), actor)
+	if f.appToolsErr != nil {
+		return orch.UseAppResult{}, f.appToolsErr
+	}
+	if tool == "" {
+		if f.appMenu == nil {
+			return orch.UseAppResult{}, orch.ErrAppNoTools
+		}
+		return orch.UseAppResult{Menu: f.appMenu}, nil
+	}
+	return orch.UseAppResult{Result: f.appResult}, nil
+}
+
+func (f *fakeBackplane) UpdateBeam(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, upd orch.BeamUpdate) (*domain.Beam, error) {
+	desc, name := "", ""
+	if upd.Description != nil {
+		desc = *upd.Description
+	}
+	if upd.DisplayName != nil {
+		name = *upd.DisplayName
+	}
+	f.record(fmt.Sprintf("UpdateBeam:%s:desc=%s:name=%s", beamID, desc, name), actor)
+	if f.failWith != nil {
+		return nil, f.failWith
+	}
+	return &domain.Beam{ID: beamID, BeamhallID: beamhallID, Slug: "tracker",
+		Description: desc, DisplayName: name,
+		State: domain.StateRunning, Mode: domain.ModePreview}, nil
+}
 
 func (f *fakeBackplane) ShowLogs(ctx context.Context, actor orch.Actor, beamhallID, beamID domain.ID, opts driver.LogOptions) ([]byte, error) {
 	f.record(fmt.Sprintf("ShowLogs:%d", opts.TailN), actor)
@@ -839,10 +901,10 @@ func TestToolListMatchesContract(t *testing.T) {
 	h := newHarness(t)
 	cs := h.connect(t, strings.Join(auth.AllScopes(), ","), nil)
 	got := listToolNames(t, cs)
-	for _, want := range []string{"list_beams", "create_beam", "deploy_beam", "get_repo",
+	for _, want := range []string{"list_beams", "create_beam", "update_beam", "deploy_beam", "get_repo",
 		"create_database", "set_secret", "show_logs", "pause_preview", "resume_preview",
 		"promote_to_live", "rollback", "show_metrics", "archive_beam", "destroy_beam",
-		"show_branding", "list_apps", "describe_app", "create_queue"} {
+		"show_branding", "try_beam_tool", "list_apps", "describe_app", "use_app", "create_queue"} {
 		if !got[want] {
 			t.Errorf("builder tool %q missing from the contract", want)
 		}

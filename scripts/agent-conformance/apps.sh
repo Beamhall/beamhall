@@ -110,5 +110,26 @@ else
   ok "group audience: erin in, frank out (cleared after)"
 fi
 
+# --- 8. app tools (stage 2): not-live copy, tier boundary, update_beam --------
+# The full brokered-invoke path needs a deployed app and lives in the e2e suite
+# (TestAppToolsEndToEnd); here we prove the copy and the tier boundary pure-MCP.
+say "8. use_app on an unpromoted app; tier boundary; update_beam"
+call "$ADMIN" admin_set_app_audience "{\"beamhall\":\"$WORKSPACE_BLUE\",\"beam\":\"$APP\",\"identities\":[\"$ERIN_ID\"]}" >/dev/null 2>&1 \
+  || die "republish failed"
+u="$(call user-erin use_app "{\"app\":\"$APP\"}" 2>/dev/null)"
+echo "$u" | grep -qi "not live yet" || die "use_app on an unpromoted app should say 'not live yet': $u"
+fu="$(call user-frank use_app "{\"app\":\"$APP\"}" 2>/dev/null)"
+echo "$fu" | grep -qi "no app named" || die "frank's use_app should get the uniform refusal: $fu"
+echo "$fu" | grep -q "$WORKSPACE_BLUE\|https://" && die "use_app refusal leaks workspace/URL: $fu"
+tb="$(call user-erin try_beam_tool "{\"beamhall\":\"$WORKSPACE_BLUE\",\"beam\":\"$APP\"}" 2>/dev/null)"
+echo "$tb" | grep -qi "TOOL ERROR\|insufficient_scope\|denied\|unknown tool\|not found" || die "erin reached try_beam_tool: $tb"
+ub="$(call builder-carol update_beam "{\"beamhall\":\"$WORKSPACE_BLUE\",\"beam\":\"$APP\",\"description\":\"Conformance-updated description\"}" 2>/dev/null)"
+echo "$ub" | grep -qi "updated" || die "update_beam failed: $ub"
+ed="$(call user-erin describe_app "{\"app\":\"$APP\"}" 2>/dev/null)"
+echo "$ed" | grep -q "Conformance-updated description" || die "describe_app did not pick up update_beam: $ed"
+call builder-carol update_beam "{\"beamhall\":\"$WORKSPACE_BLUE\",\"beam\":\"$APP\",\"description\":\"Company policies and how-tos for every employee\"}" >/dev/null 2>&1 || true
+call "$ADMIN" admin_set_app_audience "{\"beamhall\":\"$WORKSPACE_BLUE\",\"beam\":\"$APP\",\"clear\":true}" >/dev/null 2>&1 || true
+ok "not-live copy, uniform use_app refusal, tier denial, update_beam round trip (restored + cleared)"
+
 printf '\n\033[32m✓ apps (using tier) conformance PASSED\033[0m\n'
 echo "Note: the app $APP stays registered (unpublished) in $WORKSPACE_BLUE."

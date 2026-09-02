@@ -15,6 +15,44 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Added
+- **Apps can now DO things for their users — over MCP.** Any app (beam) may
+  expose tools to its users' AI agents by serving two plain HTTP routes on its
+  own origin (`GET /.beamhall/tools` for the menu, `POST
+  /.beamhall/tools/<name>` to invoke — see the new `docs/app-tools.md`), and
+  the new using-tier tool **`use_app`** brokers the calls: the backplane
+  relays the request to the app's live workload and delivers the caller's
+  identity as a short-lived **Beamhall-signed assertion** (ES256; subject,
+  email, groups, channel, and the invoked tool; verified by the app against
+  `/run/beamhall/assertion.json`, mounted into every workload) — the user's
+  IdP token is never forwarded and there is nothing to sign into. No
+  enable-switch exists: serving the contract is enough, and the existing
+  governance chain gates the reach (IT promotes to production, IT publishes
+  the audience; users reach only the live channel). Every brokered call is
+  audited under the user's identity, bounded by size caps and a per-identity
+  rate limit (`BEAMHALL_USE_APP_RATE_PER_MIN`/`_BURST`,
+  `BEAMHALL_APP_TOOL_TIMEOUT_SECS`), and scrubbed like logs. `describe_app`
+  and `list_apps` now advertise `agent_tools` for live apps that answer the
+  contract (probed once at workload start).
+- **`try_beam_tool`** — the builder-side twin of `use_app`: exercise your
+  app's tool surface on the PREVIEW channel before promotion, with the same
+  signed assertion (marked `channel: "preview"`).
+- **`update_beam`** — builders can fix an app's catalog copy (the description
+  users see, and the display name) after creation, without redeploying;
+  previously only IT could, at publish time.
+- The app-assertion signing key is generated on first boot and kept sealed
+  inside the control-plane store, so it survives restarts, backups, and
+  restores (a regenerated key would break every tool-serving app's
+  verification at once). Migration 0013.
+
+### Security
+- The threat model gains the brokered-call analysis (`docs/threat-model.md`):
+  per-beam assertion audience + ~60 s expiry + tool binding against replay;
+  the documented app-side MUST (verify on both routes — they live on the
+  app's public origin); and the honest note that relayed menus/results are
+  app-authored content entering the user's agent, bounded by caps, scrubbing,
+  and IT-published-only reach.
+
 ## [0.6.0] - 2026-09-01
 
 The **using tier** ships: the apps built here now reach the people they were

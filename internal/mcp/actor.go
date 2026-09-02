@@ -68,12 +68,17 @@ func (s *Server) resolveActor(ctx context.Context, req *sdkmcp.CallToolRequest, 
 		return orch.Actor{}, fmt.Errorf("identity %q is %s on this Beamhall appliance — ask IT to re-enable it", subject, ident.Status)
 	}
 	jti, _ := info.Extra[auth.ExtraJTI].(string)
+	email, _ := info.Extra[auth.ExtraEmail].(string)
+	if email == "" {
+		email = ident.Email
+	}
 	return orch.Actor{
 		ID:       ident.ID,
 		TokenJTI: jti,
 		ITAdmin:  itAdmin,
 		SourceIP: req.Extra.Header.Get("X-Forwarded-For"),
 		Groups:   auth.GroupsOf(info),
+		Email:    email,
 	}, nil
 }
 

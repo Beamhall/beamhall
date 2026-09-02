@@ -109,10 +109,18 @@ Beamhall has **three tiers**: IT admins run the platform
 (`beamhall-agent`, the capability scopes), and everyone else simply **uses**
 what's published to them — their own agent connects with the
 `beamhall-user-agent` client, whose tokens carry only the `beams:use` scope and
-whose menu is just `list_apps` and `describe_app`. Users hold **no workspace
-membership**; the audience is the gate, and (with auto-registration on, the
-default) their identity row is created on their first call — IT never
+whose menu is just `list_apps`, `describe_app`, and `use_app`. Users hold **no
+workspace membership**; the audience is the gate, and (with auto-registration
+on, the default) their identity row is created on their first call — IT never
 hand-registers every employee.
+
+An app may also expose **tools of its own** to its users' agents
+(`docs/app-tools.md`): `use_app` brokers those calls, delivering the caller's
+identity as a Beamhall-signed assertion. No extra switch exists — the same
+promote + publish chain gates it (users reach only the live channel, only when
+in the audience; builders test pre-promotion with `try_beam_tool` against the
+preview channel), and every brokered call lands on the audit chain under the
+user's identity.
 
 `admin_set_app_audience` publishes one app: name the workspace + app, then say
 who — `everyone`, IdP `groups` (matched against the group claim in the user's

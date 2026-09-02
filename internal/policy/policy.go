@@ -62,6 +62,12 @@ const (
 	// builder read is matrix-gated so a member of one hall cannot read
 	// another's override.
 	ActionShowBranding Action = "show_branding"
+	// Agent-facing app tools (PLAN §5.15): try_beam_tool exercises a beam's
+	// own tool surface on the PREVIEW channel — the builder's pre-promotion
+	// test path. The user-tier invocation (use_app) is audience-driven and
+	// never reaches this matrix.
+	ActionUseBeamTools Action = "try_beam_tool"
+	ActionUpdateBeam   Action = "update_beam"
 )
 
 // Forbidden actions: hard-denied for every role, including it_admin, on the
@@ -125,6 +131,8 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionProvisionObjectStore: true,
 		ActionShowObjectStore:      true,
 		ActionShowBranding:         true,
+		ActionUseBeamTools:         true,
+		ActionUpdateBeam:           true,
 	},
 	domain.RoleBeamhallAdmin: {
 		ActionReadBeamhall:         true,
@@ -148,6 +156,8 @@ var matrix = map[domain.MembershipRole]map[Action]bool{
 		ActionProvisionObjectStore: true,
 		ActionShowObjectStore:      true,
 		ActionShowBranding:         true,
+		ActionUseBeamTools:         true,
+		ActionUpdateBeam:           true,
 	},
 }
 

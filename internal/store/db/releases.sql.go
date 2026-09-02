@@ -145,6 +145,23 @@ func (q *Queries) NextReleaseVersion(ctx context.Context, beamID string) (int64,
 	return column_1, err
 }
 
+const setReleaseConfigSnapshot = `-- name: SetReleaseConfigSnapshot :execrows
+UPDATE releases SET config_snapshot_json = ? WHERE id = ?
+`
+
+type SetReleaseConfigSnapshotParams struct {
+	ConfigSnapshotJson string
+	ID                 string
+}
+
+func (q *Queries) SetReleaseConfigSnapshot(ctx context.Context, arg SetReleaseConfigSnapshotParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setReleaseConfigSnapshot, arg.ConfigSnapshotJson, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setReleaseRoute = `-- name: SetReleaseRoute :execrows
 UPDATE releases SET route_id = ? WHERE id = ?
 `

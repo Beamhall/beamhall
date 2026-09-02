@@ -377,7 +377,7 @@ func (o *Orchestrator) spawnWorkload(ctx context.Context, beamhallID, beamID, re
 		Security:  profileOf(sc),
 		Resources: limitsOf(sc),
 		Secrets:   mounts,
-		Bindings:  o.brandingBinding(ctx, bh),
+		Bindings:  append(o.brandingBinding(ctx, bh), o.assertionBinding(beamID)...),
 		Port:      o.beamPort,
 	})
 	if err != nil {
@@ -422,6 +422,7 @@ func (o *Orchestrator) spawnWorkload(ctx context.Context, beamhallID, beamID, re
 		return driver.Status{}, err
 	}
 	needsCleanup = false
+	o.probeAgentTools(ctx, beamID, releaseID, status.BackendAddr)
 	return status, nil
 }
 

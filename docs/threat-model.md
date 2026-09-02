@@ -72,7 +72,15 @@ keeping both untrusted populations inside their boundary.
   app's URL remains reachable to anyone who already holds it; network
   reachability stays the gateway's and the app's own sign-in's job. A
   using-tier token (`beams:use`) carries no capability scope and holds no
-  membership: it can reach no tool that changes, deploys, or inspects an app.
+  membership: its only reach *into* an app is `use_app` — a brokered call to
+  the tools the app itself chooses to publish (`docs/app-tools.md`),
+  audience-gated, live-channel-only, identity delivered as a short-lived
+  Beamhall-signed assertion (the user's IdP token is never forwarded), and
+  every call audited. Nothing that changes, deploys, or inspects the app is
+  reachable. Tool menus and results are **app-authored content relayed into
+  the user's agent** — a prompt-injection surface bounded (not eliminated) by
+  size caps, the secret scrubber, and the fact that only IT-published apps
+  resolve at all.
   Group-based audiences trust the IdP-issued group claim
   (`BEAMHALL_OAUTH_GROUPS_CLAIM`); the operator must source it from directory
   membership the user cannot influence, or disable it (empty claim name).
@@ -172,6 +180,7 @@ Every "mitigation" below is enforced in code and exercised by a test; the
 | **SSRF / metadata theft** | Always-deny `169.254.0.0/16` (incl. cloud metadata) + host IP + mgmt subnet, independent of any allowlist | — | L7 proxy | `TestAgentCannot/ExfiltrateData` |
 | **Confused deputy / token replay** | `aud` == Beamhall resource URI; `iss` pinned; `Origin` checked (DNS rebinding); RS256/ES256 only (no `none`/HMAC) | — | — | `internal/auth` suite (forged alg, wrong aud/iss all rejected) |
 | **App-token replay against the backplane** (provisioned auth, §5.10) | A beam's own OIDC client mints tokens with `aud` = its own client id only; Beamhall never attaches the resource-URI audience to app clients, and `CreateClient` post-asserts no effective mapper injects it (refusing otherwise) | — | — | `internal/identityadmin` post-assert unit test; **lab: an app-client token is 401'd by `/mcp`** while a correctly-scoped token gets 200 (`auth-isolation.sh`) |
+| **Assertion forgery / replay across apps** (app tools, §5.15) | The backplane signs each brokered call's identity assertion with ES256; apps verify against a JWKS mounted at deploy (`/run/beamhall/assertion.json`), never fetched over the network. Per-beam `aud` (an assertion for one app fails another's check), ~60 s `exp` + `jti`, and a `tool` claim binding the assertion to the exact route. The private key is vault-sealed in the control-plane store (rides backups; a restore cannot silently mint a new key) and never leaves the host | An app that skips verification exposes **its own** tools to anyone holding its URL — verification is a documented MUST the platform cannot perform for the app | Gateway-enforced assertion check on the contract paths | `internal/apptools` mint/verify round trip; e2e: an app verifying for real answers `use_app`/`try_beam_tool` and 401s a bare request to its public tools URL |
 | **Email abuse / sender spoofing / provider-key theft** (email facility, §5.12) | The mail-provider credential lives only in the shared `bh-mail` broker, never in the beam; the beam holds only a bridge-scoped SMTP login (useless outside the hall). The broker enforces a per-beam **From allowlist** (a beam can't send as another team or the company) + a per-beam **rate limit** (mail-bomb / reputation defense) and **audits every message** (envelope only) to the hash chain. Beams reach only `bh-mail` (container-to-container); the broker's outbound to the smarthost rides the default bridge, so allowing the provider never widens beam egress | Audit events buffered in the broker between pulls are lost if the broker crashes first (bounded by the poll interval) | Persisted broker spool; per-channel sandbox for preview | `internal/facility/mail` engine + control-channel unit/race tests; **lab-verified 2026-06-25: beam→`bh-mail` delivers + audits, direct beam→provider egress-denied** |
 | **Cross-beam object access / storage-key theft / one beam filling the store** (object-storage facility, §5.13) | Any external S3 credential lives only in the shared `bh-objstore` broker, never in the beam; the beam holds only a per-beam, per-channel S3 key valid against the in-hall endpoint. The broker is one container on every bridge, so it can't tell beams apart by IP — it **verifies each request's AWS SigV4 signature** and rejects an out-of-bucket request (`AccessDenied`) or a forged/unknown key (`SignatureDoesNotMatch`); **preview and live are separate buckets** (preview can't touch production data); a per-beam **storage quota** caps the shared local store (`507` over-quota); every mutation/denial is **audited** (object/op, never contents) to the hash chain. FORWARD mode namespaces every beam under its own key **prefix** inside one admin bucket (out-of-prefix/traversal rejected). Plain HTTP on the private bridge — SigV4 gives request auth+integrity; object bytes stay on the in-host bridge | Object data is on the private bridge in cleartext (same boundary as `bh-postgres` / `bh-mail` plaintext-AUTH); local-mode data is single-volume + not in `admin_backup_now`; per-chunk signatures aren't re-verified (seed sig only) | HTTPS-on-bridge with injected `S3_CA`; local-data backups; recommend forward-to-real-S3 beyond pilot | `internal/facility/s3` SigV4 verifier + isolation unit tests (minio-go + synthetic chunked bodies); **lab-verified 2026-06-28: local round-trip, cross-beam 403, forged-key reject, destroy-purge, forward-to-external-S3 prefix isolation, audit chain intact** |
 | **Audit tampering** | Hash-chained, append-only audit log; boot-time `Verify`; retention pruning is **checkpoint-anchored** (the surviving chain stays tamper-evident and an unrecorded deletion still trips `Verify`) and, over MCP, four-eyes-gated; JSON-Lines export to an off-box SIEM anchors the truncation blind spot | An attacker with DB write + the ability to recompute the whole chain forward could rewrite history; the off-box SIEM cursor detects divergence. A host-shell `prune-audit` run concurrently with a live `Verify` can yield transient false gap reports (re-run clears) | WORM/remote-attested log sink | audit chain unit + lab Verify |
@@ -239,6 +248,12 @@ have no tool to change egress; only IT can, and the change is audited.
   production (systemd `LoadCredential`/KMS/TPM), never auto-generated. Backups
   include it and are therefore as sensitive as the appliance (`internal/backup`,
   written 0600).
+- The **app-assertion signing key** (app tools, §5.15) is the appliance's
+  second long-lived private key. It lives vault-sealed inside the control-plane
+  database — sealed under the root key, riding `admin_backup_now` with it — 
+  because every deployed workload verifies against a JWKS injected at deploy
+  time: a key silently regenerated after a restore would break every
+  tool-serving app at once. Boot fails rather than regenerate on a load error.
 
 ## 9. CIS Docker Benchmark — how Beamhall maps
 

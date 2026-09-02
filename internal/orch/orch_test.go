@@ -29,17 +29,25 @@ import (
 // fakeDriver records calls and serves canned results. Concurrency-safe so
 // -race covers orchestrator/scheduler interleavings.
 type fakeDriver struct {
-	mu         sync.Mutex
-	deploys    []driver.DeploySpec
-	started    []string
-	paused     []string
-	resumed    []string
-	stopped    []string
-	destroyed  []string
-	startErr   error
-	logContent string
-	exitCode   *int // non-nil: Status reports an exited workload
-	stats      driver.Stats
+	mu          sync.Mutex
+	deploys     []driver.DeploySpec
+	started     []string
+	paused      []string
+	resumed     []string
+	stopped     []string
+	destroyed   []string
+	startErr    error
+	logContent  string
+	exitCode    *int // non-nil: Status reports an exited workload
+	stats       driver.Stats
+	backendAddr string               // Status backend addr override (default 172.18.0.9:8080)
+	statusState driver.WorkloadState // Status state override (default running)
+}
+
+func (f *fakeDriver) setStatusState(s driver.WorkloadState) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statusState = s
 }
 
 func (f *fakeDriver) Name() string { return "fake" }
@@ -100,7 +108,15 @@ func (f *fakeDriver) Status(ctx context.Context, h driver.Handle) (driver.Status
 	if f.exitCode != nil {
 		return driver.Status{State: driver.WorkloadExited, ExitCode: f.exitCode}, nil
 	}
-	return driver.Status{State: driver.WorkloadRunning, BackendAddr: "172.18.0.9:8080"}, nil
+	addr := f.backendAddr
+	if addr == "" {
+		addr = "172.18.0.9:8080"
+	}
+	state := f.statusState
+	if state == "" {
+		state = driver.WorkloadRunning
+	}
+	return driver.Status{State: state, BackendAddr: addr}, nil
 }
 func (f *fakeDriver) Exec(ctx context.Context, h driver.Handle, cmd []string, s driver.ExecStreams) (int, error) {
 	return 0, errors.New("not in fake")
@@ -145,7 +161,9 @@ type world struct {
 	build Actor // builder-role actor
 }
 
-func newWorld(t *testing.T) *world {
+func newWorld(t *testing.T) *world { return newWorldOpts(t) }
+
+func newWorldOpts(t *testing.T, extra ...Option) *world {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "orch.db"))
@@ -193,9 +211,11 @@ func newWorld(t *testing.T) *world {
 	gw := newFakeGateway()
 	sched := scheduler.New(st.PauseStore(), func(ctx context.Context, beamID string) error { return nil })
 
-	o := New(st, drv, gw, sched, vault, pep, alog, "bh.example",
-		WithDefaultPauseAfter(2*time.Hour), WithStartupGrace(5*time.Millisecond),
-		WithUserTier(UserTierConfig{AutoRegister: true, GroupAudiences: true}))
+	opts := append([]Option{
+		WithDefaultPauseAfter(2 * time.Hour), WithStartupGrace(5 * time.Millisecond),
+		WithUserTier(UserTierConfig{AutoRegister: true, GroupAudiences: true}),
+	}, extra...)
+	o := New(st, drv, gw, sched, vault, pep, alog, "bh.example", opts...)
 	return &world{o: o, st: st, drv: drv, gw: gw, sched: sched, bh: bh,
 		admin: mkActor(domain.RoleBeamhallAdmin), build: mkActor(domain.RoleBuilder)}
 }

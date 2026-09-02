@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Smoke-verify each persona's MCP channel by driving the proxy directly:
 # initialize + tools/list, then assert the menu matches the identity
-# (admins must see admin_* tools; builders none; users exactly the two
-# discovery tools). Catches a missed beamhall-it role assignment or a broken
+# (admins must see admin_* tools; builders none; users exactly the three
+# using-tier tools). Catches a missed beamhall-it role assignment or a broken
 # token path before the full run.
 #
 #   scripts/agent-conformance/verify.sh            # all six personas
@@ -40,10 +40,10 @@ for u in "${targets[@]}"; do
     if [ "$admin" -gt 0 ]; then ok "$u: sees $admin admin_* tools (of $total) — IT elevation OK"
     else warn "$u: NO admin_* tools — beamhall-it role likely not applied"; rc=1; fi
   elif is_user "$u"; then
-    apps=$(printf '%s\n' "$names" | grep -c '^\(list_apps\|describe_app\)$' || true)
-    builder=$(printf '%s\n' "$names" | grep -c '^\(create_beam\|deploy_beam\|set_secret\)$' || true)
-    if [ "$apps" -eq 2 ] && [ "$admin" -eq 0 ] && [ "$builder" -eq 0 ]; then
-      ok "$u: list_apps + describe_app only ($total tool(s)), 0 admin_*, 0 builder — using tier OK"
+    apps=$(printf '%s\n' "$names" | grep -c '^\(list_apps\|describe_app\|use_app\)$' || true)
+    builder=$(printf '%s\n' "$names" | grep -c '^\(create_beam\|deploy_beam\|set_secret\|try_beam_tool\|update_beam\)$' || true)
+    if [ "$apps" -eq 3 ] && [ "$admin" -eq 0 ] && [ "$builder" -eq 0 ]; then
+      ok "$u: list_apps + describe_app + use_app only ($total tool(s)), 0 admin_*, 0 builder — using tier OK"
     else
       warn "$u: expected exactly the using tier (apps=$apps builder=$builder admin=$admin of $total)"; rc=1
     fi

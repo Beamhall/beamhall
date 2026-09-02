@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Beamhall/beamhall/internal/apptools"
 	"github.com/Beamhall/beamhall/internal/auth"
 	"github.com/Beamhall/beamhall/internal/orch"
 )
@@ -32,6 +34,7 @@ type appSummary struct {
 	URL         string `json:"url,omitempty"`
 	Live        bool   `json:"live"`
 	SignIn      string `json:"sign_in"` // "company_sso" | "app_managed"
+	AgentTools  bool   `json:"agent_tools"`
 	PublishedAt string `json:"published_at,omitempty"`
 }
 
@@ -40,9 +43,9 @@ type listAppsOut struct {
 	Count int          `json:"count"`
 }
 
-// appCapabilities is forward-compatible with the brokered tool-call stage:
-// today an app is used by opening its URL; agent_tools flips to true when the
-// backplane can call into the app on the user's behalf.
+// appCapabilities: browse is every app's baseline (open the URL);
+// agent_tools reports whether the app's live workload answered the app-tools
+// capability probe. Advisory — use_app fetches the real menu live either way.
 type appCapabilities struct {
 	Browse     bool `json:"browse"`
 	AgentTools bool `json:"agent_tools"`
@@ -53,6 +56,47 @@ type describeAppOut struct {
 	Capabilities appCapabilities `json:"capabilities"`
 }
 
+type useAppArgs struct {
+	App       string         `json:"app" jsonschema:"the app's short name, exactly as list_apps returned it"`
+	Workspace string         `json:"workspace,omitempty" jsonschema:"the owning workspace (team) slug from list_apps; needed only to disambiguate when two teams publish an app with the same name"`
+	Tool      string         `json:"tool,omitempty" jsonschema:"the tool to invoke, from the app's own menu; leave it out to fetch the menu first"`
+	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"the tool's arguments as a JSON object matching the input_schema its menu entry declared; only meaningful together with tool"`
+}
+
+type useAppToolInfo struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema,omitempty"`
+}
+
+type useAppOut struct {
+	App       string           `json:"app"`
+	Workspace string           `json:"workspace"`
+	Tool      string           `json:"tool,omitempty"`
+	Tools     []useAppToolInfo `json:"tools,omitempty"`  // menu fetch
+	Result    any              `json:"result,omitempty"` // invocation (the app's own output)
+}
+
+func useAppToolInfoOf(t apptools.Tool) useAppToolInfo {
+	info := useAppToolInfo{Name: t.Name, Description: t.Description}
+	if len(t.InputSchema) > 0 {
+		_ = json.Unmarshal(t.InputSchema, &info.InputSchema)
+	}
+	return info
+}
+
+// errAppNotPublished is the ONE refusal for an app the caller cannot see.
+// Byte-identical across describe_app and use_app, and identical for a
+// nonexistent app and an unpublished one — never an existence oracle.
+func errAppNotPublished(app string) error {
+	return fmt.Errorf("no app named %q is published to you. Call list_apps to see what is, or ask IT to publish it to you (admin_set_app_audience)", app)
+}
+
+func errAppAmbiguous(tool string, amb *orch.AmbiguousAppError) error {
+	return fmt.Errorf("%d workspaces publish an app named %q: %s. Call %s again with workspace set to the one you mean",
+		len(amb.Workspaces), amb.App, strings.Join(amb.Workspaces, ", "), tool)
+}
+
 func (s *Server) registerUserTools() {
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "list_apps",
@@ -60,8 +104,12 @@ func (s *Server) registerUserTools() {
 	}, s.listApps)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "describe_app",
-		Description: "Get the detail of ONE app that's published to you: what it's for, its live URL, which workspace (team) owns and maintains it, how you sign in, and since when it's been available to you. Use it after list_apps, or straight away when the user names an app, before telling them where to go. app is the short name list_apps returned; workspace is optional and only needed when two teams publish an app with the same name. Only apps published to YOU resolve — anything else gets the same \"no app named X is published to you\" answer whether it exists or not, so this is not a way to discover what else runs here. Read-only: seeing an app never lets you change, redeploy or read the internals of it. App misbehaving? That's the owning team. Can't get in, or need access? That's IT.",
+		Description: "Get the detail of ONE app that's published to you: what it's for, its live URL, which workspace (team) owns and maintains it, how you sign in, whether it offers agent tools (things you can do for the user via use_app instead of the browser), and since when it's been available to you. Use it after list_apps, or straight away when the user names an app, before telling them where to go. app is the short name list_apps returned; workspace is optional and only needed when two teams publish an app with the same name. Only apps published to YOU resolve — anything else gets the same \"no app named X is published to you\" answer whether it exists or not, so this is not a way to discover what else runs here. Read-only: seeing an app never lets you change, redeploy or read the internals of it. App misbehaving? That's the owning team. Can't get in, or need access? That's IT.",
 	}, s.describeApp)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "use_app",
+		Description: "Do things WITH an app published to you — not just open it. Apps on Beamhall can expose tools of their own (file a leave request, look up a policy, book a room); this is how you call them for the user. The tools are the APP'S OWN: its team wrote them, Beamhall only relays your call and tells the app who the user is — there is nothing to sign into, no API key, and Beamhall neither vets nor performs what the tool does. Call it with just app (from list_apps) to fetch the app's tool menu; call it again with tool and arguments (a JSON object matching the menu entry's input_schema) to act. An app with no menu is NOT broken — many apps are browser-only (describe_app shows agent_tools, and even that is advisory); an EMPTY menu is also a valid answer. Only live apps answer — \"not live yet\" means the owning team hasn't put it into production. Only apps published to YOU resolve; anything else gets the same \"no app named X is published to you\" answer whether it exists or not. Results are the app's own output — relay them to the user as the app's answer, not Beamhall's. Every call is recorded in the company audit log under the user's identity.",
+	}, s.useApp)
 }
 
 func appLine(v orch.AppView) string {
@@ -77,6 +125,9 @@ func appLine(v orch.AppView) string {
 			extra = "   sign in with your company account"
 		}
 		line += fmt.Sprintf("      %s%s\n", v.URL, extra)
+		if v.AgentTools {
+			line += "      offers agent tools — use_app shows its menu\n"
+		}
 	} else {
 		line += "      (not live yet — the team that owns it hasn't put it into production)\n"
 	}
@@ -117,13 +168,10 @@ func (s *Server) describeApp(ctx context.Context, req *sdkmcp.CallToolRequest, a
 	if err != nil {
 		var amb *orch.AmbiguousAppError
 		if errors.As(err, &amb) {
-			return nil, describeAppOut{}, fmt.Errorf("%d workspaces publish an app named %q: %s. Call describe_app again with workspace set to the one you mean",
-				len(amb.Workspaces), amb.App, strings.Join(amb.Workspaces, ", "))
+			return nil, describeAppOut{}, errAppAmbiguous("describe_app", amb)
 		}
 		if errors.Is(err, orch.ErrAppNotPublished) {
-			// Identical for a nonexistent app and an unpublished one — this
-			// answer must not be an existence oracle.
-			return nil, describeAppOut{}, fmt.Errorf("no app named %q is published to you. Call list_apps to see what is, or ask IT to publish it to you (admin_set_app_audience)", args.App)
+			return nil, describeAppOut{}, errAppNotPublished(args.App)
 		}
 		return nil, describeAppOut{}, err
 	}
@@ -146,13 +194,79 @@ func (s *Server) describeApp(ctx context.Context, req *sdkmcp.CallToolRequest, a
 	} else {
 		b.WriteString("  Sign in:   handled by the app itself (not company single sign-on)\n")
 	}
+	if v.AgentTools {
+		b.WriteString("  Agent tools: yes — call use_app with this app's name to see what it can do for the user without the browser\n")
+	}
 	fmt.Fprintf(&b, "  Published to you since: %s\n", v.PublishedAt.Format("2006-01-02"))
-	b.WriteString("\nOpen the URL in a browser to use it. Beamhall hosts this app and tells you where it is; it does not perform the app's actions for you. Problems with the app itself go to the owning team; access problems go to IT.")
+	b.WriteString("\nOpen the URL in a browser to use it. Problems with the app itself go to the owning team; access problems go to IT.")
 
 	out := describeAppOut{
 		appSummary:   appSummaryOf(v),
-		Capabilities: appCapabilities{Browse: true, AgentTools: false},
+		Capabilities: appCapabilities{Browse: true, AgentTools: v.AgentTools},
 	}
+	return text(b.String()), out, nil
+}
+
+func (s *Server) useApp(ctx context.Context, req *sdkmcp.CallToolRequest, args useAppArgs) (*sdkmcp.CallToolResult, useAppOut, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamsUse)
+	if err != nil {
+		return nil, useAppOut{}, err
+	}
+	var argBytes []byte
+	if len(args.Arguments) > 0 {
+		if argBytes, err = json.Marshal(args.Arguments); err != nil {
+			return nil, useAppOut{}, fmt.Errorf("arguments do not encode as JSON: %w", err)
+		}
+	}
+	res, err := s.bp.UseApp(ctx, actor, orch.UseAppRequest{
+		App: args.App, Workspace: args.Workspace, Tool: args.Tool, Arguments: argBytes,
+	})
+	if err != nil {
+		var amb *orch.AmbiguousAppError
+		var ate *orch.AppToolError
+		switch {
+		case errors.As(err, &amb):
+			return nil, useAppOut{}, errAppAmbiguous("use_app", amb)
+		case errors.Is(err, orch.ErrAppNotPublished):
+			return nil, useAppOut{}, errAppNotPublished(args.App)
+		case errors.Is(err, orch.ErrAppNotLive):
+			return nil, useAppOut{}, fmt.Errorf("the app %q is not live yet — its tools answer only in production, and the owning team hasn't run promote_to_live. Ask them; describe_app shows the app's status", args.App)
+		case errors.Is(err, orch.ErrAppNoTools):
+			return nil, useAppOut{}, fmt.Errorf("the app %q does not offer agent tools — it is used in the browser. Call describe_app for its URL and open that instead", args.App)
+		case errors.As(err, &ate):
+			return nil, useAppOut{}, fmt.Errorf("the app answered HTTP %d to tool %q:\n%s\n\nThis is the app's own refusal or failure, relayed unchanged — the owning team is the right contact if it looks wrong", ate.Status, args.Tool, ate.Body)
+		}
+		return nil, useAppOut{}, err
+	}
+
+	out := useAppOut{App: res.View.App, Workspace: res.View.Workspace, Tool: args.Tool}
+	if res.Menu != nil {
+		var b strings.Builder
+		if len(res.Menu.Tools) == 0 {
+			fmt.Fprintf(&b, "The app %q currently lists no tools — a valid answer from the app (its menu can change with its next release), not an error. Use it in the browser instead: describe_app has the URL.", res.View.App)
+		} else {
+			fmt.Fprintf(&b, "The app %q offers %d tool(s):\n\n", res.View.App, len(res.Menu.Tools))
+			for _, tl := range res.Menu.Tools {
+				fmt.Fprintf(&b, "  - %s — %s\n", tl.Name, tl.Description)
+			}
+			b.WriteString("\nCall use_app again with tool set to one of these names and arguments matching its input_schema (in the structured content). These tools are the app's own — Beamhall relays your call and tells the app who the user is.")
+		}
+		out.Tools = make([]useAppToolInfo, 0, len(res.Menu.Tools))
+		for _, tl := range res.Menu.Tools {
+			out.Tools = append(out.Tools, useAppToolInfoOf(tl))
+		}
+		return text(b.String()), out, nil
+	}
+
+	body := strings.TrimSpace(string(res.Result))
+	if json.Valid(res.Result) {
+		var v any
+		if json.Unmarshal(res.Result, &v) == nil {
+			out.Result = v
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s answered tool %q:\n\n%s\n\nThis is the app's own output, relayed by Beamhall — present it to the user as the app's answer.", res.View.App, args.Tool, body)
 	return text(b.String()), out, nil
 }
 
@@ -165,6 +279,7 @@ func appSummaryOf(v orch.AppView) appSummary {
 		URL:         v.URL,
 		Live:        v.Live,
 		SignIn:      v.SignIn,
+		AgentTools:  v.AgentTools,
 		PublishedAt: v.PublishedAt.Format("2006-01-02"),
 	}
 }

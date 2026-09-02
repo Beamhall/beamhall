@@ -338,6 +338,40 @@ func curlHost(t *testing.T, routeURL string, wantStatus int) string {
 	return ""
 }
 
+// curlPath fetches an arbitrary path on a live route through the gateway and
+// returns whatever the app answers — unlike curlHost it demands no ok-marker,
+// because the interesting answer may be a refusal (e.g. the app-tools contract
+// without an assertion). Retries only past Caddy's empty unmatched-host reply
+// while the route propagates. Bounded like curlHost.
+func curlPath(t *testing.T, routeURL, path string) (int, string) {
+	t.Helper()
+	host := strings.TrimPrefix(routeURL, "https://")
+	client := &http.Client{Timeout: 3 * time.Second}
+	var status int
+	var body string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequest("GET", "http://127.0.0.1:"+gatewayPort+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		resp, err := client.Do(req)
+		if err == nil {
+			var buf bytes.Buffer
+			buf.ReadFrom(resp.Body)
+			resp.Body.Close()
+			status, body = resp.StatusCode, buf.String()
+			if !(status == http.StatusOK && body == "") {
+				return status, body
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("gateway %s%s never answered; last %d: %q", host, path, status, body)
+	return 0, ""
+}
+
 func tarGz(t *testing.T, files map[string]string) string {
 	t.Helper()
 	var buf bytes.Buffer

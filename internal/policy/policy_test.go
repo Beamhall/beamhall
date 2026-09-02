@@ -104,6 +104,17 @@ func TestRoleMatrix(t *testing.T) {
 	wantDenied(t, f.authorize(builder, ActionDestroyBeam), `role "builder" does not grant`)
 	wantDenied(t, f.authorize(viewer, ActionArchiveBeam), `does not grant`)
 
+	// Testing a beam's agent tools and editing its catalog copy are builder
+	// work; a read-only viewer gets neither.
+	if err := f.authorize(builder, ActionUseBeamTools); err != nil {
+		t.Fatalf("builder try_beam_tool: %v", err)
+	}
+	if err := f.authorize(builder, ActionUpdateBeam); err != nil {
+		t.Fatalf("builder update_beam: %v", err)
+	}
+	wantDenied(t, f.authorize(viewer, ActionUseBeamTools), `does not grant`)
+	wantDenied(t, f.authorize(viewer, ActionUpdateBeam), `does not grant`)
+
 	if err := f.authorize(admin, ActionPromoteToLive); err != nil {
 		t.Fatalf("beamhall_admin promote_to_live: %v", err)
 	}

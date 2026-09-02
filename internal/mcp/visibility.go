@@ -56,13 +56,16 @@ var toolScope = map[string]string{
 	"show_metrics":           auth.ScopeMetricsRead,
 	"archive_beam":           auth.ScopeBeamsOperate,
 	"destroy_beam":           auth.ScopeBeamsWrite,
+	"try_beam_tool":          auth.ScopeBeamsOperate,
+	"update_beam":            auth.ScopeBeamsWrite,
 
-	// Using tier (beams:use): discovery of apps published TO the caller. No
-	// membership anywhere is required — the audience is the gate (orch). No
-	// state gate either: the tools must stay visible when nothing is
-	// published, so they can say so.
+	// Using tier (beams:use): discovery of apps published TO the caller, and
+	// the brokered call into one. No membership anywhere is required — the
+	// audience is the gate (orch). No state gate either: the tools must stay
+	// visible when nothing is published, so they can say so.
 	"list_apps":    auth.ScopeBeamsUse,
 	"describe_app": auth.ScopeBeamsUse,
+	"use_app":      auth.ScopeBeamsUse,
 
 	// IT promotion gate (admin:it) — lives on the builder file but is IT-only.
 	"list_pending_promotions": auth.ScopeAdminIT,

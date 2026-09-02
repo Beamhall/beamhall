@@ -24,3 +24,6 @@ UPDATE releases SET route_id = ? WHERE id = ?;
 
 -- name: SetReleaseWorkload :execrows
 UPDATE releases SET handle_driver = ?, handle_ref = ? WHERE id = ?;
+
+-- name: SetReleaseConfigSnapshot :execrows
+UPDATE releases SET config_snapshot_json = ? WHERE id = ?;

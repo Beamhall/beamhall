@@ -115,6 +115,38 @@ func (s *Store) SetReleaseWorkload(ctx context.Context, releaseID domain.ID, h d
 	}))
 }
 
+// SetReleaseAgentTools records whether the workload deployed for a Release
+// answered the app-tools capability probe. Lives in the config snapshot: the
+// flag describes this release's workload and dies with it.
+func (s *Store) SetReleaseAgentTools(ctx context.Context, releaseID domain.ID, on bool) error {
+	return mapErr(s.withTx(ctx, func(q *db.Queries) error {
+		row, err := q.GetRelease(ctx, string(releaseID))
+		if err != nil {
+			return err
+		}
+		var cfg map[string]string
+		if err := decJSON(row.ConfigSnapshotJson, &cfg); err != nil {
+			return fmt.Errorf("release %s: decode config snapshot: %w", releaseID, err)
+		}
+		if cfg == nil {
+			cfg = map[string]string{}
+		}
+		if on {
+			cfg["agent_tools"] = "true"
+		} else {
+			delete(cfg, "agent_tools")
+		}
+		enc, err := encJSON(cfg)
+		if err != nil {
+			return err
+		}
+		return affected(q.SetReleaseConfigSnapshot(ctx, db.SetReleaseConfigSnapshotParams{
+			ConfigSnapshotJson: enc,
+			ID:                 string(releaseID),
+		}))
+	}))
+}
+
 func releaseFromRow(r db.Release) (domain.Release, error) {
 	var cfg map[string]string
 	if err := decJSON(r.ConfigSnapshotJson, &cfg); err != nil {

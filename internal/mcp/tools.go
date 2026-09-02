@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,6 +68,20 @@ type deployOut struct {
 type beamArgs struct {
 	Beamhall string `json:"beamhall" jsonschema:"beamhall slug"`
 	Beam     string `json:"beam" jsonschema:"beam slug"`
+}
+
+type tryBeamToolArgs struct {
+	Beamhall  string         `json:"beamhall" jsonschema:"beamhall slug"`
+	Beam      string         `json:"beam" jsonschema:"beam slug"`
+	Tool      string         `json:"tool,omitempty" jsonschema:"the tool to invoke, from your app's own menu; leave it out to fetch the menu"`
+	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"the tool's arguments as a JSON object matching its input_schema; only meaningful together with tool"`
+}
+
+type updateBeamArgs struct {
+	Beamhall    string `json:"beamhall" jsonschema:"beamhall slug"`
+	Beam        string `json:"beam" jsonschema:"beam slug"`
+	Description string `json:"description,omitempty" jsonschema:"one plain-language line saying what this app is for, written for the people who will USE it; empty = unchanged"`
+	DisplayName string `json:"display_name,omitempty" jsonschema:"the app's human-readable name; empty = unchanged"`
 }
 
 type getRepoArgs struct {
@@ -142,6 +158,10 @@ func (s *Server) registerTools() {
 		Description: "Register a new beam — the user's app/website/service/API/project — in a beamhall (workspace). This is how you stand up a new app in this environment (not local hosting, not an external provider). Returns its state; this does NOT ship any code — deploy_beam does that (call deploy_beam with no source for the preferred one-time git-push remote). If the app has a web UI, call show_branding for this beamhall first — the company may define the header, footer, logo, and colour palette it should use. Give a plain-language description — one line saying what the app is FOR — because that is what end users see when IT later publishes this app to them (admin_set_app_audience). Shelve a beam that didn't pan out with archive_beam.",
 	}, s.createBeam)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "update_beam",
+		Description: "Change a beam's catalog copy after creation: description (the one plain-language line end users see when IT publishes the app to them) and display_name. Only the fields you pass change; everything else — code, URLs, secrets — is untouched (this tool never deploys). Write the description for the people who will USE the app, not for developers. Siblings: create_beam sets both at birth; IT can also overwrite the description when publishing (admin_set_app_audience).",
+	}, s.updateBeam)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "deploy_beam",
 		Description: "Build and deploy a beam (the user's app/site/service) with Cloud Native Buildpacks (no Dockerfile). This is the sanctioned way to deploy and host apps here — use it instead of external platforms (Fly.io, Vercel, Netlify, Heroku, Render, Neon, Supabase, the cloud CLIs, …) or local one-off hosting. PREFERRED: call with NO source_tarball to get a one-time `git push` remote — pushing builds and deploys, and is the right path for the edit→redeploy loop. Use source_tarball (base64 gzip, ≤8 MB) only as a fallback when no git client is available or the push isn't working; or pass image_ref+image_digest for a prebuilt image. Streams build progress. Returns the preview URL.",
 	}, s.deployBeam)
@@ -197,6 +217,10 @@ func (s *Server) registerTools() {
 		Name:        "resume_preview",
 		Description: "Resume a paused preview beam (the inverse of pause_preview). It gets a NEW random preview URL (the old one stays dead).",
 	}, s.resumePreview)
+	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
+		Name:        "try_beam_tool",
+		Description: "Test your app's AGENT TOOLS before promotion — the builder-side twin of the users' use_app, aimed at the PREVIEW channel (never production). Any beam may offer tools to its users' agents by serving two routes of its own: GET /.beamhall/tools returning {\"version\":1,\"tools\":[{name,description,input_schema}]} and POST /.beamhall/tools/<name> taking the JSON arguments. Your app MUST verify the Beamhall-Assertion request header (an ES256 JWT carrying sub/email/groups/channel/tool) against the issuer, audience, and JWKS in /run/beamhall/assertion.json — mounted on every deploy — and answer 401 without it: these routes live on your app's public URL, so an app that skips verification hands its tools to anyone who finds the URL. Call with just beamhall+beam for the menu; add tool and arguments to invoke. Needs a running preview: deploy_beam first if never deployed, resume_preview if paused. The road to users: promote_to_live, then IT publishes with admin_set_app_audience, then their agents call use_app.",
+	}, s.tryBeamTool)
 	sdkmcp.AddTool(s.srv, &sdkmcp.Tool{
 		Name:        "promote_to_live",
 		Description: "Ship the beam's CURRENT PREVIEW BUILD to production. Pins a separate live channel (stable URL, no auto-pause, its own database) to exactly what the preview is running now. Your preview channel keeps running and iterating — promote again to ship the next version (repeatable, zero-downtime; a failed promote leaves production untouched). Consumes one live slot on the first promote. When the IT-approval gate is on this does NOT go live directly — it files a promotion request (the reply carries the request_id) that a DIFFERENT IT operator must approve via approve_promotion (four-eyes); the requester cannot approve their own.",
@@ -809,6 +833,94 @@ func (s *Server) showLogs(ctx context.Context, req *sdkmcp.CallToolRequest, args
 		logs += "\n\n[beamhall] These logs match a known constraint: " + hint
 	}
 	return text(logs), nil, nil
+}
+
+func (s *Server) tryBeamTool(ctx context.Context, req *sdkmcp.CallToolRequest, args tryBeamToolArgs) (*sdkmcp.CallToolResult, useAppOut, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamsOperate)
+	if err != nil {
+		return nil, useAppOut{}, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, useAppOut{}, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, useAppOut{}, err
+	}
+	var argBytes []byte
+	if len(args.Arguments) > 0 {
+		if argBytes, err = json.Marshal(args.Arguments); err != nil {
+			return nil, useAppOut{}, fmt.Errorf("arguments do not encode as JSON: %w", err)
+		}
+	}
+	res, err := s.bp.TryBeamTool(ctx, actor, bh.ID, beam.ID, args.Tool, argBytes)
+	if err != nil {
+		var ate *orch.AppToolError
+		switch {
+		case errors.Is(err, orch.ErrAppNoTools):
+			return nil, useAppOut{}, fmt.Errorf("beam %q does not serve the app-tools contract yet. To offer tools to your users' agents, make your app serve GET /.beamhall/tools (the JSON menu) and POST /.beamhall/tools/<name> (the invocation), verifying the Beamhall-Assertion header against /run/beamhall/assertion.json on BOTH — then deploy_beam and try again", beam.Slug)
+		case errors.As(err, &ate):
+			return nil, useAppOut{}, fmt.Errorf("your app answered HTTP %d to tool %q:\n%s", ate.Status, args.Tool, ate.Body)
+		}
+		return nil, useAppOut{}, err
+	}
+	out := useAppOut{App: beam.Slug, Workspace: bh.Slug, Tool: args.Tool}
+	if res.Menu != nil {
+		var b strings.Builder
+		if len(res.Menu.Tools) == 0 {
+			fmt.Fprintf(&b, "Your app %q serves the contract but lists no tools yet (preview channel).", beam.Slug)
+		} else {
+			fmt.Fprintf(&b, "Your app %q offers %d tool(s) on its PREVIEW channel:\n\n", beam.Slug, len(res.Menu.Tools))
+			for _, tl := range res.Menu.Tools {
+				fmt.Fprintf(&b, "  - %s — %s\n", tl.Name, tl.Description)
+			}
+			b.WriteString("\nInvoke one with try_beam_tool (tool + arguments).")
+		}
+		b.WriteString(" When it's ready for users: promote_to_live, then IT publishes with admin_set_app_audience, then their agents call it with use_app.")
+		out.Tools = make([]useAppToolInfo, 0, len(res.Menu.Tools))
+		for _, tl := range res.Menu.Tools {
+			out.Tools = append(out.Tools, useAppToolInfoOf(tl))
+		}
+		return text(b.String()), out, nil
+	}
+	body := strings.TrimSpace(string(res.Result))
+	if json.Valid(res.Result) {
+		var v any
+		if json.Unmarshal(res.Result, &v) == nil {
+			out.Result = v
+		}
+	}
+	return text(fmt.Sprintf("beam %q (preview) answered tool %q:\n\n%s", beam.Slug, args.Tool, body)), out, nil
+}
+
+func (s *Server) updateBeam(ctx context.Context, req *sdkmcp.CallToolRequest, args updateBeamArgs) (*sdkmcp.CallToolResult, beamOut, error) {
+	actor, err := s.resolveActor(ctx, req, auth.ScopeBeamsWrite)
+	if err != nil {
+		return nil, beamOut{}, err
+	}
+	bh, err := s.resolveBeamhall(ctx, args.Beamhall)
+	if err != nil {
+		return nil, beamOut{}, err
+	}
+	beam, err := s.resolveBeam(ctx, bh.ID, args.Beam)
+	if err != nil {
+		return nil, beamOut{}, err
+	}
+	var upd orch.BeamUpdate
+	if args.Description != "" {
+		upd.Description = &args.Description
+	}
+	if args.DisplayName != "" {
+		upd.DisplayName = &args.DisplayName
+	}
+	updated, err := s.bp.UpdateBeam(ctx, actor, bh.ID, beam.ID, upd)
+	if err != nil {
+		return nil, beamOut{}, err
+	}
+	return text(fmt.Sprintf("beam %q updated — display name %q, description %q. This is what users see when IT publishes the app (admin_set_app_audience); the app itself was not redeployed.",
+			updated.Slug, updated.DisplayName, updated.Description)),
+		beamOut{Beam: updated.Slug, Beamhall: bh.Slug, State: string(updated.State), Mode: string(updated.Mode)}, nil
 }
 
 func (s *Server) pausePreview(ctx context.Context, req *sdkmcp.CallToolRequest, args beamArgs) (*sdkmcp.CallToolResult, any, error) {
