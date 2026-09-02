@@ -122,6 +122,15 @@ in the audience; builders test pre-promotion with `try_beam_tool` against the
 preview channel), and every brokered call lands on the audit chain under the
 user's identity.
 
+Apps can also be granted permission to call **each other** (`docs/app-tools.md`
+"Calling other apps"): `admin_set_beam_peers` names what one app may reach —
+peer apps in any workspace (calls travel only through the audited backplane
+relay; the network between apps stays closed, siblings included) and external
+destinations (per-app egress entries on top of the workspace allowlist).
+Set-and-replace with `clear` as the inverse; revocation bites on the next call.
+The source app picks up its relay credential on its next `deploy_beam`;
+builders read the grant state (never widen it) with `show_beam_peers`.
+
 `admin_set_app_audience` publishes one app: name the workspace + app, then say
 who — `everyone`, IdP `groups` (matched against the group claim in the user's
 token), `identities`, or any combination (the union). Set-and-replace: pass the

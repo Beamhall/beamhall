@@ -15,6 +15,39 @@ their auto-generated notes.
 
 ## [Unreleased]
 
+### Added
+- **Apps can now call each other — through the platform, never around it.**
+  IT grants one app permission to use another app's tools with the new
+  **`admin_set_beam_peers`** ("let the tracker use the ledger"): peers may
+  live in ANY workspace, and the calls travel exclusively through the new
+  beam-to-beam relay — a dedicated listener that authenticates the calling
+  workload by an injected per-app credential AND its live container address,
+  re-checks the grant on every call (revocation bites instantly), delivers
+  the caller to the target as the standard signed assertion with the new
+  `caller_type: "beam"` claim, applies the same size caps as `use_app` plus
+  per-app rate and in-flight limits, and records **every call on the audit
+  chain**. The same tool grants per-app **external destinations** (direct
+  egress for that one app's workloads, on top of the workspace allowlist).
+  Set-and-replace with `clear` as the inverse. The calling app finds its
+  instructions in `/run/beamhall/c2c.json` and its credential at
+  `/run/secrets/BEAMHALL_C2C_KEY` from its next deploy —
+  `docs/app-tools.md` has the new "Calling other apps" section.
+- **`show_beam_peers`** (builders, read-only): what IT granted this app to
+  reach, whether the relay credential has reached each channel yet, and the
+  in-app calling contract — builders can see grants but never widen them.
+
+### Changed
+- **BREAKING (network posture): workloads in the same workspace can no longer
+  dial each other directly.** The intra-bridge exemption now covers only the
+  platform brokers (managed Postgres, mail, object storage) — in both
+  directions — so sibling-to-sibling traffic hits the default deny like
+  everything else. Nothing sanctioned relied on direct sibling dialing; apps
+  that need each other now go through the granted, audited relay. This
+  removes the threat model's long-standing "same-beamhall beams share a
+  bridge" residual (§6 lateral movement).
+- The `set_secret` key namespace `BEAMHALL_*` is now reserved for
+  platform-injected credentials and refused with a teaching error.
+
 ## [0.6.2] - 2026-09-01
 
 A security patch, cut ahead of the next feature wave: the workload→host

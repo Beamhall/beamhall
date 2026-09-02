@@ -91,12 +91,18 @@ Its claims:
 |---|---|
 | `iss` | the appliance (must equal `issuer` from the mounted file) |
 | `aud` | your beam's ID (must equal `audience` from the mounted file) |
-| `sub` | the caller's Beamhall identity ID (`beamhall:probe` for the capability probe) |
-| `email` | the caller's email (may be empty) |
-| `groups` | the caller's IdP group names (always an array) |
+| `sub` | the caller's Beamhall identity ID; for `caller_type: "beam"` the calling beam's ID; `beamhall:probe` for the capability probe |
+| `caller_type` | `user` (a person's agent), `beam` (another app, via an IT grant — see "Calling other apps"), or `probe` |
+| `email` | the caller's email (empty for beams and the probe) |
+| `groups` | the caller's IdP group names (always an array; empty for beams) |
 | `channel` | `live` or `preview` — which of your channels is being called |
 | `tool` | the tool named in the URL (`""` for a menu fetch) |
 | `jti`, `iat`, `exp` | one-time ID and a ~60-second validity window |
+
+If your app authorizes on identity, **branch on `caller_type`**: a beam caller
+has no email or groups, and treating it as an anonymous user could fail open
+or closed in ways you didn't design. Assertions minted before this claim
+existed do not occur — every current appliance stamps it.
 
 Every deploy mounts the verification material at
 **`/run/beamhall/assertion.json`**:
@@ -175,6 +181,41 @@ def verify_assertion(headers, want_tool):
 4. **Publish**: IT runs `admin_set_app_audience`. From then on, the audience's
    agents discover the app with `list_apps` and call it with `use_app`.
    Unpublishing removes it from discovery and from `use_app` immediately.
+
+## Calling other apps (beam-to-beam)
+
+Apps cannot reach each other over the network — sibling and cross-workspace
+traffic is closed at the bridge. The only path is the **Beamhall relay**, and
+only for targets IT has granted your app with `admin_set_beam_peers`
+(builders see the current grant with `show_beam_peers`).
+
+After the first grant, your workload's **next deploy** mounts:
+
+- **`/run/beamhall/c2c.json`** — `{ "version": 1, "endpoint": "http://<gateway-ip>:<port>", "key_file": "/run/secrets/BEAMHALL_C2C_KEY" }`
+- the relay key at that `key_file` path.
+
+Send the key's contents in the **`Beamhall-C2C-Key`** header to:
+
+| Route | Meaning |
+|---|---|
+| `GET  <endpoint>/c2c/v1/peers` | the apps you may reach, live-fresh: `{"version":1,"peers":[{"workspace":…,"app":…,"live":…,"agent_tools":…}]}` |
+| `GET  <endpoint>/c2c/v1/peer/<workspace>/<app>/tools` | that app's tool menu (this contract's manifest shape) |
+| `POST <endpoint>/c2c/v1/peer/<workspace>/<app>/tools/<name>` | invoke one tool, JSON arguments in the body |
+
+Rules and behavior:
+
+- Targets are called on their **live channel only** and must serve this
+  contract; they see your call as a verified assertion with
+  `caller_type: "beam"` and `sub` = your beam's ID.
+- The relay re-checks the grant on **every call** (revocation is instant),
+  verifies the calling workload by its key **and** its container address (a
+  copied key does not work from anywhere else), applies the same size caps as
+  `use_app`, rate-limits per beam, and records **every call on the audit
+  chain**.
+- Errors are teaching JSON (`{"error":…,"hint":…}`). An app outside your
+  grant answers exactly like one that does not exist.
+- The file and key ride deploys: a rollback to a release from before the
+  grant carries neither — treat `c2c.json`'s absence as "no peers granted".
 
 ## Notes
 

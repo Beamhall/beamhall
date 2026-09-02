@@ -173,6 +173,7 @@ func launchAppliance(t *testing.T, ctx context.Context) *appliance {
 		"BEAMHALL_OAUTH_JWKS_URL="+issuer,
 		"BEAMHALL_OAUTH_AUDIENCE="+audience,
 		"BEAMHALL_GATEWAY_LISTEN=:"+gatewayPort,
+		"BEAMHALL_C2C_ADDR=:18444", // off the production :8444 — same reasoning as :18443
 		"BEAMHALL_GATEWAY_TLS=off",
 		"BEAMHALL_PG_ADMIN_DSN="+pgDSN,
 		"BEAMHALL_GIT_BASE_URL=http://"+httpAddr, // git-push remote reachable in-test
